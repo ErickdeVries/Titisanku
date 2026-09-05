@@ -68,25 +68,27 @@ export function buildLayout(
       .filter((r) => SIBLING_TYPES.includes(r.relation_type) && (r.person_id === id || r.related_person_id === id))
       .map((r) => (r.person_id === id ? r.related_person_id : r.person_id));
 
-  // BFS to assign generations relative to focus (focus = 0)
+  // BFS from focus. Blood relatives (parents/children/siblings) are expanded fully.
+  // Spouses are shown inline (married-in) but their OWN ancestors/siblings are NOT expanded,
+  // so an in-law's extended family never tangles the main chart (standard family-tree behaviour).
   const gen = new Map<string, number>();
   const queue: string[] = [start];
   gen.set(start, 0);
   while (queue.length) {
     const id = queue.shift()!;
     const g = gen.get(id)!;
-    const neighbors: [string, number][] = [];
-    parentsOf(id).forEach((p) => neighbors.push([p, g - 1]));
-    childrenOf(id).forEach((c) => neighbors.push([c, g + 1]));
-    spousesOf(id).forEach((s) => neighbors.push([s, g]));
-    siblingsOf(id).forEach((s) => neighbors.push([s, g]));
-    for (const [nid, ng] of neighbors) {
-      if (!byId.has(nid)) continue;
-      if (!gen.has(nid)) {
-        gen.set(nid, ng);
-        queue.push(nid);
-      }
-    }
+    const step = (nid: string, ng: number) => {
+      if (!byId.has(nid) || gen.has(nid)) return;
+      gen.set(nid, ng);
+      queue.push(nid);
+    };
+    parentsOf(id).forEach((p) => step(p, g - 1));
+    childrenOf(id).forEach((c) => step(c, g + 1));
+    siblingsOf(id).forEach((s) => step(s, g));
+    // spouses: place inline at the same generation but do NOT expand their family
+    spousesOf(id).forEach((sp) => {
+      if (byId.has(sp) && !gen.has(sp)) gen.set(sp, g);
+    });
   }
 
   // limit visible generations relative to focus
@@ -97,6 +99,18 @@ export function buildLayout(
   const vis = (id: string) => gen.has(id);
   const parentsIn = (id: string) => parentsOf(id).filter(vis).sort();
   const spouseIn = (id: string) => spousesOf(id).filter((s) => vis(s) && gen.get(s) === gen.get(id));
+  // Co-parents: two people who share a visible child are treated as a couple even without an
+  // explicit spouse relation (so both parents sit together above their children).
+  const coParentIn = (id: string): string[] => {
+    const res = new Set<string>();
+    for (const c of childrenOf(id)) {
+      if (!vis(c)) continue;
+      for (const p of parentsOf(c)) {
+        if (p !== id && vis(p) && gen.get(p) === gen.get(id)) res.add(p);
+      }
+    }
+    return [...res];
+  };
 
   // ---- Build units (a couple merged, or a single person) ----
   type Unit = { members: string[]; primary: string; gen: number; x: number };
@@ -108,7 +122,8 @@ export function buildLayout(
     if (!vis(id) || seen.has(id)) continue;
     const members = [id];
     seen.add(id);
-    const sp = spouseIn(id).find((s) => !seen.has(s));
+    const cand = [...spouseIn(id), ...coParentIn(id)];
+    const sp = cand.find((s) => !seen.has(s));
     if (sp) {
       members.push(sp);
       seen.add(sp);
@@ -281,13 +296,17 @@ export function buildLayout(
     mk(`sec-${r.id}-c`, b.x, midY, b.x, b.y - NODE_R, kind, "v");
   }
 
-  // Explicit sibling relations with no shared parents (rare) → light horizontal
+  // Explicit sibling relations (no shared visible parents) → a small bracket ABOVE the two nodes
+  // (like a shared-parent connector), never a raw line through the row.
   for (const r of relations) {
     if (!SIBLING_TYPES.includes(r.relation_type)) continue;
     const a = posById.get(r.person_id);
     const b = posById.get(r.related_person_id);
-    if (!a || !b) continue;
-    mk(`sib-${r.id}`, a.x, a.y, b.x, b.y, "relation", "h");
+    if (!a || !b || Math.abs(a.y - b.y) > 1) continue;
+    const barY = a.y - NODE_R - 16;
+    mk(`sib-${r.id}-la`, a.x, a.y - NODE_R, a.x, barY, "relation", "v");
+    mk(`sib-${r.id}-lb`, b.x, b.y - NODE_R, b.x, barY, "relation", "v");
+    mk(`sib-${r.id}-bar`, Math.min(a.x, b.x), barY, Math.max(a.x, b.x), barY, "relation", "h");
   }
 
   return { nodes, edges, width, height };

@@ -180,3 +180,21 @@ JSON backup, and email collaboration invites. Google login; first user = admin +
 - Verified via seeded 3-gen family screenshot: couple links short, children hang from localized bus,
   no cross-generation spiderweb.
 
+## Iteration 8c — Standard family-tree behaviour (hide in-law extended families) (2026-06)
+- User feedback ("masih ngaco, tiru aplikasi serupa"): the long cross-generation lines came from the
+  canvas pulling in an in-law's whole family (spouse's parents + siblings) and drawing long
+  secondary-parent / sibling lines across the row.
+- Fix in src/tree-layout.ts (matches how standard family-tree apps render the main chart):
+  - BFS now only EXPANDS blood relatives (parents/children/siblings). A spouse is placed INLINE at the
+    same generation but is NOT expanded, so an in-law's own ancestors/siblings never appear on the main
+    canvas (still visible via Explorer / person detail). Removes the tangle at the source.
+  - Co-parents (two people sharing a visible child) are merged into a couple unit even without an
+    explicit spouse relation, so both parents sit together above their children.
+  - Explicit sibling relations render as a small bracket ABOVE the two nodes (up→across), never a raw
+    line through the row.
+- index.tsx: initial view now FITS the whole tree to screen width and centres it (center-origin scale
+  math), so the clean structure is visible at a glance; pinch-zoom/pan still work. Refits on focus/filter change.
+- Verified against the user's real tree (temp read session, then removed): renders as a clean org-chart —
+  Iqbal+Deliana → Erick(+Mahdiana)/Antony/Veronica → grandchildren; in-laws hidden.
+
+

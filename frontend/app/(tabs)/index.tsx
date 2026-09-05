@@ -187,19 +187,29 @@ export default function TreeScreen() {
   const sy = useSharedValue(0);
 
   useEffect(() => {
-    // center the focused node at top-center
-    const focusNode =
-      layout.nodes.find((n) => n.id === activeFocus) ?? layout.nodes.find((n) => n.person.is_root) ?? layout.nodes[0];
-    if (focusNode) {
-      scale.value = withTiming(1);
-      savedScale.value = 1;
-      tx.value = withTiming(screenW / 2 - focusNode.x);
-      ty.value = withTiming(100 - focusNode.y);
-      sx.value = screenW / 2 - focusNode.x;
-      sy.value = 100 - focusNode.y;
-    }
+    const nodes = layout.nodes;
+    if (!nodes.length) return;
+    // Fit the whole tree to the screen width and center it (user can still pinch-zoom / pan).
+    const minX = Math.min(...nodes.map((n) => n.x));
+    const maxX = Math.max(...nodes.map((n) => n.x));
+    const minY = Math.min(...nodes.map((n) => n.y));
+    const treeW = maxX - minX + 140;
+    const fit = Math.min(1, (screenW - 24) / Math.max(treeW, 1));
+    const s = Math.max(0.42, fit);
+    const cx = (minX + maxX) / 2;
+    const W = layout.width;
+    const H = layout.height;
+    // scale transform origin is the view centre, so account for the (1-s) shift.
+    const tX = screenW / 2 - (W / 2) * (1 - s) - s * cx;
+    const tY = 100 - (H / 2) * (1 - s) - s * (minY - NODE_R);
+    scale.value = withTiming(s);
+    savedScale.value = s;
+    tx.value = withTiming(tX);
+    ty.value = withTiming(tY);
+    sx.value = tX;
+    sy.value = tY;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [layout.nodes.length, activeFocus]);
+  }, [layout.nodes.length, activeFocus, filterUp, filterDown]);
 
   const pan = Gesture.Pan()
     .minDistance(8)
