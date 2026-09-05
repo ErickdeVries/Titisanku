@@ -1,0 +1,39 @@
+{
+  "summary": "Backend-only regression for KETURUNANKU new features (person_notes, family_chat, notifications, tree.note_count) + existing endpoints. All 27 pytest tests PASS (100%). Verified: RBAC enforcement (viewer 403 on POST notes/chat/files/invite), notification fan-out to editors+admins with actor excluded and viewer excluded, reply snapshot returns sender_name of original sender, /chat room_id == admin.user_id and room_name == admin.name, tree endpoint returns note_count per person and reflects newly-added notes, notifications/read?type=chat marks only chat notifications read (unread_chat -> 0). DB collections wiped post-run so first real Google user still becomes admin+root.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/conftest.py",
+    "/app/backend/tests/test_keturunanku_api.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "No backend bugs found for the new iteration. Main agent may proceed with frontend integration.",
+    "Note: /app/backend/pytest.ini forces `-n 2 --dist loadscope`. This suite intentionally shares state via a session-scoped seed fixture, so it must be run with `-n 0` (serial). All test classes were split across xdist workers by loadscope which caused double-seeding and cross-worker DB wipes when parallelized. If future agents run without `-n 0`, they will see spurious failures. Consider adding a note or a marker to run these serially."
+  ],
+  "critical_code_review_comments": [
+    "server.py get_family_room_id() picks the first user with role='admin' via find_one without ordering — if multiple admins ever exist, room_id becomes non-deterministic. Fine today (single admin invariant) but should sort by created_at asc for stability.",
+    "add_person_note / send_chat / add_person_file all embed the actor's current name into the persisted doc; renaming a user won't update historical author_name/sender_name — acceptable but note the trade-off.",
+    "restore endpoint soft-deletes anything not in the backup payload — a partial/bad backup could nuke live data. Consider requiring a confirmation flag.",
+    "get_tree loads up to 5000 people + 10000 relations + full person_notes aggregation into a single response; fine for family-tree scale but no pagination.",
+    "get_chat loads all users into memory to enrich sender info — O(N users) per fetch; use $lookup or per-message lookup with a small LRU if user count grows."
+  ],
+  "updated_files": [
+    "/app/backend/tests/conftest.py (new)",
+    "/app/backend/tests/test_keturunanku_api.py (new)"
+  ],
+  "success_rate": {"backend": "100% (27/27)", "frontend": "not tested (per request)"},
+  "seed_data_creation": "Session-scoped fixture wipes users/people/relations/user_sessions/invites/meta/person_notes/family_chat/app_notifications, then seeds 1 admin, 2 editors, 1 viewer (each with a Bearer session token), 1 root person, and meta{root_person_id}. Teardown wipes all seeded collections. Post-run verification confirmed all collections are empty (0 docs).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Run backend tests with `cd /app/backend/tests && pytest test_keturunanku_api.py -n 0 -v` — the `-n 0` is REQUIRED to disable pytest-xdist parallelism (pytest.ini forces `-n 2 --dist loadscope`). The suite uses a shared session-scoped DB seed fixture; running in parallel causes workers to wipe each other's data. Endpoints exercised: /api/auth/me, /api/tree, /api/people (CRUD + add-relative), /api/people/{id}/notes (GET+POST), /api/people/{id}/files, /api/chat (GET+POST incl. reply), /api/notifications (GET + POST /read?type=chat), /api/backup, /api/restore, /api/invite. All PASS.",
+  "rca_of_issue": "N/A — no bugs found."
+}

@@ -47,6 +47,17 @@ const useStyles = makeStyles((c) => ({
     alignItems: "center",
     justifyContent: "center",
   },
+  noteDot: {
+    position: "absolute",
+    bottom: 0,
+    right: 0,
+    backgroundColor: c.warning,
+    borderRadius: 999,
+    width: 16,
+    height: 16,
+    borderWidth: 2,
+    borderColor: c.surface,
+  },
 }));
 
 export function PersonNode({ person, onPress, selected, size = NODE_D }: Props) {
@@ -69,6 +80,9 @@ export function PersonNode({ person, onPress, selected, size = NODE_D }: Props) 
           <View style={styles.deceased}>
             <Feather name="star" size={11} color={colors.onSurfaceInverse} />
           </View>
+        ) : null}
+        {(person.note_count && person.note_count > 0) || (person.notes && person.notes.trim()) ? (
+          <View style={styles.noteDot} testID={`note-dot-${person.id}`} />
         ) : null}
       </View>
       <Text style={styles.name} numberOfLines={2}>

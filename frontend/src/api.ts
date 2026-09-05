@@ -44,6 +44,7 @@ export type Person = {
   is_adopted?: boolean;
   notes?: string | null;
   is_root?: boolean;
+  note_count?: number;
 };
 
 export type Relation = {
@@ -90,6 +91,41 @@ export const createInvite = (email: string) =>
 export const acceptInvite = (code: string) =>
   apiFetch("/invite/accept", { method: "POST", body: JSON.stringify({ code }) });
 export const listInvites = () => apiFetch("/invites");
+
+// ---- Person notes & files ----
+export const listPersonNotes = (personId: string) => apiFetch(`/people/${personId}/notes`);
+export const addPersonNote = (personId: string, note_text: string) =>
+  apiFetch(`/people/${personId}/notes`, { method: "POST", body: JSON.stringify({ note_text }) });
+
+export async function addPersonFile(personId: string, uri: string): Promise<any> {
+  const name = uri.split("/").pop() || `file_${Date.now()}`;
+  const match = /\.(\w+)$/.exec(name);
+  const type = match ? `image/${match[1] === "jpg" ? "jpeg" : match[1]}` : "application/octet-stream";
+  const form = new FormData();
+  if (Platform.OS === "web") {
+    const blob = await (await fetch(uri)).blob();
+    form.append("file", blob, name);
+  } else {
+    form.append("file", { uri, name, type } as any);
+  }
+  const res = await fetch(`${API}/people/${personId}/files`, {
+    method: "POST",
+    headers: { ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}) },
+    body: form,
+  });
+  if (!res.ok) throw new Error("Upload failed");
+  return res.json();
+}
+
+// ---- Family chat ----
+export const getChat = () => apiFetch("/chat");
+export const sendChat = (payload: { message?: string; attachments?: string[]; reply_to?: string | null }) =>
+  apiFetch("/chat", { method: "POST", body: JSON.stringify(payload) });
+
+// ---- Notifications ----
+export const getNotifications = () => apiFetch("/notifications");
+export const markNotificationsRead = (type?: string) =>
+  apiFetch(`/notifications/read${type ? `?type=${type}` : ""}`, { method: "POST" });
 
 // ---- Files ----
 export function fileUrl(pathOrUrl?: string | null): string | undefined {

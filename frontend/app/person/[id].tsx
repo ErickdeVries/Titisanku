@@ -1,12 +1,14 @@
 import { useMemo, useState } from "react";
-import { View, Text, Pressable, ScrollView, ActivityIndicator } from "react-native";
+import { View, Text, Pressable, ActivityIndicator, TextInput } from "react-native";
 import { Image } from "expo-image";
+import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
+import * as ImagePicker from "expo-image-picker";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Feather from "@react-native-vector-icons/feather";
 import { fonts, makeStyles, useTheme } from "@/src/theme";
-import { getPerson, updatePerson, deletePerson, fileUrl, getTree } from "@/src/api";
+import { getPerson, updatePerson, deletePerson, fileUrl, getTree, listPersonNotes, addPersonNote, addPersonFile } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { useI18n } from "@/src/i18n";
 import { nodeColor } from "@/src/components/PersonNode";
@@ -41,6 +43,21 @@ const useStyles = makeStyles((c) => ({
   deleteBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, padding: 16, borderRadius: 999, backgroundColor: c.surfaceTertiary },
   deleteText: { fontFamily: fonts.semibold, fontSize: 15, color: c.error },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
+  tabs: { flexDirection: "row", marginHorizontal: 20, marginTop: 8, backgroundColor: c.surfaceTertiary, borderRadius: 12, padding: 4, gap: 4 },
+  tab: { flex: 1, height: 38, borderRadius: 9, alignItems: "center", justifyContent: "center" },
+  tabActive: { backgroundColor: c.surface, shadowColor: "#0F172A", shadowOpacity: 0.06, shadowRadius: 4, elevation: 2 },
+  tabText: { fontFamily: fonts.medium, fontSize: 13, color: c.muted },
+  tabTextActive: { color: c.onSurface },
+  noteInputRow: { marginHorizontal: 20, marginTop: 16, gap: 10 },
+  noteInput: { backgroundColor: c.surfaceTertiary, borderRadius: 12, padding: 14, minHeight: 80, textAlignVertical: "top", fontFamily: fonts.regular, fontSize: 15, color: c.onSurface },
+  noteCard: { marginHorizontal: 20, marginTop: 12, backgroundColor: c.surfaceSecondary, borderRadius: 14, padding: 14, gap: 4 },
+  noteMeta: { fontFamily: fonts.semibold, fontSize: 13, color: c.brandSecondary },
+  noteText: { fontFamily: fonts.regular, fontSize: 14, color: c.onSurface, lineHeight: 20 },
+  emptyTab: { alignItems: "center", padding: 40, gap: 8 },
+  emptyTabText: { fontFamily: fonts.regular, fontSize: 14, color: c.muted },
+  fileCard: { marginHorizontal: 20, marginTop: 12, backgroundColor: c.surfaceSecondary, borderRadius: 14, overflow: "hidden" },
+  fileImg: { width: "100%", height: 180, backgroundColor: c.surfaceTertiary },
+  fileMeta: { fontFamily: fonts.medium, fontSize: 13, color: c.onSurfaceSecondary, padding: 12 },
 }));
 
 function InfoRow({ icon, label, value }: { icon: string; label: string; value?: string | null }) {
@@ -71,9 +88,57 @@ export default function PersonDetail() {
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [activeTab, setActiveTab] = useState<"data" | "notes" | "files">("data");
+  const [noteText, setNoteText] = useState("");
+  const [noteBusy, setNoteBusy] = useState(false);
+  const [fileBusy, setFileBusy] = useState(false);
 
   const { data: person, isLoading } = useQuery({ queryKey: ["person", id], queryFn: () => getPerson(id) });
   const { data: tree } = useQuery({ queryKey: ["tree"], queryFn: getTree });
+  const { data: notes } = useQuery({ queryKey: ["notes", id], queryFn: () => listPersonNotes(id) });
+
+  const textNotes = (notes ?? []).filter((n: any) => n.note_text && (!n.attachments || n.attachments.length === 0));
+  const fileNotes = (notes ?? []).filter((n: any) => n.attachments && n.attachments.length > 0);
+
+  const submitNote = async () => {
+    if (!noteText.trim()) return;
+    setNoteBusy(true);
+    try {
+      await addPersonNote(id, noteText.trim());
+      setNoteText("");
+      await qc.invalidateQueries({ queryKey: ["notes", id] });
+      await qc.invalidateQueries({ queryKey: ["tree"] });
+    } catch (e) {
+      console.log("note error", e);
+    } finally {
+      setNoteBusy(false);
+    }
+  };
+
+  const submitFile = async () => {
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) return;
+    const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images"], quality: 0.6 });
+    if (res.canceled || !res.assets?.length) return;
+    setFileBusy(true);
+    try {
+      await addPersonFile(id, res.assets[0].uri);
+      await qc.invalidateQueries({ queryKey: ["notes", id] });
+      await qc.invalidateQueries({ queryKey: ["tree"] });
+    } catch (e) {
+      console.log("file error", e);
+    } finally {
+      setFileBusy(false);
+    }
+  };
+
+  const fmtDate = (iso: string) => {
+    try {
+      return new Date(iso).toLocaleDateString();
+    } catch {
+      return iso;
+    }
+  };
 
   const spouses = useMemo(() => {
     if (!tree) return [];
@@ -192,7 +257,7 @@ export default function PersonDetail() {
           onSubmit={save}
         />
       ) : (
-        <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom + 40 }}>
+        <KeyboardAwareScrollView contentContainerStyle={{ paddingBottom: insets.bottom + 40 }} bottomOffset={20} keyboardShouldPersistTaps="handled">
           <View style={styles.hero}>
             <View style={[styles.avatar, { borderColor: color }]}>
               {photo ? <Image source={{ uri: photo }} style={styles.avatarImg} contentFit="cover" /> : <Feather name="user" size={48} color={color} />}
@@ -219,72 +284,145 @@ export default function PersonDetail() {
             </View>
           ) : null}
 
-          <View style={styles.infoCard}>
-            <InfoRow icon="calendar" label={t("birth_date")} value={person.birth_date} />
-            <View style={styles.divider} />
-            <InfoRow icon="map-pin" label={t("birth_place")} value={person.birth_place} />
-            <View style={styles.divider} />
-            <InfoRow icon="briefcase" label={t("job")} value={person.job} />
-            <View style={styles.divider} />
-            <InfoRow icon="star" label={t("death_date")} value={person.death_date || t("alive")} />
-            {person.notes ? (
-              <>
-                <View style={styles.divider} />
-                <InfoRow icon="file-text" label={t("notes")} value={person.notes} />
-              </>
-            ) : null}
+          <View style={styles.tabs}>
+            {(["data", "notes", "files"] as const).map((tb) => (
+              <Pressable key={tb} style={[styles.tab, activeTab === tb && styles.tabActive]} onPress={() => setActiveTab(tb)} testID={`detail-tab-${tb}`}>
+                <Text style={[styles.tabText, activeTab === tb && styles.tabTextActive]}>
+                  {tb === "data" ? t("tab_data") : tb === "notes" ? t("tab_notes") : t("tab_files")}
+                </Text>
+              </Pressable>
+            ))}
           </View>
 
-          {spouses.length ? (
+          {activeTab === "data" ? (
             <>
-              <Text style={styles.marriageTitle}>{t("marriage_info")}</Text>
               <View style={styles.infoCard}>
-                {spouses.map((s, i) => (
-                  <View key={s.id}>
-                    {i > 0 ? <View style={styles.divider} /> : null}
-                    <View style={styles.infoRow}>
-                      <Feather name="heart" size={18} color={s.divorced ? colors.error : colors.brandPrimary} />
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.infoLabel}>{t("spouse_label")}</Text>
-                        <Text style={styles.infoValue}>{s.name}</Text>
-                        {s.marriage_date ? (
-                          <Text style={styles.spouseSub}>
-                            {t("married_since")} {s.marriage_date}
-                          </Text>
-                        ) : null}
-                        {s.divorced && s.divorce_date ? (
-                          <Text style={[styles.spouseSub, { color: colors.error }]}>
-                            {t("divorced_badge")} · {s.divorce_date}
-                          </Text>
-                        ) : null}
-                      </View>
-                      {s.divorced ? (
-                        <View style={styles.divorceBadge}>
-                          <Text style={styles.divorceBadgeText}>{t("divorced_badge")}</Text>
-                        </View>
-                      ) : null}
-                    </View>
-                  </View>
-                ))}
+                <InfoRow icon="calendar" label={t("birth_date")} value={person.birth_date} />
+                <View style={styles.divider} />
+                <InfoRow icon="map-pin" label={t("birth_place")} value={person.birth_place} />
+                <View style={styles.divider} />
+                <InfoRow icon="briefcase" label={t("job")} value={person.job} />
+                <View style={styles.divider} />
+                <InfoRow icon="star" label={t("death_date")} value={person.death_date || t("alive")} />
+                {person.notes ? (
+                  <>
+                    <View style={styles.divider} />
+                    <InfoRow icon="file-text" label={t("notes")} value={person.notes} />
+                  </>
+                ) : null}
               </View>
+
+              {spouses.length ? (
+                <>
+                  <Text style={styles.marriageTitle}>{t("marriage_info")}</Text>
+                  <View style={styles.infoCard}>
+                    {spouses.map((s, i) => (
+                      <View key={s.id}>
+                        {i > 0 ? <View style={styles.divider} /> : null}
+                        <View style={styles.infoRow}>
+                          <Feather name="heart" size={18} color={s.divorced ? colors.error : colors.brandPrimary} />
+                          <View style={{ flex: 1 }}>
+                            <Text style={styles.infoLabel}>{t("spouse_label")}</Text>
+                            <Text style={styles.infoValue}>{s.name}</Text>
+                            {s.marriage_date ? (
+                              <Text style={styles.spouseSub}>
+                                {t("married_since")} {s.marriage_date}
+                              </Text>
+                            ) : null}
+                            {s.divorced && s.divorce_date ? (
+                              <Text style={[styles.spouseSub, { color: colors.error }]}>
+                                {t("divorced_badge")} · {s.divorce_date}
+                              </Text>
+                            ) : null}
+                          </View>
+                          {s.divorced ? (
+                            <View style={styles.divorceBadge}>
+                              <Text style={styles.divorceBadgeText}>{t("divorced_badge")}</Text>
+                            </View>
+                          ) : null}
+                        </View>
+                      </View>
+                    ))}
+                  </View>
+                </>
+              ) : null}
+
+              {isAdmin && !person.is_root ? (
+                <View style={styles.actions}>
+                  <Pressable style={styles.deleteBtn} onPress={del} testID="delete-button">
+                    {deleting ? (
+                      <ActivityIndicator color={colors.error} />
+                    ) : (
+                      <>
+                        <Feather name="trash-2" size={18} color={colors.error} />
+                        <Text style={styles.deleteText}>{t("delete")}</Text>
+                      </>
+                    )}
+                  </Pressable>
+                </View>
+              ) : null}
             </>
           ) : null}
 
-          {isAdmin && !person.is_root ? (
-            <View style={styles.actions}>
-              <Pressable style={styles.deleteBtn} onPress={del} testID="delete-button">
-                {deleting ? (
-                  <ActivityIndicator color={colors.error} />
-                ) : (
-                  <>
-                    <Feather name="trash-2" size={18} color={colors.error} />
-                    <Text style={styles.deleteText}>{t("delete")}</Text>
-                  </>
-                )}
-              </Pressable>
-            </View>
+          {activeTab === "notes" ? (
+            <>
+              {canEdit ? (
+                <View style={styles.noteInputRow}>
+                  <TextInput
+                    testID="note-input"
+                    style={styles.noteInput}
+                    placeholder={t("note_placeholder")}
+                    placeholderTextColor={colors.muted}
+                    value={noteText}
+                    onChangeText={setNoteText}
+                    multiline
+                  />
+                  <GradientButton testID="add-note-button" title={t("add_note")} icon="plus" loading={noteBusy} onPress={submitNote} />
+                </View>
+              ) : null}
+              {textNotes.length === 0 ? (
+                <View style={styles.emptyTab}>
+                  <Feather name="file-text" size={28} color={colors.muted} />
+                  <Text style={styles.emptyTabText}>{t("no_notes")}</Text>
+                </View>
+              ) : (
+                textNotes.map((n: any) => (
+                  <View key={n.id} style={styles.noteCard} testID={`note-${n.id}`}>
+                    <Text style={styles.noteMeta}>
+                      {n.author_name} · {fmtDate(n.created_at)}
+                    </Text>
+                    <Text style={styles.noteText}>{n.note_text}</Text>
+                  </View>
+                ))
+              )}
+            </>
           ) : null}
-        </ScrollView>
+
+          {activeTab === "files" ? (
+            <>
+              {canEdit ? (
+                <View style={styles.noteInputRow}>
+                  <GradientButton testID="add-file-button" title={t("add_file")} icon="upload" loading={fileBusy} onPress={submitFile} />
+                </View>
+              ) : null}
+              {fileNotes.length === 0 ? (
+                <View style={styles.emptyTab}>
+                  <Feather name="folder" size={28} color={colors.muted} />
+                  <Text style={styles.emptyTabText}>{t("no_files")}</Text>
+                </View>
+              ) : (
+                fileNotes.map((n: any) => (
+                  <View key={n.id} style={styles.fileCard} testID={`file-${n.id}`}>
+                    <Image source={{ uri: fileUrl(n.attachments[0]) }} style={styles.fileImg} contentFit="cover" />
+                    <Text style={styles.fileMeta}>
+                      {n.note_text} · {n.author_name} · {fmtDate(n.created_at)}
+                    </Text>
+                  </View>
+                ))
+              )}
+            </>
+          ) : null}
+        </KeyboardAwareScrollView>
       )}
     </View>
   );

@@ -255,6 +255,13 @@ async def get_tree(user=Depends(get_current_user)):
     relations = await db.relations.find({"deleted_at": None}, {"_id": 0}).to_list(10000)
     meta = await db.meta.find_one({"key": "root_person_id"}, {"_id": 0})
     root_id = meta["value"] if meta else (people[0]["id"] if people else None)
+    counts = {}
+    async for row in db.person_notes.aggregate(
+        [{"$match": {"deleted_at": None}}, {"$group": {"_id": "$person_id", "c": {"$sum": 1}}}]
+    ):
+        counts[row["_id"]] = row["c"]
+    for p in people:
+        p["note_count"] = counts.get(p["id"], 0)
     return {"people": people, "relations": relations, "root_id": root_id}
 
 
@@ -475,6 +482,162 @@ async def accept_invite(body: AcceptInviteInput, user=Depends(get_current_user))
         await db.users.update_one({"user_id": user["user_id"]}, {"$set": {"role": "editor"}})
     updated = await db.users.find_one({"user_id": user["user_id"]}, {"_id": 0})
     return updated
+
+
+# ---------------------------------------------------------------------------
+# Person notes & files, Family chat, In-app notifications
+# ---------------------------------------------------------------------------
+class NoteInput(BaseModel):
+    note_text: str
+
+
+class ChatInput(BaseModel):
+    message: Optional[str] = ""
+    attachments: List[str] = []
+    reply_to: Optional[str] = None
+
+
+async def get_family_room_id():
+    admin = await db.users.find_one({"role": "admin"}, {"_id": 0})
+    return admin["user_id"] if admin else None
+
+
+async def notify_editors(actor_id: str, ntype: str, title: str, body: str):
+    recipients = await db.users.find({"role": {"$in": ["admin", "editor"]}}, {"_id": 0, "user_id": 1}).to_list(2000)
+    docs = []
+    for r in recipients:
+        if r["user_id"] == actor_id:
+            continue
+        docs.append({
+            "id": str(uuid.uuid4()),
+            "user_id": r["user_id"],
+            "type": ntype,
+            "title": title,
+            "body": body,
+            "read": False,
+            "created_at": now_utc(),
+        })
+    if docs:
+        await db.app_notifications.insert_many(docs)
+
+
+@api_router.get("/people/{person_id}/notes")
+async def list_person_notes(person_id: str, user=Depends(get_current_user)):
+    notes = await db.person_notes.find({"person_id": person_id, "deleted_at": None}, {"_id": 0}).sort("created_at", -1).to_list(2000)
+    return _serialize(notes)
+
+
+@api_router.post("/people/{person_id}/notes")
+async def add_person_note(person_id: str, body: NoteInput, user=Depends(get_current_user)):
+    require_role(user, ["admin", "editor"])
+    person = await db.people.find_one({"id": person_id, "deleted_at": None}, {"_id": 0})
+    if not person:
+        raise HTTPException(status_code=404, detail="Person not found")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "person_id": person_id,
+        "author_id": user["user_id"],
+        "author_name": user["name"],
+        "note_text": body.note_text,
+        "attachments": [],
+        "created_at": now_utc(),
+        "deleted_at": None,
+    }
+    await db.person_notes.insert_one(doc)
+    await notify_editors(user["user_id"], "note", f"Catatan baru: {person['name']}", f"{user['name']}: {body.note_text[:60]}")
+    return _serialize([doc])[0]
+
+
+@api_router.post("/people/{person_id}/files")
+async def add_person_file(person_id: str, file: UploadFile = File(...), user=Depends(get_current_user)):
+    require_role(user, ["admin", "editor"])
+    person = await db.people.find_one({"id": person_id, "deleted_at": None}, {"_id": 0})
+    if not person:
+        raise HTTPException(status_code=404, detail="Person not found")
+    content = await file.read()
+    ext = (file.filename or "file").split(".")[-1].lower()
+    path = f"{APP_NAME}/uploads/{user['user_id']}/{uuid.uuid4().hex}.{ext}"
+    result = await run_in_threadpool(put_object, path, content, file.content_type or "application/octet-stream")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "person_id": person_id,
+        "author_id": user["user_id"],
+        "author_name": user["name"],
+        "note_text": file.filename or "File",
+        "attachments": [result["path"]],
+        "created_at": now_utc(),
+        "deleted_at": None,
+    }
+    await db.person_notes.insert_one(doc)
+    await notify_editors(user["user_id"], "file", f"File baru: {person['name']}", f"{user['name']} menambahkan file")
+    return _serialize([doc])[0]
+
+
+@api_router.get("/chat")
+async def get_chat(user=Depends(get_current_user)):
+    room = await get_family_room_id()
+    admin = await db.users.find_one({"role": "admin"}, {"_id": 0})
+    room_name = admin["name"] if admin else "Keluarga"
+    if not room:
+        return {"room_id": None, "room_name": room_name, "messages": []}
+    msgs = await db.family_chat.find({"room_id": room, "deleted_at": None}, {"_id": 0}).sort("created_at", 1).to_list(3000)
+    users = {u["user_id"]: u for u in await db.users.find({}, {"_id": 0}).to_list(2000)}
+    out = []
+    for m in _serialize(msgs):
+        s = users.get(m["sender_id"], {})
+        m["sender_name"] = s.get("name", "?")
+        m["sender_picture"] = s.get("picture")
+        out.append(m)
+    return {"room_id": room, "room_name": room_name, "messages": out}
+
+
+@api_router.post("/chat")
+async def send_chat(body: ChatInput, user=Depends(get_current_user)):
+    require_role(user, ["admin", "editor"])
+    room = await get_family_room_id()
+    reply = None
+    if body.reply_to:
+        rmsg = await db.family_chat.find_one({"id": body.reply_to}, {"_id": 0})
+        if rmsg:
+            sender = await db.users.find_one({"user_id": rmsg["sender_id"]}, {"_id": 0})
+            reply = {
+                "id": rmsg["id"],
+                "message": rmsg.get("message"),
+                "sender_name": sender["name"] if sender else "?",
+                "has_attachment": bool(rmsg.get("attachments")),
+            }
+    if not (body.message or "").strip() and not body.attachments:
+        raise HTTPException(status_code=400, detail="Empty message")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "room_id": room,
+        "sender_id": user["user_id"],
+        "message": body.message or "",
+        "attachments": body.attachments,
+        "reply_to": reply,
+        "created_at": now_utc(),
+        "deleted_at": None,
+    }
+    await db.family_chat.insert_one(doc)
+    await notify_editors(user["user_id"], "chat", "Pesan baru di Chat Keluarga", f"{user['name']}: {(body.message or 'Foto')[:60]}")
+    return _serialize([doc])[0]
+
+
+@api_router.get("/notifications")
+async def get_notifications(user=Depends(get_current_user)):
+    items = await db.app_notifications.find({"user_id": user["user_id"]}, {"_id": 0}).sort("created_at", -1).limit(50).to_list(50)
+    unread = await db.app_notifications.count_documents({"user_id": user["user_id"], "read": False})
+    unread_chat = await db.app_notifications.count_documents({"user_id": user["user_id"], "read": False, "type": "chat"})
+    return {"unread": unread, "unread_chat": unread_chat, "items": _serialize(items)}
+
+
+@api_router.post("/notifications/read")
+async def mark_notifications_read(type: Optional[str] = None, user=Depends(get_current_user)):
+    q = {"user_id": user["user_id"], "read": False}
+    if type:
+        q["type"] = type
+    await db.app_notifications.update_many(q, {"$set": {"read": True}})
+    return {"ok": True}
 
 
 # ---------------------------------------------------------------------------

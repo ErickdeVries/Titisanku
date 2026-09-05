@@ -52,3 +52,14 @@ JSON backup, and email collaboration invites. Google login; first user = admin +
 
 ## Notes
 - Birthday reminders + image picker require a native/dev build to fully test (not Expo Go web).
+
+## Iteration 3 — Chat, Notes, Files, Notifications (2026-06)
+- Collections added: `person_notes` (id, person_id, author_id, author_name, note_text, attachments[], created_at, deleted_at),
+  `family_chat` (id, room_id=admin user_id, sender_id, message, attachments[], reply_to snapshot, created_at, deleted_at),
+  `app_notifications` (id, user_id recipient, type[chat|note|file], title, body, read, created_at).
+- `people.notes` column already existed (personal note) — unchanged.
+- Endpoints: GET/POST /api/people/{id}/notes, POST /api/people/{id}/files, GET/POST /api/chat,
+  GET /api/notifications, POST /api/notifications/read?type=. /api/tree now returns note_count per person.
+- UI: Person detail tabs Data/Catatan/File; new Chat tab (WhatsApp-style, reply + photo, admin/editor send, viewer read-only);
+  unread chat badge on Chat tab; yellow dot on tree nodes that have notes.
+- RBAC + notification fan-out verified by testing_agent: 27/27 pass.
