@@ -1,0 +1,37 @@
+{
+  "summary": "Iteration-5 validated the three new features end-to-end: (1) PUT /api/relations/{rel_id} for editing marriage/divorce/is_divorced on spouse relations, (2) POST /api/people/add-relative direction=child AUTO-LINK to focus's single spouse (fix for duplicate-mother bug), and (3) the frontend marriage-edit modal + masked DD/MM/YYYY DateField + 'Jadikan Pusat Pohon' + new filter/export copy. Backend: authored /app/backend/tests/test_relations_marriage_edit.py with 13 tests across 4 classes -> 13/13 PASSED (100%). Verified every branch: editor updates marriage_date and gets relation_type='spouse' with divorce_date cleared; is_divorced=True flips relation_type to 'divorced' and stores divorce_date; flipping back to False clears divorce_date; viewer 403; parent-relation target 400 (message contains 'spouse'); unknown rel_id 404; add-relative child with exactly 1 spouse produces 2 parent rows (focus + spouse), 0 spouses -> 1 parent (focus only), 2+ spouses -> 1 parent (no auto-link, ambiguous); duplicate father/mother guard still 400 'Ayah/Ibu sudah ada'; DELETE /api/relations/{rel_id} still works (200 then 404 on second, 403 for viewer). Frontend: seeded a synthetic session/tree/root+spouse via /app/backend/tests/seed_frontend_session.py, injected the session_token into localStorage, navigated to /person/<root_id>. Confirmed: spouse-edit-<relId> pencil renders and opens the modal; edit-marriage-date shows the initial value as 15/01/2010 (DD/MM/YYYY masked from ISO); typing '20062022' formats live to '20/06/2022'; toggling edit-divorced-toggle reveals edit-divorce-date; typing '01012025' -> '01/01/2025'; edit-spouse-save persists and the detail card immediately shows 'Menikah 20/06/2022' + 'Cerai 01/01/2025' with a 'Cerai' badge -> saving works end-to-end and dates render as DD/MM/YYYY. Also verified: person detail 'Jadikan Pusat Pohon' button (set-as-root) renders; Tree tab open-filter reveals 'Filter Tampilan Pohon', 'Pusat saat ini: TESTFE_Root', 'Terapkan Filter'; 'Ekspor PDF' (export-pdf-button) present. Cleanup ran; synthetic session/tree/people/relation deleted; production data untouched.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "shadow* styles", "issue": "Console warning: '\"shadow*\" style props are deprecated. Use \"boxShadow\".' Repeating on every screen render. Non-blocking but should be migrated to boxShadow (or platform-guarded to native only). Reference: check any StyleSheet using shadowColor/shadowOffset/shadowOpacity/shadowRadius across /app/frontend/src/**/*.tsx"}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_relations_marriage_edit.py",
+    "/app/backend/tests/seed_frontend_session.py",
+    "/app/test_reports/pytest/iter5_relations_results.xml"
+  ],
+  "action_items": [
+    "No functional bugs found. All new endpoints and UI flows behave per spec.",
+    "Consider migrating deprecated React Native web 'shadow*' style props to 'boxShadow' (or platform-guard them) to silence repeating console warnings."
+  ],
+  "critical_code_review_comments": [
+    "server.py:449 update_relation returns the raw stored doc which still contains fields like created_at (datetime). The current response works because motor serialises datetime, but the endpoint does NOT strip _id explicitly on the return (relies on projection {\"_id\":0} in find_one). Consistent with the rest of the codebase — fine.",
+    "server.py:544 The child auto-link uses `len(spouse_ids) == 1` — correct for the exactly-one-spouse rule and matches the tested behaviour for 0 (skip) and >=2 (skip) spouses.",
+    "server.py:456 divorce_date is stored as None when is_divorced=False regardless of what the client sent. Good — enforces invariant server-side. Client (DateField) sends ISO YYYY-MM-DD but the field is typed Optional[str] so DD/MM/YYYY would also be accepted. Consider validating the format server-side.",
+    "DateField.tsx converts DD/MM/YYYY -> ISO for onChange; but if user enters a partial (e.g. 2 digits) it calls onChange(null). That's fine for form state; just note the modal's save can send marriage_date=null (from a half-typed value) — server accepts nullable string. Not a bug but worth a client-side 'complete date required' check if strictness is desired."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_relations_marriage_edit.py (NEW)",
+    "/app/backend/tests/seed_frontend_session.py (NEW helper for FE test)"
+  ],
+  "success_rate": {"backend": "100% (13/13 iter5 tests)", "frontend": "100% (spouse-edit modal + DateField masking + set-as-root + filter/export copy all verified)"},
+  "seed_data_creation": "Backend tests use session-scoped fixture that creates 3 synthetic users (TEST_REL_Admin/Editor/Viewer) + 1 tree via API + editor/viewer added as tree_members directly. Cleanup deletes ONLY docs registered in CREATED registry. Frontend used seed_frontend_session.py which creates 1 admin user + session + tree + root person + spouse + spouse relation; cleanup ran successfully removing all 4 documents by tree_id / session_token / user_id.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "To re-run iter5 backend tests: `cd /app/backend/tests && pytest test_relations_marriage_edit.py -n 0 -v` (needs -n 0 due to pytest.ini xdist config + module-level fixture state). For frontend regression on the marriage-edit modal, use seed_frontend_session.py to seed, inject localStorage['session_token'] = <token> then navigate to /person/<root_id> — the spouse-edit-<rel_id> testID opens the modal (edit-marriage-date, edit-divorced-toggle, edit-divorce-date, edit-spouse-save). Remember to run `python seed_frontend_session.py --cleanup` after. DO NOT delete real Mongo data.",
+  "rca_of_issue": "N/A — verification-only iteration. Both bug fixes (duplicate-parent auto-link + marriage-date editing) and the associated UI work correctly."
+}

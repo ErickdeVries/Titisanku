@@ -133,6 +133,8 @@ export const removeMember = (tid: string, member_id: string) =>
   apiFetch(`/trees/${tid}/members/${member_id}?tree_id=${tid}`, { method: "DELETE" });
 export const deleteRelation = (relId: string) =>
   apiFetch(`/relations/${relId}`, { method: "DELETE" });
+export const updateRelation = (relId: string, data: { marriage_date: string | null; divorce_date: string | null; is_divorced: boolean }) =>
+  apiFetch(`/relations/${relId}`, { method: "PUT", body: JSON.stringify(data) });
 
 export const listPeople = (q?: string): Promise<Person[]> =>
   apiFetch(`/people${q ? `?q=${encodeURIComponent(q)}` : ""}`);

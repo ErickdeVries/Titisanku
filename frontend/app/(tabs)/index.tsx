@@ -6,7 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, { useSharedValue, useAnimatedStyle, withTiming, runOnJS } from "react-native-reanimated";
-import Svg, { Line } from "react-native-svg";
+import Svg, { Line, Path } from "react-native-svg";
 import Feather from "@react-native-vector-icons/feather";
 import { fonts, makeStyles, useTheme } from "@/src/theme";
 import { getTree } from "@/src/api";
@@ -124,7 +124,7 @@ export default function TreeScreen() {
   const { width: screenW } = useWindowDimensions();
 
   const { data, isLoading } = useQuery({ queryKey: ["tree"], queryFn: getTree });
-  const { activeTree } = useTree();
+  const { activeTree, pendingFocusId, setPendingFocus } = useTree();
   const [selected, setSelected] = useState<string | null>(null);
   const [focusId, setFocusId] = useState<string | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
@@ -132,8 +132,6 @@ export default function TreeScreen() {
   const [filterOpen, setFilterOpen] = useState(false);
   const [filterUp, setFilterUp] = useState(2);
   const [filterDown, setFilterDown] = useState(2);
-  const [genUp, setGenUp] = useState(2);
-  const [genDown, setGenDown] = useState(2);
   const [exporting, setExporting] = useState(false);
 
   const role = data?.role ?? user?.role;
@@ -146,6 +144,14 @@ export default function TreeScreen() {
   useEffect(() => {
     if (!focusId && data?.root_id) setFocusId(data.root_id);
   }, [data?.root_id, focusId]);
+
+  useEffect(() => {
+    if (pendingFocusId) {
+      setFocusId(pendingFocusId);
+      setSelected(pendingFocusId);
+      setPendingFocus(null);
+    }
+  }, [pendingFocusId, setPendingFocus]);
 
   const activeFocus = focusId ?? data?.root_id ?? null;
 
@@ -245,7 +251,7 @@ export default function TreeScreen() {
   const doExport = async () => {
     setExporting(true);
     try {
-      await exportTreePdf(data!.people, data!.relations, data!.root_id, genUp, genDown, "KETURUNANKU", plan === "free");
+      await exportTreePdf(data!.people, data!.relations, activeFocus ?? data!.root_id, filterUp, filterDown, "KETURUNANKU", plan === "free");
       setExportOpen(false);
     } catch (e) {
       console.log("export error", e);
@@ -360,6 +366,24 @@ export default function TreeScreen() {
                           : e.kind === "divorce"
                             ? colors.nodeDivorceLine
                             : colors.nodeRelationLine;
+                      const dash = e.kind === "adopted" ? "7,6" : undefined;
+                      if (e.orient === "v") {
+                        // orthogonal elbow routing: down → across → down (declutters diagonals)
+                        const midY = (e.y1 + e.y2) / 2;
+                        const d = `M${e.x1} ${e.y1} L${e.x1} ${midY} L${e.x2} ${midY} L${e.x2} ${e.y2}`;
+                        return (
+                          <Path
+                            key={e.key}
+                            d={d}
+                            stroke={stroke}
+                            strokeWidth={2}
+                            strokeDasharray={dash}
+                            fill="none"
+                            strokeLinejoin="round"
+                            strokeLinecap="round"
+                          />
+                        );
+                      }
                       return (
                         <Line
                           key={e.key}
@@ -369,7 +393,7 @@ export default function TreeScreen() {
                           y2={e.y2}
                           stroke={stroke}
                           strokeWidth={2.5}
-                          strokeDasharray={e.kind === "adopted" ? "7,6" : undefined}
+                          strokeDasharray={dash}
                         />
                       );
                     })}
@@ -426,29 +450,19 @@ export default function TreeScreen() {
         <Pressable style={styles.modalBg} onPress={() => setExportOpen(false)}>
           <Pressable style={[styles.sheet, { paddingBottom: insets.bottom + 24 }]} onPress={() => {}}>
             <Text style={styles.sheetTitle}>{t("export_pdf")}</Text>
-            <Text style={{ fontFamily: fonts.regular, fontSize: 13, color: colors.muted }}>{t("generation_range")}</Text>
-            <View style={styles.stepperRow}>
-              <Text style={styles.stepperLabel}>⬆︎ Gen -{genUp}</Text>
-              <View style={styles.stepper}>
-                <Pressable style={styles.stepBtn} onPress={() => setGenUp((v) => Math.max(0, v - 1))}>
-                  <Feather name="minus" size={16} color={colors.onSurface} />
-                </Pressable>
-                <Text style={styles.stepVal}>{genUp}</Text>
-                <Pressable style={styles.stepBtn} onPress={() => setGenUp((v) => Math.min(10, v + 1))}>
-                  <Feather name="plus" size={16} color={colors.onSurface} />
-                </Pressable>
+            <Text style={{ fontFamily: fonts.regular, fontSize: 13, color: colors.muted, marginBottom: 4 }}>{t("export_current_view")}</Text>
+            <View style={{ backgroundColor: colors.surfaceTertiary, borderRadius: 12, padding: 14, gap: 8, marginBottom: 16 }}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                <Feather name="target" size={16} color={colors.brandSecondary} />
+                <Text style={{ fontFamily: fonts.medium, fontSize: 14, color: colors.onSurface }}>{t("center")}: {focusName ?? t("root_person")}</Text>
               </View>
-            </View>
-            <View style={styles.stepperRow}>
-              <Text style={styles.stepperLabel}>⬇︎ Gen +{genDown}</Text>
-              <View style={styles.stepper}>
-                <Pressable style={styles.stepBtn} onPress={() => setGenDown((v) => Math.max(0, v - 1))}>
-                  <Feather name="minus" size={16} color={colors.onSurface} />
-                </Pressable>
-                <Text style={styles.stepVal}>{genDown}</Text>
-                <Pressable style={styles.stepBtn} onPress={() => setGenDown((v) => Math.min(10, v + 1))}>
-                  <Feather name="plus" size={16} color={colors.onSurface} />
-                </Pressable>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                <Feather name="arrow-up" size={16} color={colors.muted} />
+                <Text style={{ fontFamily: fonts.regular, fontSize: 14, color: colors.onSurfaceSecondary }}>{filterUp > 20 ? t("all_generations") : `${filterUp} ${t("gen_above")}`}</Text>
+              </View>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                <Feather name="arrow-down" size={16} color={colors.muted} />
+                <Text style={{ fontFamily: fonts.regular, fontSize: 14, color: colors.onSurfaceSecondary }}>{filterDown > 20 ? t("all_generations") : `${filterDown} ${t("gen_below")}`}</Text>
               </View>
             </View>
             <GradientButton testID="do-export-button" title={t("export")} icon="download" loading={exporting} onPress={doExport} />
@@ -461,9 +475,13 @@ export default function TreeScreen() {
       <Modal visible={filterOpen} transparent animationType="slide" onRequestClose={() => setFilterOpen(false)}>
         <Pressable style={styles.modalBg} onPress={() => setFilterOpen(false)}>
           <Pressable style={[styles.sheet, { paddingBottom: insets.bottom + 24 }]} onPress={() => {}}>
-            <Text style={styles.sheetTitle}>{t("filter_generations")}</Text>
+            <Text style={styles.sheetTitle}>{t("filter_tree_view")}</Text>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: colors.brandTertiary, alignSelf: "flex-start", paddingHorizontal: 12, paddingVertical: 7, borderRadius: 999, marginBottom: 4 }}>
+              <Feather name="target" size={14} color={colors.onBrandTertiary} />
+              <Text style={{ fontFamily: fonts.medium, fontSize: 12, color: colors.onBrandTertiary }}>{t("current_center")}: {focusName ?? t("root_person")}</Text>
+            </View>
             <View style={styles.stepperRow}>
-              <Text style={styles.stepperLabel}>⬆︎ {t("gen_above")}</Text>
+              <Text style={styles.stepperLabel}>{t("gen_ancestors")}</Text>
               <View style={styles.stepper}>
                 <Pressable style={styles.stepBtn} onPress={() => setFilterUp((v) => Math.max(0, v - 1))} testID="filter-up-minus">
                   <Feather name="minus" size={16} color={colors.onSurface} />
@@ -475,7 +493,7 @@ export default function TreeScreen() {
               </View>
             </View>
             <View style={styles.stepperRow}>
-              <Text style={styles.stepperLabel}>⬇︎ {t("gen_below")}</Text>
+              <Text style={styles.stepperLabel}>{t("gen_descendants")}</Text>
               <View style={styles.stepper}>
                 <Pressable style={styles.stepBtn} onPress={() => setFilterDown((v) => Math.max(0, v - 1))} testID="filter-down-minus">
                   <Feather name="minus" size={16} color={colors.onSurface} />
@@ -496,7 +514,7 @@ export default function TreeScreen() {
               />
               <GradientButton
                 testID="filter-apply"
-                title={t("save")}
+                title={t("apply_filter")}
                 onPress={() => setFilterOpen(false)}
                 style={{ flex: 1 }}
               />

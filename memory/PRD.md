@@ -142,3 +142,24 @@ JSON backup, and email collaboration invites. Google login; first user = admin +
   each tappable + deletable (admin/editor) via new DELETE /relations/{rel_id}. All person fields
   editable via existing edit form.
 - Backend tested: plan limits, family upgrade, editor limit 402, relation delete + viewer 403.
+
+## Iteration 8 — Editable marriage dates (DD/MM/YYYY), duplicate-parent fix, tree readability (2026-06)
+- DateField (src/components/DateField.tsx): masked DD/MM/YYYY text input, stores ISO internally.
+  Replaced old native/web DateField inside PersonForm (birth/death/marriage/divorce all use it).
+- NEW backend PUT /api/relations/{rel_id}: edit marriage_date/divorce_date/is_divorced on a spouse
+  relation (toggles relation_type spouse<->divorced, clears divorce_date when not divorced). admin/editor
+  only; 400 for non-spouse rel, 404 unknown. Person detail "Info Pernikahan" card gained an edit pencil
+  (spouse-edit-<relId>) opening a modal (edit-marriage-date/edit-divorce-date/edit-divorced-toggle).
+  Dates now render DD/MM/YYYY via isoToDisplay.
+- DUPLICATE-PARENT FIX: add-relative direction=child now auto-links the child to the focus's spouse when
+  the focus has EXACTLY ONE spouse (both parents attach; no more manually-created duplicate mother).
+  0 spouses -> 1 parent; 2+ spouses -> no auto-link (ambiguous). Verified 13/13 backend tests.
+- NAVIGATION: person detail "Jadikan Pusat Pohon" (set-as-root) sets tree-context pendingFocus and
+  navigates to Tree tab which focuses that person. tree-context gained pendingFocusId/setPendingFocus.
+- TREE READABILITY (design agent blueprint /app/design_guidelines.json): parent->child edges now use
+  orthogonal ELBOW routing (react-native-svg Path) instead of straight diagonals; spouse/sibling stay
+  horizontal Lines. Spacing COL_W 128 / ROW_H 164. Filter panel reworded: "Filter Tampilan Pohon",
+  "Pusat saat ini: <nama>", "Generasi Leluhur (Ke atas)/Keturunan (Ke bawah)", "Terapkan Filter".
+  Export modal now exports the CURRENT filtered view (activeFocus + filterUp/filterDown) with a summary,
+  no separate gen steppers.
+- Tested by testing_agent: 13/13 backend PASS + frontend flows verified. No functional bugs.

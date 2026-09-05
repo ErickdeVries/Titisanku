@@ -2,8 +2,8 @@ import { Person, Relation } from "@/src/api";
 
 export const NODE_D = 64; // node diameter
 export const NODE_R = NODE_D / 2;
-const COL_W = 120;
-const ROW_H = 160;
+const COL_W = 128;
+const ROW_H = 164;
 const PAD = 60;
 
 export type LayoutNode = {
@@ -21,6 +21,7 @@ export type LayoutEdge = {
   x2: number;
   y2: number;
   kind: "relation" | "adopted" | "spouse" | "divorce";
+  orient: "v" | "h";
 };
 
 export type TreeLayout = {
@@ -142,6 +143,7 @@ export function buildLayout(
         x2: b.x,
         y2: b.y - NODE_R,
         kind: r.relation_type === "adopted_child" ? "adopted" : "relation",
+        orient: "v",
       });
     } else if (SPOUSE_TYPES.includes(r.relation_type)) {
       edges.push({
@@ -151,6 +153,7 @@ export function buildLayout(
         x2: b.x,
         y2: b.y,
         kind: r.relation_type === "divorced" ? "divorce" : "spouse",
+        orient: "h",
       });
     } else if (SIBLING_TYPES.includes(r.relation_type)) {
       edges.push({
@@ -160,6 +163,7 @@ export function buildLayout(
         x2: b.x,
         y2: b.y,
         kind: "relation",
+        orient: "h",
       });
     }
   }

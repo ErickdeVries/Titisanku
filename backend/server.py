@@ -436,6 +436,32 @@ async def delete_relation(rel_id: str, tree_id: Optional[str] = Query(None), use
     return {"ok": True}
 
 
+class RelationUpdate(BaseModel):
+    marriage_date: Optional[str] = None
+    divorce_date: Optional[str] = None
+    is_divorced: bool = False
+
+
+@api_router.put("/relations/{rel_id}")
+async def update_relation(rel_id: str, data: RelationUpdate, tree_id: Optional[str] = Query(None), user=Depends(get_current_user)):
+    tree, role = await resolve_tree(user, tree_id)
+    require_role_t(role, ["admin", "editor"])
+    r = await db.relations.find_one({"id": rel_id, "tree_id": tree["id"], "deleted_at": None}, {"_id": 0})
+    if not r:
+        raise HTTPException(status_code=404, detail="Relation not found")
+    if r["relation_type"] not in ("spouse", "divorced"):
+        raise HTTPException(status_code=400, detail="Only spouse relations can be updated")
+    update = {
+        "marriage_date": data.marriage_date,
+        "divorce_date": data.divorce_date if data.is_divorced else None,
+        "relation_type": "divorced" if data.is_divorced else "spouse",
+    }
+    await db.relations.update_one({"id": rel_id}, {"$set": update})
+    return await db.relations.find_one({"id": rel_id}, {"_id": 0})
+
+
+
+
 @api_router.post("/people/add-relative")
 async def add_relative(body: AddRelativeInput, tree_id: Optional[str] = Query(None), user=Depends(get_current_user)):
     tree, role = await resolve_tree(user, tree_id)
@@ -452,6 +478,19 @@ async def add_relative(body: AddRelativeInput, tree_id: Optional[str] = Query(No
     focus = await db.people.find_one({"id": body.focus_id, "tree_id": tree["id"], "deleted_at": None}, {"_id": 0})
     if not focus:
         raise HTTPException(status_code=404, detail="Focus person not found")
+
+    # Prevent duplicate father/mother for the same person
+    if body.direction in ("father", "mother"):
+        want = "male" if body.direction == "father" else "female"
+        parent_rels = await db.relations.find(
+            {"tree_id": tree["id"], "related_person_id": body.focus_id,
+             "relation_type": {"$in": ["parent", "adopted_child"]}, "deleted_at": None},
+            {"_id": 0, "person_id": 1},
+        ).to_list(50)
+        for pr in parent_rels:
+            par = await db.people.find_one({"id": pr["person_id"], "deleted_at": None}, {"_id": 0, "gender": 1})
+            if par and par.get("gender") == want:
+                raise HTTPException(status_code=400, detail=f"{'Ayah' if want == 'male' else 'Ibu'} sudah ada untuk orang ini.")
 
     pd = body.person.model_dump()
     pd.pop("is_alive", None)
@@ -489,6 +528,30 @@ async def add_relative(body: AddRelativeInput, tree_id: Optional[str] = Query(No
             "related_person_id": new_id,
             "relation_type": "adopted_child" if pd.get("is_adopted") else "parent",
         }
+        # Auto-link the child to the focus person's spouse (the other parent) so the
+        # user doesn't have to re-create the mother/father and end up with duplicates.
+        spouse_rels = await db.relations.find(
+            {"tree_id": tree["id"], "relation_type": {"$in": ["spouse", "divorced"]},
+             "$or": [{"person_id": body.focus_id}, {"related_person_id": body.focus_id}],
+             "deleted_at": None},
+            {"_id": 0, "person_id": 1, "related_person_id": 1},
+        ).to_list(50)
+        spouse_ids = {
+            (r["related_person_id"] if r["person_id"] == body.focus_id else r["person_id"])
+            for r in spouse_rels
+        }
+        # Only auto-link when there is exactly one spouse (unambiguous other parent).
+        if len(spouse_ids) == 1:
+            other_parent = next(iter(spouse_ids))
+            extra_rels.append({
+                "id": str(uuid.uuid4()),
+                "person_id": other_parent,
+                "related_person_id": new_id,
+                "relation_type": "adopted_child" if pd.get("is_adopted") else "parent",
+                "tree_id": tree["id"],
+                "deleted_at": None,
+                "created_at": now_utc(),
+            })
     elif body.direction == "spouse":
         rel = {
             "id": rel_id,

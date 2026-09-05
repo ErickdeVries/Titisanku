@@ -1,14 +1,14 @@
 import React, { useState } from "react";
-import { Linking, Platform, Pressable, Text, TextInput, View } from "react-native";
+import { Linking, Pressable, Text, TextInput, View } from "react-native";
 import { Image } from "expo-image";
 import { KeyboardAwareScrollView, KeyboardStickyView } from "react-native-keyboard-controller";
 import * as ImagePicker from "expo-image-picker";
-import DateTimePicker from "@react-native-community/datetimepicker";
 import Feather from "@react-native-vector-icons/feather";
 import { fonts, makeStyles, useTheme } from "@/src/theme";
 import { fileUrl, uploadPhoto } from "@/src/api";
 import { useI18n } from "@/src/i18n";
 import { GradientButton } from "./GradientButton";
+import { DateField } from "./DateField";
 
 export type PersonFormValue = {
   name: string;
@@ -91,44 +91,6 @@ function Checkbox({ value, onToggle, label, testID }: { value: boolean; onToggle
       </View>
       <Text style={styles.checkLabel}>{label}</Text>
     </Pressable>
-  );
-}
-
-function DateField({ value, onChange, testID }: { value: string | null; onChange: (v: string) => void; testID?: string }) {
-  const styles = useStyles();
-  const { colors } = useTheme();
-  const [show, setShow] = useState(false);
-
-  if (Platform.OS === "web") {
-    return (
-      <TextInput
-        testID={testID}
-        style={styles.input}
-        placeholder="YYYY-MM-DD"
-        placeholderTextColor={colors.muted}
-        value={value ?? ""}
-        onChangeText={onChange}
-      />
-    );
-  }
-  return (
-    <>
-      <Pressable style={styles.dateBtn} onPress={() => setShow(true)} testID={testID}>
-        <Text style={[styles.dateText, { color: value ? colors.onSurface : colors.muted }]}>{value || "YYYY-MM-DD"}</Text>
-        <Feather name="calendar" size={18} color={colors.muted} />
-      </Pressable>
-      {show ? (
-        <DateTimePicker
-          value={value ? new Date(value) : new Date(2000, 0, 1)}
-          mode="date"
-          display="spinner"
-          onChange={(_e, d) => {
-            setShow(false);
-            if (d) onChange(d.toISOString().slice(0, 10));
-          }}
-        />
-      ) : null}
-    </>
   );
 }
 

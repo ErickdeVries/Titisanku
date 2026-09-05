@@ -1,44 +1,37 @@
 {
   "app_name": "KETURUNANKU",
-  "personality": "1 iOS-Native Clean (Modified per user brief: White background, Poppins font, gradient buttons without borders/shadows)",
-  "personality_one_liner": "A clean, modern, and highly legible interface designed to build and explore family history seamlessly.",
+  "personality": "3 Editorial Mobile LIGHT",
+  "personality_one_liner": "A sophisticated, readable modern-heritage aesthetic using deep royal blue and gold to honor family history without feeling cluttered.",
   "color": {
-    "surface": "#FFFFFF",
-    "onSurface": "#0F172A",
-    "surfaceSecondary": "#F8FAFC",
-    "onSurfaceSecondary": "#334155",
-    "surfaceTertiary": "#F1F5F9",
-    "onSurfaceTertiary": "#475569",
-    "surfaceInverse": "#0F172A",
-    "onSurfaceInverse": "#FFFFFF",
-    "brand": "#F59E0B",
-    "brandPrimary": "#F59E0B",
-    "onBrandPrimary": "#FFFFFF",
-    "brandSecondary": "#3B82F6",
-    "onBrandSecondary": "#FFFFFF",
-    "brandTertiary": "#FEF3C7",
-    "onBrandTertiary": "#B45309",
-    "success": "#10B981",
+    "surface": "#FFFBF0",
+    "onSurface": "#0A1930",
+    "surfaceSecondary": "#F4EFE1",
+    "onSurfaceSecondary": "#1E3A8A",
+    "surfaceTertiary": "#E2D1A1",
+    "onSurfaceTertiary": "#0A1930",
+    "surfaceInverse": "#1E3A8A",
+    "onSurfaceInverse": "#FFFBF0",
+    "brand": "#1E3A8A",
+    "onBrand": "#FFFBF0",
+    "brandPrimary": "#1E3A8A",
+    "onBrandPrimary": "#FFFBF0",
+    "brandSecondary": "#D4AF37",
+    "onBrandSecondary": "#0A1930",
+    "brandTertiary": "#E2D1A1",
+    "onBrandTertiary": "#0A1930",
+    "success": "#15803D",
     "onSuccess": "#FFFFFF",
     "warning": "#F59E0B",
     "onWarning": "#FFFFFF",
-    "error": "#EF4444",
+    "error": "#B91C1C",
     "onError": "#FFFFFF",
-    "info": "#3B82F6",
-    "onInfo": "#FFFFFF",
-    "border": "#E2E8F0",
-    "borderStrong": "#CBD5E1",
-    "divider": "#F1F5F9",
-    "muted": "#64748B",
-    "maleNode": "#3B82F6",
-    "femaleNode": "#EC4899",
-    "adminNode": "#F59E0B",
-    "nodeAdoptedLine": "#94A3B8",
-    "nodeDivorceLine": "#EF4444",
-    "nodeRelationLine": "#CBD5E1"
+    "border": "#D1C7AE",
+    "borderStrong": "#D4AF37",
+    "divider": "#E2D1A1",
+    "muted": "#4B5563"
   },
   "typography": {
-    "displayFontFamily": "Poppins",
+    "displayFontFamily": "Playfair Display",
     "textFontFamily": "Poppins",
     "scale": {
       "sm": 12,
@@ -49,7 +42,7 @@
     }
   },
   "spacing": {
-    "rule": "Use generous padding around content. Forms should be single column with labels above inputs.",
+    "rule": "Generous vertical rhythm to reduce clutter. Tree nodes need strict padding so connector lines don't tangle.",
     "xs": 4,
     "sm": 8,
     "md": 12,
@@ -64,13 +57,18 @@
     "lg": 20,
     "pill": 999
   },
-  "shadow_tier": "0",
-  "navigation": "bottom_tabs",
+  "shadow_tier": "1",
+  "navigation": "stack_only",
   "icon_set": "Feather",
   "glassmorphism": {
-    "enabled": "false",
-    "do's": [],
-    "dont's": ["Skip glassmorphism to keep the white background flat and modern per user brief."]
+    "enabled": true,
+    "do's": [
+      "Use glassmorphism for the floating top header (tree title & actions) so the tree can pan underneath it smoothly.",
+      "Use glassmorphism on floating action buttons (FABs)."
+    ],
+    "dont's": [
+      "Do not use blur inside the SVG canvas itself."
+    ]
   },
   "platform_libraries": {
     "glass": {
@@ -86,83 +84,36 @@
   },
   "screens": [
     {
-      "name": "Onboarding",
-      "purpose": "Introduce the app and log in the user via Google to become the admin/root_node.",
+      "name": "Family Tree Canvas",
+      "purpose": "An interactive, panning canvas to view and edit the family tree, accompanied by a clean glass header and a bottom sheet for filtering.",
       "states": {
-        "loading": "Centered spinner",
-        "empty": "N/A",
-        "error": "Failed login toast or inline error message with retry"
+        "loading": "Centered spinner in Royal Blue (#1E3A8A) with 'Memuat silsilah...'",
+        "empty": "Illustration (Parchment/Tree) with 'Belum ada anggota keluarga' and a primary CTA 'Tambah Anggota Pertama'.",
+        "error": "Message 'Gagal memuat silsilah' with a 'Coba Lagi' button."
       },
-      "layout": "Full-bleed hero image at the top with a vertical gradient scrim (transparent to #FFFFFF) at the bottom 40%. Below the image, title and description text using Poppins. At the bottom, a sticky primary CTA gradient button (Google Login) spanning full width minus padding. Safe area handled."
-    },
-    {
-      "name": "Tree (Pohon)",
-      "purpose": "Main canvas to display the family tree from root_node using SVG/Canvas with two-finger pan and zoom.",
-      "states": {
-        "loading": "Centered spinner over white background",
-        "empty": "Illustration of a family tree with a button to add the first root node if not already created",
-        "error": "Error message with retry button"
-      },
-      "layout": "Full screen canvas using react-native-gesture-handler for zoom/pan. Top header contains 'Export PDF' button. Nodes are circular photos (borderRadius 999). Each node has a colored border based on gender/admin (Male=#3B82F6, Female=#EC4899, Admin=#F59E0B) and shadow (no extra solid borders). When a node is selected, 4 small circular floating buttons [+Father], [+Mother], [+Spouse], [+Child] appear around it. Connector lines: solid for blood/marriage, dashed for adopted, red for divorce. Tapping a node opens a detail bottom sheet or modal."
-    },
-    {
-      "name": "Search (Cari)",
-      "purpose": "Find a person in the entire family tree.",
-      "states": {
-        "loading": "Skeleton list",
-        "empty": "Empty state document illustration with 'No results found'",
-        "error": "Error message with retry button"
-      },
-      "layout": "Sticky search bar at the top (surfaceTertiary background, pill radius). Below it, a FlatList of people. Each row has a circular avatar, name, and relationship/job subtitle. Chevron on the right to indicate navigation to detail."
-    },
-    {
-      "name": "Add (Tambah)",
-      "purpose": "Full data form to add or edit a person in the tree.",
-      "states": {
-        "loading": "Skeleton form",
-        "empty": "N/A",
-        "error": "Error alert/toast on submit failure"
-      },
-      "layout": "Scrollable single-column form. Segmented control or custom tabs at the top for 'General', 'Marriage', 'Divorce'. Form fields have labels above inputs. Includes photo upload area, date pickers for dates, and a checkbox for 'Adopted Child'. Sticky primary gradient CTA at the bottom inside KeyboardAvoidingView."
-    },
-    {
-      "name": "Settings (Setting)",
-      "purpose": "Manage app preferences, backups, and collaboration.",
-      "states": {
-        "loading": "Centered spinner",
-        "empty": "N/A",
-        "error": "Error toast"
-      },
-      "layout": "List of functional rows: Multi-language toggle (ID/EN, default ID), Backup (JSON export), Collaboration (Invite via email). Rows use surfaceSecondary background, rounded corners (md), and grouped sections."
+      "layout": "1. Floating Top Glass Header: Contains Tree Name (Playfair, 20pt) + Member Count Chip. Below it, icon buttons: Filter, Explorer, Ekspor PDF.\n2. Canvas Area: Uses react-native-svg + pan/zoom. \n  - Nodes: Circular images (64x64). Focused node: 80x80 with a 3pt Gold (#D4AF37) ring.\n  - Node Spacing: 64pt minimum horizontal gap, 100pt vertical gap between generations.\n  - Connector Lines: Use elbow/orthogonal routing, NEVER straight diagonals. Solid #1E3A8A (Blood), Dashed #1E3A8A (Adopted), Solid #B91C1C (Divorced). Line width 2pt.\n3. Interaction (Two-Tap): Tap once on a node sets it to 'selected'. When selected, render 4 mini circular 'Tambah' (Add) icon buttons positioned around the node (N/S/E/W). Also render a 'Jadikan Pusat Pohon' pill button directly under the node's name. Tap the node photo again to open the Member Detail modal.\n4. Bottom Sheet (Filter): Title 'Filter Tampilan Pohon'. A gold chip showing 'Pusat saat ini: [Name]'. Two stepper rows: 'Generasi Leluhur (Ke atas)' and 'Generasi Keturunan (Ke bawah)'. 'Tampilkan Semua' outline button. Sticky CTA 'Terapkan Filter' at the bottom."
     }
   ],
   "images": {
-    "onboarding_hero": {
-      "url": "https://images.unsplash.com/photo-1706200637521-b446bd05df0d?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzMzJ8MHwxfHNlYXJjaHwxfHxmYW1pbHklMjBjb25uZWN0aW9uJTIwZ2VuZWFsb2d5fGVufDB8fHx8MTc4ODYxODU3OHww&ixlib=rb-4.1.0&q=85",
-      "alt": "A group of family members holding hands representing connection and genealogy"
+    "node_fallback_male": {
+      "url": "https://images.unsplash.com/photo-1516011362164-3095a82b0af9?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzNTl8MHwxfHNlYXJjaHwxfHxpbmRvbmVzaWFuJTIwbWFuJTIwcG9ydHJhaXQlMjBmYWNlfGVufDB8fHx8MTc4ODYzNDM0OHww&ixlib=rb-4.1.0&q=85",
+      "alt": "Indonesian man portrait for dummy node"
     },
-    "empty_search": {
-      "url": "https://images.unsplash.com/photo-1695131020187-d3dcdab5016b?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NDh8MHwxfHNlYXJjaHwxfHxlbXB0eSUyMGxpc3QlMjBkb2N1bWVudCUyMGFic3RyYWN0fGVufDB8fHx8MTc4ODYxODU3OHww&ixlib=rb-4.1.0&q=85",
-      "alt": "Empty list document abstract for search state"
+    "node_fallback_female": {
+      "url": "https://images.pexels.com/photos/13535267/pexels-photo-13535267.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "alt": "Indonesian woman portrait for dummy node"
     },
-    "empty_tree": {
-      "url": "https://images.unsplash.com/photo-1749006813623-bc3bd798158c?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjY2NzF8MHwxfHNlYXJjaHwxfHxmYW1pbHklMjB0cmVlJTIwY29uY2VwdCUyMGlsbHVzdHJhdGlvbnxlbnwwfHx8fDE3ODg2MTg1Nzl8MA&ixlib=rb-4.1.0&q=85",
-      "alt": "Green abstract shape representing a family tree concept"
+    "empty_tree_background": {
+      "url": "https://images.unsplash.com/photo-1595232208179-d8cf4ca455fc?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2NzZ8MHwxfHNlYXJjaHwxfHxvbGQlMjBwYXBlciUyMHBhcmNobWVudCUyMGJhY2tncm91bmR8ZW58MHx8fHwxNzg4NjM0MzQ4fDA&ixlib=rb-4.1.0&q=85",
+      "alt": "Textured old parchment background"
     }
   },
   "instructions_to_main_agent": [
-    "Strictly use the 'Poppins' font for all text components as explicitly requested by the user.",
-    "Main buttons MUST use a vertical gradient (e.g., brandPrimary #F59E0B to #EA580C) via expo-linear-gradient with NO border and NO shadow (borderWidth: 0, elevation: 0).",
-    "Background color must be white (#FFFFFF) across main screens.",
-    "The 4 bottom tabs must be: Tree (Pohon), Search (Cari), Add (Tambah), Settings (Setting).",
-    "Node Colors: strictly use Male=#3B82F6, Female=#EC4899, Admin=#F59E0B for node borders/shadows.",
-    "Tree logic: Use solid lines for blood/marriage, dashed lines for adopted children, and red lines for divorce.",
-    "Implement the 4-direction seed generator: when a node is tapped, display 4 small [+Father], [+Mother], [+Spouse], [+Child] buttons positioned Top, Bottom, Left, Right around the circular node.",
-    "For the Tree Canvas, utilize react-native-gesture-handler (PinchGestureHandler, PanGestureHandler) for zooming and panning.",
-    "Ensure Default Language is Indonesian (ID), toggleable to English (EN) in Settings.",
-    "For the Birthday reminder, set up local notifications 1 day before the birth_date of living people.",
-    "Collaboration feature: Admin invites via email, others become editors (can add but not delete).",
-    "All images overlaying text must use a gradient-to-dark scrim to ensure minimum WCAG contrast.",
-    "Follow the specific layout patterns for single-column forms with sticky bottom CTAs inside KeyboardAvoidingView."
+    "Strictly follow the color palette: Surface is Cream (#FFFBF0), Primary is Royal Blue (#1E3A8A), Secondary is Gold (#D4AF37). Do NOT use generic grays or standard blue. Apply Playfair Display for headers and Poppins for UI body text.",
+    "For the SVG Canvas Connector Lines: Use elbow/orthogonal path routing to prevent clutter. Formula: M x1 y1 L x1 (y1+y2)/2 L x2 (y1+y2)/2 L x2 y2. Use corner rounding on the path if possible.",
+    "Node visual hierarchy: Normal nodes are 64x64. The 'center' focused node is 80x80 with a 3pt solid gold border. Names are max 2 lines, centered below the node, 12pt Poppins, color #0A1930.",
+    "Interaction logic: Maintain a 'selectedNodeId' state. If a node is selected, render an overlay on top of it showing 4 directional + icons (add parent, add child, add sibling, add spouse) and a 'Jadikan Pusat Pohon' text chip. This solves the discoverability of adding relatives and focusing the tree.",
+    "Implement the Filter panel using @gorhom/bottom-sheet. Use Indonesian wording exactly as specified: 'Filter Tampilan Pohon', 'Pusat saat ini: [Nama]', 'Generasi Leluhur (Ke atas)', 'Generasi Keturunan (Ke bawah)'. Provide '+' and '-' stepper controls for generation depth.",
+    "Place the Header floating over the canvas with a blur/glass background so users can pan underneath it. Include a compact Tree Title, total members count, and 3 distinct icon actions (Filter, Explorer, Export PDF)."
   ]
 }

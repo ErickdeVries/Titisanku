@@ -10,11 +10,13 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Feather from "@react-native-vector-icons/feather";
 import { fonts, makeStyles, useTheme } from "@/src/theme";
-import { getPerson, updatePerson, deletePerson, fileUrl, getTree, listPersonNotes, addPersonNote, addPersonFile, deleteNote, deleteRelation } from "@/src/api";
+import { getPerson, updatePerson, deletePerson, fileUrl, getTree, listPersonNotes, addPersonNote, addPersonFile, deleteNote, deleteRelation, updateRelation } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { useI18n } from "@/src/i18n";
+import { useTree } from "@/src/tree-context";
 import { nodeColor } from "@/src/components/PersonNode";
 import { PersonForm, PersonFormValue } from "@/src/components/PersonForm";
+import { DateField, isoToDisplay } from "@/src/components/DateField";
 import { GradientButton } from "@/src/components/GradientButton";
 
 const useStyles = makeStyles((c) => ({
@@ -29,8 +31,11 @@ const useStyles = makeStyles((c) => ({
   roleTag: { flexDirection: "row", gap: 6, alignItems: "center", backgroundColor: c.brandTertiary, paddingHorizontal: 12, paddingVertical: 4, borderRadius: 999 },
   roleTagText: { fontFamily: fonts.medium, fontSize: 12, color: c.onBrandTertiary },
   quickRow: { flexDirection: "row", justifyContent: "center", gap: 10, paddingHorizontal: 20, marginBottom: 8, flexWrap: "wrap" },
+  centerBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, alignSelf: "center", backgroundColor: c.brandSecondary, paddingHorizontal: 18, paddingVertical: 10, borderRadius: 999, marginBottom: 16 },
+  centerBtnText: { fontFamily: fonts.semibold, fontSize: 14, color: c.onBrandSecondary },
   quickBtn: { alignItems: "center", gap: 6, width: 72 },
   quickIcon: { width: 48, height: 48, borderRadius: 999, alignItems: "center", justifyContent: "center" },
+  quickCheck: { position: "absolute", bottom: -2, right: -2, width: 18, height: 18, borderRadius: 999, backgroundColor: "#2E9E6B", borderWidth: 2, borderColor: "#FFFBF0", alignItems: "center", justifyContent: "center" },
   quickLabel: { fontFamily: fonts.medium, fontSize: 12, color: c.onSurfaceSecondary },
   infoCard: { marginHorizontal: 20, marginTop: 12, backgroundColor: c.surfaceSecondary, borderRadius: 16, overflow: "hidden" },
   infoRow: { flexDirection: "row", alignItems: "center", gap: 12, padding: 14 },
@@ -94,6 +99,7 @@ export default function PersonDetail() {
   const insets = useSafeAreaInsets();
   const qc = useQueryClient();
   const { user } = useAuth();
+  const { setPendingFocus } = useTree();
   const { id } = useLocalSearchParams<{ id: string }>();
 
   const [editing, setEditing] = useState(false);
@@ -106,6 +112,8 @@ export default function PersonDetail() {
   const [viewerUri, setViewerUri] = useState<string | null>(null);
   const [deathConfirm, setDeathConfirm] = useState(false);
   const [lastSaved, setLastSaved] = useState<any>(null);
+  const [editSpouse, setEditSpouse] = useState<{ id: string; name: string; marriage_date: string | null; divorce_date: string | null; is_divorced: boolean } | null>(null);
+  const [relSaving, setRelSaving] = useState(false);
   const zScale = useSharedValue(1);
   const zSaved = useSharedValue(1);
 
@@ -248,6 +256,25 @@ export default function PersonDetail() {
     ]);
   };
 
+  const saveRel = async () => {
+    if (!editSpouse) return;
+    setRelSaving(true);
+    try {
+      await updateRelation(editSpouse.id, {
+        marriage_date: editSpouse.marriage_date,
+        divorce_date: editSpouse.divorce_date,
+        is_divorced: editSpouse.is_divorced,
+      });
+      await qc.invalidateQueries({ queryKey: ["tree"] });
+      await qc.invalidateQueries({ queryKey: ["person", id] });
+      setEditSpouse(null);
+    } catch (e) {
+      console.log("update relation error", e);
+    } finally {
+      setRelSaving(false);
+    }
+  };
+
   const save = async (v: PersonFormValue) => {
     setSaving(true);
     const fields = {
@@ -325,6 +352,11 @@ export default function PersonDetail() {
     router.push(
       `/add-relative?focus_id=${person.id}&direction=${direction}&focus_name=${encodeURIComponent(person.name)}${sib ? `&sib=${sib}` : ""}`,
     );
+  };
+
+  const makeCenter = () => {
+    setPendingFocus(id);
+    router.navigate("/(tabs)");
   };
 
   if (isLoading || !person) {
@@ -407,16 +439,39 @@ export default function PersonDetail() {
             </View>
           </View>
 
+          <Pressable style={styles.centerBtn} onPress={makeCenter} testID="set-as-root">
+            <Feather name="git-merge" size={16} color={colors.onBrandSecondary} />
+            <Text style={styles.centerBtnText}>{t("set_as_root")}</Text>
+          </Pressable>
+
           {canEdit ? (
             <View style={styles.quickRow}>
-              {quick.map((d) => (
-                <Pressable key={d.key} style={styles.quickBtn} onPress={() => goAdd(d.dir, (d as any).sib)} testID={`quick-${d.key}`}>
-                  <View style={[styles.quickIcon, { backgroundColor: d.color }]}>
-                    <Feather name={d.icon as any} size={20} color="#FFFFFF" />
-                  </View>
-                  <Text style={styles.quickLabel}>{d.label}</Text>
-                </Pressable>
-              ))}
+              {quick.map((d) => {
+                const existing =
+                  d.dir === "father" ? relatives.find((r) => r.key === "ayah")?.person
+                  : d.dir === "mother" ? relatives.find((r) => r.key === "ibu")?.person
+                  : null;
+                const label = existing ? existing.name.split(" ")[0] : d.label;
+                const icon = existing ? "user" : d.icon;
+                return (
+                  <Pressable
+                    key={d.key}
+                    style={styles.quickBtn}
+                    onPress={() => (existing ? router.push(`/person/${existing.id}`) : goAdd(d.dir, (d as any).sib))}
+                    testID={`quick-${d.key}`}
+                  >
+                    <View style={[styles.quickIcon, { backgroundColor: d.color }]}>
+                      <Feather name={icon as any} size={20} color="#FFFFFF" />
+                      {existing ? (
+                        <View style={styles.quickCheck}>
+                          <Feather name="check" size={10} color="#FFFFFF" />
+                        </View>
+                      ) : null}
+                    </View>
+                    <Text style={styles.quickLabel} numberOfLines={1}>{label}</Text>
+                  </Pressable>
+                );
+              })}
             </View>
           ) : null}
 
@@ -462,12 +517,12 @@ export default function PersonDetail() {
                             <Text style={styles.infoValue}>{s.name}</Text>
                             {s.marriage_date ? (
                               <Text style={styles.spouseSub}>
-                                {t("married_since")} {s.marriage_date}
+                                {t("married_since")} {isoToDisplay(s.marriage_date)}
                               </Text>
                             ) : null}
                             {s.divorced && s.divorce_date ? (
                               <Text style={[styles.spouseSub, { color: colors.error }]}>
-                                {t("divorced_badge")} · {s.divorce_date}
+                                {t("divorced_badge")} · {isoToDisplay(s.divorce_date)}
                               </Text>
                             ) : null}
                           </View>
@@ -475,6 +530,16 @@ export default function PersonDetail() {
                             <View style={styles.divorceBadge}>
                               <Text style={styles.divorceBadgeText}>{t("divorced_badge")}</Text>
                             </View>
+                          ) : null}
+                          {canEdit ? (
+                            <Pressable
+                              onPress={() => setEditSpouse({ id: s.id, name: s.name, marriage_date: s.marriage_date ?? null, divorce_date: s.divorce_date ?? null, is_divorced: s.divorced })}
+                              hitSlop={10}
+                              testID={`spouse-edit-${s.id}`}
+                              style={{ marginLeft: 6 }}
+                            >
+                              <Feather name="edit-2" size={16} color={colors.brandSecondary} />
+                            </Pressable>
                           ) : null}
                           {canEdit ? (
                             <Pressable onPress={() => delRel(s.id, s.name)} hitSlop={10} testID={`spouse-del-${s.id}`} style={{ marginLeft: 6 }}>
@@ -618,6 +683,46 @@ export default function PersonDetail() {
           <Pressable style={styles.viewerClose} onPress={() => { setViewerUri(null); zScale.value = 1; zSaved.value = 1; }} testID="viewer-close">
             <Feather name="x" size={22} color="#FFFFFF" />
           </Pressable>
+        </View>
+      </Modal>
+
+      <Modal visible={!!editSpouse} transparent animationType="fade" onRequestClose={() => setEditSpouse(null)}>
+        <View style={styles.confirmBg}>
+          <View style={styles.confirmCard}>
+            <Text style={styles.confirmTitle}>{t("marriage_info")}{editSpouse ? ` · ${editSpouse.name}` : ""}</Text>
+            <View>
+              <Text style={[styles.infoLabel, { marginBottom: 6 }]}>{t("marriage_date")}</Text>
+              <DateField
+                testID="edit-marriage-date"
+                value={editSpouse?.marriage_date ?? null}
+                onChange={(v) => setEditSpouse((s) => (s ? { ...s, marriage_date: v } : s))}
+              />
+            </View>
+            <Pressable
+              style={{ flexDirection: "row", alignItems: "center", gap: 10 }}
+              onPress={() => setEditSpouse((s) => (s ? { ...s, is_divorced: !s.is_divorced } : s))}
+              testID="edit-divorced-toggle"
+            >
+              <View style={{ width: 22, height: 22, borderRadius: 6, borderWidth: 2, borderColor: colors.brandPrimary, alignItems: "center", justifyContent: "center", backgroundColor: editSpouse?.is_divorced ? colors.brandPrimary : "transparent" }}>
+                {editSpouse?.is_divorced ? <Feather name="check" size={14} color={colors.onBrandPrimary} /> : null}
+              </View>
+              <Text style={styles.infoValue}>{t("is_divorced")}</Text>
+            </Pressable>
+            {editSpouse?.is_divorced ? (
+              <View>
+                <Text style={[styles.infoLabel, { marginBottom: 6 }]}>{t("divorce_date")}</Text>
+                <DateField
+                  testID="edit-divorce-date"
+                  value={editSpouse?.divorce_date ?? null}
+                  onChange={(v) => setEditSpouse((s) => (s ? { ...s, divorce_date: v } : s))}
+                />
+              </View>
+            ) : null}
+            <View style={styles.confirmRow}>
+              <GradientButton testID="edit-spouse-cancel" variant="secondary" title={t("cancel")} onPress={() => setEditSpouse(null)} style={{ flex: 1 }} />
+              <GradientButton testID="edit-spouse-save" title={t("save")} onPress={saveRel} loading={relSaving} style={{ flex: 1 }} />
+            </View>
+          </View>
         </View>
       </Modal>
 

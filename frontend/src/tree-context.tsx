@@ -13,6 +13,8 @@ type TreeCtx = {
   loading: boolean;
   setActive: (id: string) => Promise<void>;
   refreshTrees: () => Promise<Tree[]>;
+  pendingFocusId: string | null;
+  setPendingFocus: (id: string | null) => void;
 };
 
 const Ctx = createContext<TreeCtx>({
@@ -22,6 +24,8 @@ const Ctx = createContext<TreeCtx>({
   loading: true,
   setActive: async () => {},
   refreshTrees: async () => [],
+  pendingFocusId: null,
+  setPendingFocus: () => {},
 });
 
 export function TreeProvider({ children }: { children: React.ReactNode }) {
@@ -30,6 +34,8 @@ export function TreeProvider({ children }: { children: React.ReactNode }) {
   const [trees, setTrees] = useState<Tree[]>([]);
   const [activeTreeId, setActiveId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [pendingFocusId, setPendingFocusId] = useState<string | null>(null);
+  const setPendingFocus = useCallback((id: string | null) => setPendingFocusId(id), []);
 
   const applyActive = useCallback(
     async (id: string | null) => {
@@ -81,7 +87,7 @@ export function TreeProvider({ children }: { children: React.ReactNode }) {
   const activeTree = trees.find((t) => t.id === activeTreeId) || null;
 
   return (
-    <Ctx.Provider value={{ trees, activeTree, activeTreeId, loading, setActive, refreshTrees }}>
+    <Ctx.Provider value={{ trees, activeTree, activeTreeId, loading, setActive, refreshTrees, pendingFocusId, setPendingFocus }}>
       {children}
     </Ctx.Provider>
   );
