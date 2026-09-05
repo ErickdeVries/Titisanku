@@ -52,6 +52,9 @@ JSON backup, and email collaboration invites. Google login; first user = admin +
 
 ## Notes
 - Birthday reminders + image picker require a native/dev build to fully test (not Expo Go web).
+- DO NOT wipe the shared preview DB in future iterations — the user's real data lives there. Earlier
+  end-of-iteration `delete_many({})` wipes caused the "data tidak tersimpan" report. For tests, seed and
+  remove ONLY the synthetic docs you created.
 
 ## Iteration 3 — Chat, Notes, Files, Notifications (2026-06)
 - Collections added: `person_notes` (id, person_id, author_id, author_name, note_text, attachments[], created_at, deleted_at),

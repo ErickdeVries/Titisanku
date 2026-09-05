@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { View, Text, Pressable, TextInput, FlatList, Modal, Switch } from "react-native";
+import { View, Text, Pressable, TextInput, FlatList, Modal, Switch, ScrollView } from "react-native";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
@@ -8,7 +8,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Feather from "@react-native-vector-icons/feather";
 import { brandGradient, fonts, makeStyles, useTheme } from "@/src/theme";
-import { getChat, getTree, sendChat, uploadPhoto, fileUrl, markNotificationsRead } from "@/src/api";
+import { getChat, getTree, sendChat, deleteChat, setTyping, uploadPhoto, fileUrl, markNotificationsRead } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { useI18n } from "@/src/i18n";
 
@@ -27,6 +27,12 @@ const useStyles = makeStyles((c) => ({
   toggleInactive: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: 12, gap: 10, backgroundColor: c.surfaceTertiary, borderRadius: 14 },
   toggleLabelInactive: { fontFamily: fonts.medium, fontSize: 13, color: c.onSurfaceSecondary, flex: 1 },
   statsText: { fontFamily: fonts.regular, fontSize: 12, color: c.muted },
+  chipRow: { gap: 8, paddingRight: 8 },
+  chip: { flexDirection: "row", alignItems: "center", gap: 5, height: 36, paddingHorizontal: 14, borderRadius: 999, backgroundColor: c.surfaceTertiary, flexShrink: 0 },
+  chipActive: { backgroundColor: c.brandPrimary },
+  chipText: { fontFamily: fonts.medium, fontSize: 13, color: c.onSurfaceSecondary },
+  chipTextActive: { color: c.onBrandPrimary },
+  typingText: { fontFamily: fonts.regular, fontSize: 12, color: c.brandSecondary, fontStyle: "italic", paddingHorizontal: 16, paddingTop: 6 },
   nameFilter: { flexDirection: "row", alignItems: "center", gap: 8, alignSelf: "flex-start", backgroundColor: c.surfaceTertiary, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999 },
   nameFilterText: { fontFamily: fonts.medium, fontSize: 13, color: c.onSurface },
   row: { flexDirection: "row", marginVertical: 4, paddingHorizontal: 12, gap: 8, alignItems: "flex-end" },
@@ -97,22 +103,43 @@ export default function ChatScreen() {
   const qc = useQueryClient();
   const listRef = useRef<FlatList>(null);
 
-  const { data } = useQuery({ queryKey: ["chat"], queryFn: getChat, refetchInterval: 5000 });
+  const { data } = useQuery({ queryKey: ["chat"], queryFn: getChat, refetchInterval: 3000 });
   const { data: tree } = useQuery({ queryKey: ["tree"], queryFn: getTree });
   const [text, setText] = useState("");
   const [replyTo, setReplyTo] = useState<any>(null);
   const [sending, setSending] = useState(false);
   const [aliveOnly, setAliveOnly] = useState(true);
   const [filterPersonId, setFilterPersonId] = useState<string | null>(null);
-  const [namePickerOpen, setNamePickerOpen] = useState(false);
   const [mentionOpen, setMentionOpen] = useState(false);
   const [mentions, setMentions] = useState<string[]>([]);
+  const [actionMsg, setActionMsg] = useState<any>(null);
+  const lastTyped = useRef(0);
 
   const isAdmin = user?.role === "admin";
   const canChat = user?.role === "admin" || user?.role === "editor";
   const allMessages = data?.messages ?? [];
   const members = data?.members ?? [];
+  const typing = (data?.typing ?? []) as string[];
   const alivePeople = (tree?.people ?? []).filter((p) => p.is_alive !== false);
+
+  const onType = (v: string) => {
+    setText(v);
+    const now = Date.now();
+    if (now - lastTyped.current > 2000) {
+      lastTyped.current = now;
+      setTyping().catch(() => {});
+    }
+  };
+
+  const removeMessage = async (msgId: string) => {
+    setActionMsg(null);
+    try {
+      await deleteChat(msgId);
+      await qc.invalidateQueries({ queryKey: ["chat"] });
+    } catch (e) {
+      console.log("delete chat error", e);
+    }
+  };
 
   const visible = useMemo(() => {
     let v = allMessages;
@@ -120,8 +147,6 @@ export default function ChatScreen() {
     if (filterPersonId) v = v.filter((m: any) => m.sender_person_id === filterPersonId);
     return v;
   }, [allMessages, aliveOnly, isAdmin, filterPersonId]);
-
-  const filterName = filterPersonId ? alivePeople.find((p) => p.id === filterPersonId)?.name ?? t("all_members") : t("all_members");
 
   useEffect(() => {
     markNotificationsRead("chat").then(() => qc.invalidateQueries({ queryKey: ["notifications"] }));
@@ -184,7 +209,7 @@ export default function ChatScreen() {
     return (
       <Pressable
         style={[styles.row, mine && styles.rowMine]}
-        onLongPress={() => canChat && setReplyTo(item)}
+        onLongPress={() => canChat && setActionMsg(item)}
         testID={`chat-msg-${item.id}`}
       >
         {!mine ? (
@@ -269,11 +294,34 @@ export default function ChatScreen() {
         <Text style={styles.statsText}>
           {data?.alive_count ?? 0} {t("living_count_a")} {data?.total_count ?? 0} {t("living_count_b")}
         </Text>
-        <Pressable style={styles.nameFilter} onPress={() => setNamePickerOpen(true)} testID="name-filter">
-          <Feather name="filter" size={14} color={colors.onSurfaceSecondary} />
-          <Text style={styles.nameFilterText}>{filterName}</Text>
-          {filterPersonId ? <Feather name="x" size={14} color={colors.muted} onPress={() => setFilterPersonId(null)} /> : <Feather name="chevron-down" size={14} color={colors.muted} />}
-        </Pressable>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.chipRow}
+          testID="name-filter-chips"
+        >
+          <Pressable
+            style={[styles.chip, !filterPersonId && styles.chipActive]}
+            onPress={() => setFilterPersonId(null)}
+            testID="chip-all"
+          >
+            <Feather name="users" size={13} color={!filterPersonId ? colors.onBrandPrimary : colors.onSurfaceSecondary} />
+            <Text style={[styles.chipText, !filterPersonId && styles.chipTextActive]}>{t("all_members")}</Text>
+          </Pressable>
+          {alivePeople.map((p) => {
+            const active = filterPersonId === p.id;
+            return (
+              <Pressable
+                key={p.id}
+                style={[styles.chip, active && styles.chipActive]}
+                onPress={() => setFilterPersonId(active ? null : p.id)}
+                testID={`chip-${p.id}`}
+              >
+                <Text style={[styles.chipText, active && styles.chipTextActive]}>{p.name}</Text>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
       </View>
 
       <KeyboardAvoidingView style={{ flex: 1 }} behavior="translate-with-padding" keyboardVerticalOffset={0}>
@@ -309,6 +357,12 @@ export default function ChatScreen() {
           </View>
         ) : null}
 
+        {typing.length ? (
+          <Text style={styles.typingText} testID="typing-indicator">
+            {typing.join(", ")} {t("is_typing")}
+          </Text>
+        ) : null}
+
         {canChat ? (
           <View style={[styles.inputBar, { paddingBottom: insets.bottom + 8 }]}>
             <Pressable style={styles.iconBtn} onPress={sendPhoto} testID="chat-photo-button">
@@ -323,7 +377,7 @@ export default function ChatScreen() {
               placeholder={t("type_message")}
               placeholderTextColor={colors.muted}
               value={text}
-              onChangeText={setText}
+              onChangeText={onType}
               multiline
             />
             <Pressable style={[styles.iconBtn, styles.sendBtn]} onPress={() => doSend()} disabled={sending} testID="chat-send-button">
@@ -336,32 +390,6 @@ export default function ChatScreen() {
           </View>
         )}
       </KeyboardAvoidingView>
-
-      {/* Name filter picker */}
-      <Modal visible={namePickerOpen} transparent animationType="slide" onRequestClose={() => setNamePickerOpen(false)}>
-        <Pressable style={styles.modalBg} onPress={() => setNamePickerOpen(false)}>
-          <Pressable style={styles.sheet} onPress={() => {}}>
-            <Text style={styles.sheetTitle}>{t("filter_by_name")}</Text>
-            <FlatList
-              data={[{ id: "__all__", name: t("all_members") }, ...alivePeople]}
-              keyExtractor={(p) => p.id}
-              renderItem={({ item }) => (
-                <Pressable
-                  style={styles.pickRow}
-                  onPress={() => {
-                    setFilterPersonId(item.id === "__all__" ? null : item.id);
-                    setNamePickerOpen(false);
-                  }}
-                  testID={`namefilter-${item.id}`}
-                >
-                  <Feather name={item.id === "__all__" ? "users" : "user"} size={18} color={colors.brandPrimary} />
-                  <Text style={styles.pickText}>{item.name}</Text>
-                </Pressable>
-              )}
-            />
-          </Pressable>
-        </Pressable>
-      </Modal>
 
       {/* Mention picker */}
       <Modal visible={mentionOpen} transparent animationType="slide" onRequestClose={() => setMentionOpen(false)}>
@@ -379,6 +407,32 @@ export default function ChatScreen() {
               )}
               ListEmptyComponent={<Text style={[styles.emptyText, { padding: 20 }]}>-</Text>}
             />
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* Message action sheet (reply / delete) */}
+      <Modal visible={!!actionMsg} transparent animationType="slide" onRequestClose={() => setActionMsg(null)}>
+        <Pressable style={styles.modalBg} onPress={() => setActionMsg(null)}>
+          <Pressable style={styles.sheet} onPress={() => {}}>
+            <Text style={styles.sheetTitle}>{actionMsg?.sender_name}</Text>
+            <Pressable
+              style={styles.pickRow}
+              onPress={() => {
+                setReplyTo(actionMsg);
+                setActionMsg(null);
+              }}
+              testID="action-reply"
+            >
+              <Feather name="corner-up-left" size={18} color={colors.brandSecondary} />
+              <Text style={styles.pickText}>{t("reply")}</Text>
+            </Pressable>
+            {actionMsg && (isAdmin || actionMsg.sender_id === user?.user_id) ? (
+              <Pressable style={styles.pickRow} onPress={() => removeMessage(actionMsg.id)} testID="action-delete">
+                <Feather name="trash-2" size={18} color={colors.error} />
+                <Text style={[styles.pickText, { color: colors.error }]}>{t("delete")}</Text>
+              </Pressable>
+            ) : null}
           </Pressable>
         </Pressable>
       </Modal>

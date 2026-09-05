@@ -122,6 +122,8 @@ export async function addPersonFile(personId: string, uri: string): Promise<any>
 export const getChat = () => apiFetch("/chat");
 export const sendChat = (payload: { message?: string; attachments?: string[]; reply_to?: string | null; mentions?: string[] }) =>
   apiFetch("/chat", { method: "POST", body: JSON.stringify(payload) });
+export const deleteChat = (msgId: string) => apiFetch(`/chat/${msgId}`, { method: "DELETE" });
+export const setTyping = () => apiFetch("/chat/typing", { method: "POST" });
 
 // ---- Notifications ----
 export const getNotifications = () => apiFetch("/notifications");

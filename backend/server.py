@@ -635,6 +635,14 @@ async def get_chat(user=Depends(get_current_user)):
         m["sender_person_id"] = match["id"] if match else None
         m["read_by"] = m.get("read_by", [])
         out.append(m)
+    cutoff = now_utc() - timedelta(seconds=6)
+    typing_names = []
+    async for d in db.chat_typing.find({"room_id": room, "user_id": {"$ne": user["user_id"]}}, {"_id": 0}):
+        upd = d.get("updated_at")
+        if upd is not None and upd.tzinfo is None:
+            upd = upd.replace(tzinfo=timezone.utc)
+        if upd and upd > cutoff:
+            typing_names.append(d.get("name", "?"))
     return {
         "room_id": room,
         "room_name": room_name,
@@ -642,7 +650,31 @@ async def get_chat(user=Depends(get_current_user)):
         "alive_count": alive_count,
         "total_count": total_count,
         "members": members,
+        "typing": typing_names,
     }
+
+
+@api_router.post("/chat/typing")
+async def chat_typing(user=Depends(get_current_user)):
+    require_role(user, ["admin", "editor"])
+    room = await get_family_room_id()
+    await db.chat_typing.update_one(
+        {"user_id": user["user_id"]},
+        {"$set": {"user_id": user["user_id"], "name": user["name"], "room_id": room, "updated_at": now_utc()}},
+        upsert=True,
+    )
+    return {"ok": True}
+
+
+@api_router.delete("/chat/{msg_id}")
+async def delete_chat(msg_id: str, user=Depends(get_current_user)):
+    m = await db.family_chat.find_one({"id": msg_id, "deleted_at": None}, {"_id": 0})
+    if not m:
+        raise HTTPException(status_code=404, detail="Message not found")
+    if user["role"] != "admin" and m["sender_id"] != user["user_id"]:
+        raise HTTPException(status_code=403, detail="Hanya pengirim atau admin yang bisa menghapus pesan")
+    await db.family_chat.update_one({"id": msg_id}, {"$set": {"deleted_at": now_utc()}})
+    return {"ok": True}
 
 
 @api_router.post("/chat")

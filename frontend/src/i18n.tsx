@@ -125,6 +125,7 @@ const dict = {
     hide_chat_prompt2: "di mode 'Masih Hidup Saja'?",
     yes: "Ya",
     no: "Tidak",
+    is_typing: "sedang mengetik...",
   },
   en: {
     appName: "KETURUNANKU",
@@ -244,6 +245,7 @@ const dict = {
     hide_chat_prompt2: "in 'Living Only' mode?",
     yes: "Yes",
     no: "No",
+    is_typing: "is typing...",
   },
 };
 

@@ -73,6 +73,7 @@ def seeded(mongo_db):
     coll_names = [
         "users", "people", "relations", "user_sessions", "invites",
         "meta", "person_notes", "family_chat", "app_notifications",
+        "chat_typing",
     ]
     for c in coll_names:
         db[c].delete_many({})

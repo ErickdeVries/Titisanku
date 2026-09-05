@@ -14,7 +14,7 @@ import io
 import uuid
 import requests
 
-from conftest import auth, BASE_URL
+from conftest import auth, BASE_URL, now_utc
 
 
 API = f"{BASE_URL}/api"
@@ -519,3 +519,180 @@ class TestIsAlive:
         by_id = {p["id"]: p for p in r.json()["people"]}
         assert by_id[seeded["editor2"]["person_id"]]["is_alive"] is False
         assert by_id[seeded["editor"]["person_id"]]["is_alive"] is True
+
+
+# ---------- REPORTED BUG: Persistence across write endpoints (Create -> GET) ----------
+class TestPersistence:
+    """Reported bug: 'preview cannot save input data'. Verify each write endpoint
+    persists AND survives a subsequent GET (i.e., data actually stored in DB)."""
+
+    def test_add_relative_persists_in_tree(self, seeded):
+        unique = f"TEST_Persist_{uuid.uuid4().hex[:6]}"
+        r = requests.post(
+            f"{API}/people/add-relative",
+            json={
+                "focus_id": seeded["root_person_id"],
+                "direction": "child",
+                "person": {"name": unique, "gender": "male"},
+            },
+            headers=auth(seeded["admin"]["token"]),
+        )
+        assert r.status_code == 200, r.text
+        new_id = r.json()["person"]["id"]
+        # GET /tree must contain the new person
+        tree = requests.get(f"{API}/tree", headers=auth(seeded["admin"]["token"])).json()
+        names = {p["id"]: p["name"] for p in tree["people"]}
+        assert new_id in names
+        assert names[new_id] == unique
+        # relation persisted too
+        rel_ids = {r_["person_id"] for r_ in tree["relations"]}
+        rel_ids |= {r_["related_person_id"] for r_ in tree["relations"]}
+        assert new_id in rel_ids
+
+    def test_update_person_persists(self, seeded):
+        r = requests.post(
+            f"{API}/people/add-relative",
+            json={
+                "focus_id": seeded["root_person_id"],
+                "direction": "child",
+                "person": {"name": "TEST_ToUpdate"},
+            },
+            headers=auth(seeded["admin"]["token"]),
+        )
+        pid = r.json()["person"]["id"]
+        new_name = f"TEST_Updated_{uuid.uuid4().hex[:6]}"
+        r2 = requests.put(
+            f"{API}/people/{pid}",
+            json={"name": new_name, "gender": "female", "birth_place": "Jakarta"},
+            headers=auth(seeded["admin"]["token"]),
+        )
+        assert r2.status_code == 200
+        # GET back
+        r3 = requests.get(f"{API}/people/{pid}", headers=auth(seeded["admin"]["token"]))
+        assert r3.status_code == 200
+        got = r3.json()
+        assert got["name"] == new_name
+        assert got["gender"] == "female"
+        assert got["birth_place"] == "Jakarta"
+
+    def test_note_persists_in_list(self, seeded):
+        text = f"TEST_Persist_Note_{uuid.uuid4().hex[:6]}"
+        r = requests.post(
+            f"{API}/people/{seeded['root_person_id']}/notes",
+            json={"note_text": text},
+            headers=auth(seeded["admin"]["token"]),
+        )
+        assert r.status_code == 200
+        note_id = r.json()["id"]
+        r2 = requests.get(
+            f"{API}/people/{seeded['root_person_id']}/notes",
+            headers=auth(seeded["admin"]["token"]),
+        )
+        assert r2.status_code == 200
+        found = [n for n in r2.json() if n["id"] == note_id]
+        assert found and found[0]["note_text"] == text
+
+    def test_chat_message_persists(self, seeded, mongo_db):
+        mongo_db.family_chat.delete_many({})
+        text = f"TEST_Persist_Chat_{uuid.uuid4().hex[:6]}"
+        r = requests.post(
+            f"{API}/chat",
+            json={"message": text},
+            headers=auth(seeded["admin"]["token"]),
+        )
+        assert r.status_code == 200
+        msg_id = r.json()["id"]
+        r2 = requests.get(f"{API}/chat", headers=auth(seeded["admin"]["token"]))
+        assert r2.status_code == 200
+        ids = [m["id"] for m in r2.json()["messages"]]
+        assert msg_id in ids
+
+
+# ---------- NEW FEATURES: DELETE /api/chat/{id} ----------
+class TestDeleteChat:
+    def _send(self, seeded, token, text="TEST delete-chat"):
+        r = requests.post(f"{API}/chat", json={"message": text}, headers=auth(token))
+        assert r.status_code == 200, r.text
+        return r.json()["id"]
+
+    def test_sender_can_delete_own(self, seeded, mongo_db):
+        mongo_db.family_chat.delete_many({})
+        mid = self._send(seeded, seeded["editor"]["token"], "TEST own-msg")
+        r = requests.delete(f"{API}/chat/{mid}", headers=auth(seeded["editor"]["token"]))
+        assert r.status_code == 200
+        # GET no longer contains it
+        got = requests.get(f"{API}/chat", headers=auth(seeded["admin"]["token"])).json()
+        assert mid not in [m["id"] for m in got["messages"]]
+
+    def test_admin_can_delete_any(self, seeded, mongo_db):
+        mongo_db.family_chat.delete_many({})
+        mid = self._send(seeded, seeded["editor"]["token"], "TEST admin-delete")
+        r = requests.delete(f"{API}/chat/{mid}", headers=auth(seeded["admin"]["token"]))
+        assert r.status_code == 200
+        got = requests.get(f"{API}/chat", headers=auth(seeded["admin"]["token"])).json()
+        assert mid not in [m["id"] for m in got["messages"]]
+
+    def test_non_sender_non_admin_forbidden(self, seeded, mongo_db):
+        mongo_db.family_chat.delete_many({})
+        mid = self._send(seeded, seeded["editor"]["token"], "TEST forbidden-delete")
+        r = requests.delete(f"{API}/chat/{mid}", headers=auth(seeded["editor2"]["token"]))
+        assert r.status_code == 403
+        # Still present in GET
+        got = requests.get(f"{API}/chat", headers=auth(seeded["admin"]["token"])).json()
+        assert mid in [m["id"] for m in got["messages"]]
+
+    def test_delete_nonexistent_returns_404(self, seeded):
+        r = requests.delete(f"{API}/chat/does-not-exist", headers=auth(seeded["admin"]["token"]))
+        assert r.status_code == 404
+
+    def test_delete_already_deleted_returns_404(self, seeded, mongo_db):
+        mongo_db.family_chat.delete_many({})
+        mid = self._send(seeded, seeded["editor"]["token"], "TEST double-delete")
+        r1 = requests.delete(f"{API}/chat/{mid}", headers=auth(seeded["editor"]["token"]))
+        assert r1.status_code == 200
+        r2 = requests.delete(f"{API}/chat/{mid}", headers=auth(seeded["admin"]["token"]))
+        assert r2.status_code == 404
+
+
+# ---------- NEW FEATURES: POST /api/chat/typing ----------
+class TestChatTyping:
+    def test_viewer_forbidden(self, seeded):
+        r = requests.post(f"{API}/chat/typing", headers=auth(seeded["viewer"]["token"]))
+        assert r.status_code == 403
+
+    def test_editor_typing_appears_for_other_users_not_self(self, seeded, mongo_db):
+        mongo_db.chat_typing.delete_many({})
+        # editor marks typing
+        r = requests.post(f"{API}/chat/typing", headers=auth(seeded["editor"]["token"]))
+        assert r.status_code == 200
+        # Admin (other user) should see editor in typing
+        got_admin = requests.get(f"{API}/chat", headers=auth(seeded["admin"]["token"])).json()
+        assert "typing" in got_admin
+        # editor's name — look up from users collection
+        editor_doc = mongo_db.users.find_one({"user_id": seeded["editor"]["id"]})
+        assert editor_doc["name"] in got_admin["typing"]
+        # Caller (editor) should NOT see own name in typing
+        got_self = requests.get(f"{API}/chat", headers=auth(seeded["editor"]["token"])).json()
+        assert editor_doc["name"] not in got_self["typing"]
+
+    def test_admin_typing_visible_to_editor(self, seeded, mongo_db):
+        mongo_db.chat_typing.delete_many({})
+        r = requests.post(f"{API}/chat/typing", headers=auth(seeded["admin"]["token"]))
+        assert r.status_code == 200
+        got = requests.get(f"{API}/chat", headers=auth(seeded["editor"]["token"])).json()
+        assert seeded["admin"]["name"] in got["typing"]
+
+    def test_typing_expires_after_6s(self, seeded, mongo_db):
+        # Insert a stale typing doc (updated 10s ago) and verify it's NOT returned
+        from datetime import timedelta
+        mongo_db.chat_typing.delete_many({})
+        room = seeded["admin"]["id"]
+        stale_time = now_utc() - timedelta(seconds=10)
+        mongo_db.chat_typing.insert_one({
+            "user_id": seeded["editor2"]["id"],
+            "name": "TEST_StaleTyper",
+            "room_id": room,
+            "updated_at": stale_time,
+        })
+        got = requests.get(f"{API}/chat", headers=auth(seeded["admin"]["token"])).json()
+        assert "TEST_StaleTyper" not in got["typing"]
