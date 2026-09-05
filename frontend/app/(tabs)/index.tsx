@@ -1,0 +1,314 @@
+import { useMemo, useState, useEffect } from "react";
+import { View, Text, Pressable, ActivityIndicator, useWindowDimensions, Modal } from "react-native";
+import { Image } from "expo-image";
+import { useRouter } from "expo-router";
+import { useQuery } from "@tanstack/react-query";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { Gesture, GestureDetector } from "react-native-gesture-handler";
+import Animated, { useSharedValue, useAnimatedStyle, withTiming, runOnJS } from "react-native-reanimated";
+import Svg, { Line } from "react-native-svg";
+import Feather from "@react-native-vector-icons/feather";
+import { fonts, makeStyles, useTheme } from "@/src/theme";
+import { getTree } from "@/src/api";
+import { useAuth } from "@/src/auth";
+import { useI18n } from "@/src/i18n";
+import { PersonNode } from "@/src/components/PersonNode";
+import { buildLayout, NODE_R } from "@/src/tree-layout";
+import { exportTreePdf } from "@/src/export-pdf";
+import { GradientButton } from "@/src/components/GradientButton";
+
+const EMPTY_IMG =
+  "https://images.unsplash.com/photo-1749006813623-bc3bd798158c?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjY2NzF8MHwxfHNlYXJjaHwxfHxmYW1pbHklMjB0cmVlJTIwY29uY2VwdCUyMGlsbHVzdHJhdGlvbnxlbnwwfHx8fDE3ODg2MTg1Nzl8MA&ixlib=rb-4.1.0&q=85";
+
+const useStyles = makeStyles((c) => ({
+  root: { flex: 1, backgroundColor: c.surface },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 20,
+    paddingBottom: 12,
+    backgroundColor: c.surface,
+    borderBottomWidth: 1,
+    borderBottomColor: c.divider,
+  },
+  headerTitle: { fontFamily: fonts.bold, fontSize: 20, color: c.onSurface },
+  exportBtn: { flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: c.surfaceTertiary, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 999 },
+  exportText: { fontFamily: fonts.medium, fontSize: 13, color: c.onSurfaceSecondary },
+  canvasArea: { flex: 1, overflow: "hidden" },
+  center: { flex: 1, alignItems: "center", justifyContent: "center", padding: 32, gap: 16 },
+  emptyImg: { width: 180, height: 180, borderRadius: 20 },
+  emptyTitle: { fontFamily: fonts.semibold, fontSize: 18, color: c.onSurface },
+  emptyDesc: { fontFamily: fonts.regular, fontSize: 14, color: c.muted, textAlign: "center" },
+  nodeWrap: { position: "absolute", width: 96, alignItems: "center" },
+  addBtn: {
+    position: "absolute",
+    width: 34,
+    height: 34,
+    borderRadius: 999,
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: "#0F172A",
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 4,
+  },
+  legend: {
+    position: "absolute",
+    left: 16,
+    flexDirection: "row",
+    gap: 14,
+    backgroundColor: "rgba(255,255,255,0.92)",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 12,
+  },
+  legendItem: { flexDirection: "row", alignItems: "center", gap: 5 },
+  legendDot: { width: 10, height: 10, borderRadius: 999 },
+  legendText: { fontFamily: fonts.regular, fontSize: 11, color: c.onSurfaceSecondary },
+  // export modal
+  modalBg: { flex: 1, backgroundColor: "rgba(15,23,42,0.4)", justifyContent: "flex-end" },
+  sheet: { backgroundColor: c.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, gap: 20 },
+  sheetTitle: { fontFamily: fonts.bold, fontSize: 18, color: c.onSurface },
+  stepperRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  stepperLabel: { fontFamily: fonts.medium, fontSize: 14, color: c.onSurfaceSecondary },
+  stepper: { flexDirection: "row", alignItems: "center", gap: 16 },
+  stepBtn: { width: 36, height: 36, borderRadius: 999, backgroundColor: c.surfaceTertiary, alignItems: "center", justifyContent: "center" },
+  stepVal: { fontFamily: fonts.semibold, fontSize: 16, color: c.onSurface, minWidth: 24, textAlign: "center" },
+}));
+
+function AddButton({ x, y, bg, icon, onPress, testID }: any) {
+  const styles = useStyles();
+  const { colors } = useTheme();
+  return (
+    <Pressable testID={testID} onPress={onPress} style={[styles.addBtn, { left: x, top: y, backgroundColor: bg }]}>
+      <Feather name={icon} size={18} color={colors.onBrandPrimary} />
+    </Pressable>
+  );
+}
+
+export default function TreeScreen() {
+  const styles = useStyles();
+  const { colors } = useTheme();
+  const { t } = useI18n();
+  const { user } = useAuth();
+  const router = useRouter();
+  const insets = useSafeAreaInsets();
+  const { width: screenW } = useWindowDimensions();
+
+  const { data, isLoading } = useQuery({ queryKey: ["tree"], queryFn: getTree });
+  const [selected, setSelected] = useState<string | null>(null);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [genUp, setGenUp] = useState(2);
+  const [genDown, setGenDown] = useState(2);
+  const [exporting, setExporting] = useState(false);
+
+  const canEdit = user?.role === "admin" || user?.role === "editor";
+
+  const layout = useMemo(
+    () => buildLayout(data?.people ?? [], data?.relations ?? [], data?.root_id ?? null),
+    [data],
+  );
+
+  const scale = useSharedValue(1);
+  const savedScale = useSharedValue(1);
+  const tx = useSharedValue(0);
+  const ty = useSharedValue(0);
+  const sx = useSharedValue(0);
+  const sy = useSharedValue(0);
+
+  useEffect(() => {
+    // center root at top-center
+    const root = layout.nodes.find((n) => n.person.is_root) ?? layout.nodes[0];
+    if (root) {
+      tx.value = withTiming(screenW / 2 - root.x);
+      ty.value = withTiming(100 - root.y);
+      sx.value = screenW / 2 - root.x;
+      sy.value = 100 - root.y;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [layout.nodes.length]);
+
+  const pan = Gesture.Pan()
+    .minDistance(8)
+    .onUpdate((e) => {
+      tx.value = sx.value + e.translationX;
+      ty.value = sy.value + e.translationY;
+    })
+    .onEnd(() => {
+      sx.value = tx.value;
+      sy.value = ty.value;
+    });
+
+  const pinch = Gesture.Pinch()
+    .onUpdate((e) => {
+      scale.value = Math.min(Math.max(savedScale.value * e.scale, 0.4), 2.5);
+    })
+    .onEnd(() => {
+      savedScale.value = scale.value;
+    });
+
+  const composed = Gesture.Simultaneous(pan, pinch);
+
+  const canvasStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: tx.value }, { translateY: ty.value }, { scale: scale.value }],
+  }));
+
+  const selNode = layout.nodes.find((n) => n.id === selected);
+
+  const openAdd = (direction: string) => {
+    if (!selNode) return;
+    router.push(`/add-relative?focus_id=${selNode.id}&direction=${direction}&focus_name=${encodeURIComponent(selNode.person.name)}`);
+    setSelected(null);
+  };
+
+  const doExport = async () => {
+    setExporting(true);
+    try {
+      await exportTreePdf(data!.people, data!.relations, data!.root_id, genUp, genDown, "KETURUNANKU");
+      setExportOpen(false);
+    } catch (e) {
+      console.log("export error", e);
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <View style={[styles.root, { paddingTop: insets.top }]}>
+        <View style={styles.center}>
+          <ActivityIndicator size="large" color={colors.brandPrimary} />
+        </View>
+      </View>
+    );
+  }
+
+  const hasTree = layout.nodes.length > 0;
+
+  return (
+    <View style={styles.root}>
+      <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
+        <Text style={styles.headerTitle}>{t("tree")}</Text>
+        {hasTree ? (
+          <Pressable style={styles.exportBtn} onPress={() => setExportOpen(true)} testID="export-pdf-button">
+            <Feather name="file-text" size={15} color={colors.onSurfaceSecondary} />
+            <Text style={styles.exportText}>{t("export_pdf")}</Text>
+          </Pressable>
+        ) : null}
+      </View>
+
+      {!hasTree ? (
+        <View style={styles.center}>
+          <Image source={{ uri: EMPTY_IMG }} style={styles.emptyImg} contentFit="cover" />
+          <Text style={styles.emptyTitle}>{t("empty_tree_title")}</Text>
+          <Text style={styles.emptyDesc}>{t("empty_tree_desc")}</Text>
+        </View>
+      ) : (
+        <View style={styles.canvasArea}>
+          <GestureDetector gesture={composed}>
+            <Animated.View style={{ flex: 1 }}>
+              <Pressable style={{ flex: 1 }} onPress={() => setSelected(null)}>
+                <Animated.View style={[{ width: layout.width, height: layout.height }, canvasStyle]}>
+                  <Svg width={layout.width} height={layout.height} style={{ position: "absolute", top: 0, left: 0 }}>
+                    {layout.edges.map((e) => {
+                      const stroke =
+                        e.kind === "adopted"
+                          ? colors.nodeAdoptedLine
+                          : e.kind === "divorce"
+                            ? colors.nodeDivorceLine
+                            : colors.nodeRelationLine;
+                      return (
+                        <Line
+                          key={e.key}
+                          x1={e.x1}
+                          y1={e.y1}
+                          x2={e.x2}
+                          y2={e.y2}
+                          stroke={stroke}
+                          strokeWidth={2.5}
+                          strokeDasharray={e.kind === "adopted" ? "7,6" : undefined}
+                        />
+                      );
+                    })}
+                  </Svg>
+
+                  {layout.nodes.map((n) => (
+                    <View key={n.id} style={[styles.nodeWrap, { left: n.x - 48, top: n.y - NODE_R - 3 }]}>
+                      <PersonNode
+                        person={n.person}
+                        selected={selected === n.id}
+                        onPress={() => {
+                          if (selected === n.id) router.push(`/person/${n.id}`);
+                          else setSelected(n.id);
+                        }}
+                      />
+                    </View>
+                  ))}
+
+                  {selNode && canEdit ? (
+                    <>
+                      <AddButton testID="add-father" x={selNode.x - 62} y={selNode.y - NODE_R - 22} bg={colors.maleNode} icon="arrow-up" onPress={() => openAdd("father")} />
+                      <AddButton testID="add-mother" x={selNode.x + 28} y={selNode.y - NODE_R - 22} bg={colors.femaleNode} icon="arrow-up" onPress={() => openAdd("mother")} />
+                      <AddButton testID="add-spouse" x={selNode.x + 42} y={selNode.y - 17} bg={colors.brandPrimary} icon="heart" onPress={() => openAdd("spouse")} />
+                      <AddButton testID="add-child" x={selNode.x - 17} y={selNode.y + NODE_R - 6} bg={colors.success} icon="arrow-down" onPress={() => openAdd("child")} />
+                    </>
+                  ) : null}
+                </Animated.View>
+              </Pressable>
+            </Animated.View>
+          </GestureDetector>
+
+          <View style={[styles.legend, { bottom: insets.bottom + 16 }]}>
+            <View style={styles.legendItem}>
+              <View style={[styles.legendDot, { backgroundColor: colors.maleNode }]} />
+              <Text style={styles.legendText}>{t("male")}</Text>
+            </View>
+            <View style={styles.legendItem}>
+              <View style={[styles.legendDot, { backgroundColor: colors.femaleNode }]} />
+              <Text style={styles.legendText}>{t("female")}</Text>
+            </View>
+            <View style={styles.legendItem}>
+              <View style={[styles.legendDot, { backgroundColor: colors.adminNode }]} />
+              <Text style={styles.legendText}>{t("admin")}</Text>
+            </View>
+          </View>
+        </View>
+      )}
+
+      <Modal visible={exportOpen} transparent animationType="slide" onRequestClose={() => setExportOpen(false)}>
+        <Pressable style={styles.modalBg} onPress={() => setExportOpen(false)}>
+          <Pressable style={[styles.sheet, { paddingBottom: insets.bottom + 24 }]} onPress={() => {}}>
+            <Text style={styles.sheetTitle}>{t("export_pdf")}</Text>
+            <Text style={{ fontFamily: fonts.regular, fontSize: 13, color: colors.muted }}>{t("generation_range")}</Text>
+            <View style={styles.stepperRow}>
+              <Text style={styles.stepperLabel}>⬆︎ Gen -{genUp}</Text>
+              <View style={styles.stepper}>
+                <Pressable style={styles.stepBtn} onPress={() => setGenUp((v) => Math.max(0, v - 1))}>
+                  <Feather name="minus" size={16} color={colors.onSurface} />
+                </Pressable>
+                <Text style={styles.stepVal}>{genUp}</Text>
+                <Pressable style={styles.stepBtn} onPress={() => setGenUp((v) => Math.min(10, v + 1))}>
+                  <Feather name="plus" size={16} color={colors.onSurface} />
+                </Pressable>
+              </View>
+            </View>
+            <View style={styles.stepperRow}>
+              <Text style={styles.stepperLabel}>⬇︎ Gen +{genDown}</Text>
+              <View style={styles.stepper}>
+                <Pressable style={styles.stepBtn} onPress={() => setGenDown((v) => Math.max(0, v - 1))}>
+                  <Feather name="minus" size={16} color={colors.onSurface} />
+                </Pressable>
+                <Text style={styles.stepVal}>{genDown}</Text>
+                <Pressable style={styles.stepBtn} onPress={() => setGenDown((v) => Math.min(10, v + 1))}>
+                  <Feather name="plus" size={16} color={colors.onSurface} />
+                </Pressable>
+              </View>
+            </View>
+            <GradientButton testID="do-export-button" title={t("export")} icon="download" loading={exporting} onPress={doExport} />
+          </Pressable>
+        </Pressable>
+      </Modal>
+    </View>
+  );
+}

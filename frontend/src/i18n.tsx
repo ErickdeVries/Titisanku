@@ -1,0 +1,188 @@
+import React, { createContext, useContext, useEffect, useState } from "react";
+import { storage } from "@/src/utils/storage";
+
+type Lang = "id" | "en";
+
+const dict = {
+  id: {
+    appName: "KETURUNANKU",
+    tree: "Pohon",
+    search: "Cari",
+    add: "Tambah",
+    settings: "Setting",
+    login_title: "Bangun Silsilah Keluarga",
+    login_subtitle: "Catat, hubungkan, dan telusuri riwayat keluarga Anda dalam satu pohon interaktif.",
+    login_google: "Masuk dengan Google",
+    logging_in: "Sedang masuk...",
+    empty_tree_title: "Belum ada pohon",
+    empty_tree_desc: "Pohon keluarga akan muncul di sini.",
+    search_placeholder: "Cari nama anggota keluarga",
+    no_results: "Tidak ada hasil",
+    search_hint: "Ketik nama untuk mencari di seluruh pohon.",
+    // form
+    name: "Nama",
+    gender: "Jenis Kelamin",
+    male: "Laki-laki",
+    female: "Perempuan",
+    photo: "Foto",
+    upload_photo: "Unggah Foto",
+    birth_date: "Tanggal Lahir",
+    birth_place: "Tempat Lahir",
+    job: "Pekerjaan",
+    death_date: "Tanggal Meninggal",
+    notes: "Catatan",
+    general: "Umum",
+    marriage: "Pernikahan",
+    divorce: "Perceraian",
+    marriage_date: "Tanggal Nikah",
+    divorce_date: "Tanggal Cerai",
+    is_divorced: "Sudah Bercerai",
+    adopted_child: "Anak Angkat",
+    save: "Simpan",
+    cancel: "Batal",
+    add_father: "Ayah",
+    add_mother: "Ibu",
+    add_spouse: "Pasangan",
+    add_child: "Anak",
+    add_relative_to: "Tambah kerabat untuk",
+    select_person: "Pilih Orang",
+    relation: "Hubungan",
+    // detail
+    detail: "Detail",
+    edit: "Ubah",
+    delete: "Hapus",
+    alive: "Masih hidup",
+    // settings
+    language: "Bahasa",
+    backup: "Backup Data",
+    backup_desc: "Ekspor semua data ke file JSON",
+    collaboration: "Kolaborasi",
+    invite_email: "Undang via Email",
+    invite_placeholder: "email@contoh.com",
+    send_invite: "Kirim Undangan",
+    join_code: "Gabung dengan Kode",
+    join_code_placeholder: "Masukkan kode undangan",
+    join: "Gabung",
+    logout: "Keluar",
+    role: "Peran",
+    export_pdf: "Ekspor PDF",
+    generation_range: "Rentang Generasi",
+    export: "Ekspor",
+    birthday_reminders: "Pengingat Ulang Tahun",
+    birthday_reminders_desc: "Notifikasi 1 hari sebelum ulang tahun anggota yang masih hidup",
+    required: "wajib diisi",
+    saved: "Tersimpan",
+    error_generic: "Terjadi kesalahan",
+    admin: "Admin",
+    editor: "Editor",
+    viewer: "Viewer",
+    no_permission: "Anda tidak memiliki izin untuk aksi ini",
+    invite_sent: "Undangan terkirim. Kode:",
+    joined: "Berhasil bergabung sebagai editor",
+    added: "Berhasil ditambahkan",
+  },
+  en: {
+    appName: "KETURUNANKU",
+    tree: "Tree",
+    search: "Search",
+    add: "Add",
+    settings: "Settings",
+    login_title: "Build Your Family Tree",
+    login_subtitle: "Record, connect, and explore your family history in one interactive tree.",
+    login_google: "Sign in with Google",
+    logging_in: "Signing in...",
+    empty_tree_title: "No tree yet",
+    empty_tree_desc: "Your family tree will appear here.",
+    search_placeholder: "Search family member name",
+    no_results: "No results",
+    search_hint: "Type a name to search across the tree.",
+    name: "Name",
+    gender: "Gender",
+    male: "Male",
+    female: "Female",
+    photo: "Photo",
+    upload_photo: "Upload Photo",
+    birth_date: "Birth Date",
+    birth_place: "Birth Place",
+    job: "Occupation",
+    death_date: "Death Date",
+    notes: "Notes",
+    general: "General",
+    marriage: "Marriage",
+    divorce: "Divorce",
+    marriage_date: "Marriage Date",
+    divorce_date: "Divorce Date",
+    is_divorced: "Divorced",
+    adopted_child: "Adopted Child",
+    save: "Save",
+    cancel: "Cancel",
+    add_father: "Father",
+    add_mother: "Mother",
+    add_spouse: "Spouse",
+    add_child: "Child",
+    add_relative_to: "Add relative for",
+    select_person: "Select Person",
+    relation: "Relation",
+    detail: "Detail",
+    edit: "Edit",
+    delete: "Delete",
+    alive: "Alive",
+    language: "Language",
+    backup: "Backup Data",
+    backup_desc: "Export all data to a JSON file",
+    collaboration: "Collaboration",
+    invite_email: "Invite via Email",
+    invite_placeholder: "email@example.com",
+    send_invite: "Send Invite",
+    join_code: "Join with Code",
+    join_code_placeholder: "Enter invite code",
+    join: "Join",
+    logout: "Log out",
+    role: "Role",
+    export_pdf: "Export PDF",
+    generation_range: "Generation Range",
+    export: "Export",
+    birthday_reminders: "Birthday Reminders",
+    birthday_reminders_desc: "Notify 1 day before living members' birthdays",
+    required: "is required",
+    saved: "Saved",
+    error_generic: "Something went wrong",
+    admin: "Admin",
+    editor: "Editor",
+    viewer: "Viewer",
+    no_permission: "You don't have permission for this action",
+    invite_sent: "Invite sent. Code:",
+    joined: "Joined as editor",
+    added: "Added successfully",
+  },
+};
+
+type Ctx = {
+  lang: Lang;
+  setLang: (l: Lang) => void;
+  t: (key: keyof typeof dict.id) => string;
+};
+
+const LangContext = createContext<Ctx>({ lang: "id", setLang: () => {}, t: (k) => k as string });
+const STORAGE_KEY = "app_language";
+
+export function LanguageProvider({ children }: { children: React.ReactNode }) {
+  const [lang, setLangState] = useState<Lang>("id");
+
+  useEffect(() => {
+    storage.getItem<string>(STORAGE_KEY, "id").then((v) => {
+      if (v === "en" || v === "id") setLangState(v);
+    });
+  }, []);
+
+  const setLang = (l: Lang) => {
+    setLangState(l);
+    storage.setItem(STORAGE_KEY, l);
+  };
+
+  const t = (key: keyof typeof dict.id) => dict[lang][key] ?? (key as string);
+
+  return <LangContext.Provider value={{ lang, setLang, t }}>{children}</LangContext.Provider>;
+}
+
+export const useI18n = () => useContext(LangContext);

@@ -1,0 +1,79 @@
+import React from "react";
+import { Pressable, Text, View } from "react-native";
+import { Image } from "expo-image";
+import Feather from "@react-native-vector-icons/feather";
+import { fonts, makeStyles, useTheme } from "@/src/theme";
+import { fileUrl, Person } from "@/src/api";
+import { NODE_D } from "@/src/tree-layout";
+
+type Props = {
+  person: Person;
+  onPress?: () => void;
+  selected?: boolean;
+  size?: number;
+};
+
+export function nodeColor(person: Person, colors: any): string {
+  if (person.is_root) return colors.adminNode;
+  if (person.gender === "female") return colors.femaleNode;
+  if (person.gender === "male") return colors.maleNode;
+  return colors.muted;
+}
+
+const useStyles = makeStyles((c) => ({
+  wrap: { alignItems: "center", width: 96 },
+  ring: {
+    borderRadius: 999,
+    padding: 3,
+    backgroundColor: c.surface,
+    shadowColor: "#0F172A",
+    shadowOpacity: 0.18,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 5,
+  },
+  avatar: { borderRadius: 999, backgroundColor: c.surfaceTertiary, alignItems: "center", justifyContent: "center", overflow: "hidden" },
+  img: { width: "100%", height: "100%" },
+  selectedRing: { borderWidth: 3, borderColor: c.brandPrimary },
+  name: { fontFamily: fonts.medium, fontSize: 12, color: c.onSurface, marginTop: 6, textAlign: "center" },
+  deceased: {
+    position: "absolute",
+    top: -2,
+    right: -2,
+    backgroundColor: c.surfaceInverse,
+    borderRadius: 999,
+    width: 20,
+    height: 20,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+}));
+
+export function PersonNode({ person, onPress, selected, size = NODE_D }: Props) {
+  const styles = useStyles();
+  const { colors } = useTheme();
+  const color = nodeColor(person, colors);
+  const photo = fileUrl(person.photo_url);
+
+  return (
+    <Pressable testID={`node-${person.id}`} onPress={onPress} style={styles.wrap}>
+      <View style={[styles.ring, { borderWidth: 3, borderColor: color }, selected && styles.selectedRing]}>
+        <View style={[styles.avatar, { width: size, height: size }]}>
+          {photo ? (
+            <Image source={{ uri: photo }} style={styles.img} contentFit="cover" transition={200} />
+          ) : (
+            <Feather name="user" size={size * 0.5} color={color} />
+          )}
+        </View>
+        {person.death_date ? (
+          <View style={styles.deceased}>
+            <Feather name="star" size={11} color={colors.onSurfaceInverse} />
+          </View>
+        ) : null}
+      </View>
+      <Text style={styles.name} numberOfLines={2}>
+        {person.name}
+      </Text>
+    </Pressable>
+  );
+}

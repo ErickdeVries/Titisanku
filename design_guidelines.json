@@ -1,0 +1,168 @@
+{
+  "app_name": "KETURUNANKU",
+  "personality": "1 iOS-Native Clean (Modified per user brief: White background, Poppins font, gradient buttons without borders/shadows)",
+  "personality_one_liner": "A clean, modern, and highly legible interface designed to build and explore family history seamlessly.",
+  "color": {
+    "surface": "#FFFFFF",
+    "onSurface": "#0F172A",
+    "surfaceSecondary": "#F8FAFC",
+    "onSurfaceSecondary": "#334155",
+    "surfaceTertiary": "#F1F5F9",
+    "onSurfaceTertiary": "#475569",
+    "surfaceInverse": "#0F172A",
+    "onSurfaceInverse": "#FFFFFF",
+    "brand": "#F59E0B",
+    "brandPrimary": "#F59E0B",
+    "onBrandPrimary": "#FFFFFF",
+    "brandSecondary": "#3B82F6",
+    "onBrandSecondary": "#FFFFFF",
+    "brandTertiary": "#FEF3C7",
+    "onBrandTertiary": "#B45309",
+    "success": "#10B981",
+    "onSuccess": "#FFFFFF",
+    "warning": "#F59E0B",
+    "onWarning": "#FFFFFF",
+    "error": "#EF4444",
+    "onError": "#FFFFFF",
+    "info": "#3B82F6",
+    "onInfo": "#FFFFFF",
+    "border": "#E2E8F0",
+    "borderStrong": "#CBD5E1",
+    "divider": "#F1F5F9",
+    "muted": "#64748B",
+    "maleNode": "#3B82F6",
+    "femaleNode": "#EC4899",
+    "adminNode": "#F59E0B",
+    "nodeAdoptedLine": "#94A3B8",
+    "nodeDivorceLine": "#EF4444",
+    "nodeRelationLine": "#CBD5E1"
+  },
+  "typography": {
+    "displayFontFamily": "Poppins",
+    "textFontFamily": "Poppins",
+    "scale": {
+      "sm": 12,
+      "base": 14,
+      "lg": 16,
+      "xl": 20,
+      "2xl": 24
+    }
+  },
+  "spacing": {
+    "rule": "Use generous padding around content. Forms should be single column with labels above inputs.",
+    "xs": 4,
+    "sm": 8,
+    "md": 12,
+    "lg": 16,
+    "xl": 24,
+    "2xl": 32,
+    "3xl": 48
+  },
+  "radius_tokens": {
+    "sm": 6,
+    "md": 12,
+    "lg": 20,
+    "pill": 999
+  },
+  "shadow_tier": "0",
+  "navigation": "bottom_tabs",
+  "icon_set": "Feather",
+  "glassmorphism": {
+    "enabled": "false",
+    "do's": [],
+    "dont's": ["Skip glassmorphism to keep the white background flat and modern per user brief."]
+  },
+  "platform_libraries": {
+    "glass": {
+      "ios": "expo-glass-effect",
+      "android": "expo-blur",
+      "low_end_android_fallback": "solid surfaceSecondary"
+    },
+    "image": "expo-image",
+    "blur": "expo-blur",
+    "bottom_sheet": "@gorhom/bottom-sheet",
+    "animation": "react-native-reanimated",
+    "gesture": "react-native-gesture-handler"
+  },
+  "screens": [
+    {
+      "name": "Onboarding",
+      "purpose": "Introduce the app and log in the user via Google to become the admin/root_node.",
+      "states": {
+        "loading": "Centered spinner",
+        "empty": "N/A",
+        "error": "Failed login toast or inline error message with retry"
+      },
+      "layout": "Full-bleed hero image at the top with a vertical gradient scrim (transparent to #FFFFFF) at the bottom 40%. Below the image, title and description text using Poppins. At the bottom, a sticky primary CTA gradient button (Google Login) spanning full width minus padding. Safe area handled."
+    },
+    {
+      "name": "Tree (Pohon)",
+      "purpose": "Main canvas to display the family tree from root_node using SVG/Canvas with two-finger pan and zoom.",
+      "states": {
+        "loading": "Centered spinner over white background",
+        "empty": "Illustration of a family tree with a button to add the first root node if not already created",
+        "error": "Error message with retry button"
+      },
+      "layout": "Full screen canvas using react-native-gesture-handler for zoom/pan. Top header contains 'Export PDF' button. Nodes are circular photos (borderRadius 999). Each node has a colored border based on gender/admin (Male=#3B82F6, Female=#EC4899, Admin=#F59E0B) and shadow (no extra solid borders). When a node is selected, 4 small circular floating buttons [+Father], [+Mother], [+Spouse], [+Child] appear around it. Connector lines: solid for blood/marriage, dashed for adopted, red for divorce. Tapping a node opens a detail bottom sheet or modal."
+    },
+    {
+      "name": "Search (Cari)",
+      "purpose": "Find a person in the entire family tree.",
+      "states": {
+        "loading": "Skeleton list",
+        "empty": "Empty state document illustration with 'No results found'",
+        "error": "Error message with retry button"
+      },
+      "layout": "Sticky search bar at the top (surfaceTertiary background, pill radius). Below it, a FlatList of people. Each row has a circular avatar, name, and relationship/job subtitle. Chevron on the right to indicate navigation to detail."
+    },
+    {
+      "name": "Add (Tambah)",
+      "purpose": "Full data form to add or edit a person in the tree.",
+      "states": {
+        "loading": "Skeleton form",
+        "empty": "N/A",
+        "error": "Error alert/toast on submit failure"
+      },
+      "layout": "Scrollable single-column form. Segmented control or custom tabs at the top for 'General', 'Marriage', 'Divorce'. Form fields have labels above inputs. Includes photo upload area, date pickers for dates, and a checkbox for 'Adopted Child'. Sticky primary gradient CTA at the bottom inside KeyboardAvoidingView."
+    },
+    {
+      "name": "Settings (Setting)",
+      "purpose": "Manage app preferences, backups, and collaboration.",
+      "states": {
+        "loading": "Centered spinner",
+        "empty": "N/A",
+        "error": "Error toast"
+      },
+      "layout": "List of functional rows: Multi-language toggle (ID/EN, default ID), Backup (JSON export), Collaboration (Invite via email). Rows use surfaceSecondary background, rounded corners (md), and grouped sections."
+    }
+  ],
+  "images": {
+    "onboarding_hero": {
+      "url": "https://images.unsplash.com/photo-1706200637521-b446bd05df0d?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzMzJ8MHwxfHNlYXJjaHwxfHxmYW1pbHklMjBjb25uZWN0aW9uJTIwZ2VuZWFsb2d5fGVufDB8fHx8MTc4ODYxODU3OHww&ixlib=rb-4.1.0&q=85",
+      "alt": "A group of family members holding hands representing connection and genealogy"
+    },
+    "empty_search": {
+      "url": "https://images.unsplash.com/photo-1695131020187-d3dcdab5016b?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NDh8MHwxfHNlYXJjaHwxfHxlbXB0eSUyMGxpc3QlMjBkb2N1bWVudCUyMGFic3RyYWN0fGVufDB8fHx8MTc4ODYxODU3OHww&ixlib=rb-4.1.0&q=85",
+      "alt": "Empty list document abstract for search state"
+    },
+    "empty_tree": {
+      "url": "https://images.unsplash.com/photo-1749006813623-bc3bd798158c?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjY2NzF8MHwxfHNlYXJjaHwxfHxmYW1pbHklMjB0cmVlJTIwY29uY2VwdCUyMGlsbHVzdHJhdGlvbnxlbnwwfHx8fDE3ODg2MTg1Nzl8MA&ixlib=rb-4.1.0&q=85",
+      "alt": "Green abstract shape representing a family tree concept"
+    }
+  },
+  "instructions_to_main_agent": [
+    "Strictly use the 'Poppins' font for all text components as explicitly requested by the user.",
+    "Main buttons MUST use a vertical gradient (e.g., brandPrimary #F59E0B to #EA580C) via expo-linear-gradient with NO border and NO shadow (borderWidth: 0, elevation: 0).",
+    "Background color must be white (#FFFFFF) across main screens.",
+    "The 4 bottom tabs must be: Tree (Pohon), Search (Cari), Add (Tambah), Settings (Setting).",
+    "Node Colors: strictly use Male=#3B82F6, Female=#EC4899, Admin=#F59E0B for node borders/shadows.",
+    "Tree logic: Use solid lines for blood/marriage, dashed lines for adopted children, and red lines for divorce.",
+    "Implement the 4-direction seed generator: when a node is tapped, display 4 small [+Father], [+Mother], [+Spouse], [+Child] buttons positioned Top, Bottom, Left, Right around the circular node.",
+    "For the Tree Canvas, utilize react-native-gesture-handler (PinchGestureHandler, PanGestureHandler) for zooming and panning.",
+    "Ensure Default Language is Indonesian (ID), toggleable to English (EN) in Settings.",
+    "For the Birthday reminder, set up local notifications 1 day before the birth_date of living people.",
+    "Collaboration feature: Admin invites via email, others become editors (can add but not delete).",
+    "All images overlaying text must use a gradient-to-dark scrim to ensure minimum WCAG contrast.",
+    "Follow the specific layout patterns for single-column forms with sticky bottom CTAs inside KeyboardAvoidingView."
+  ]
+}
