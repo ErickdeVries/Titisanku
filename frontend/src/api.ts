@@ -83,6 +83,8 @@ export const deletePerson = (id: string) => apiFetch(`/people/${id}`, { method: 
 
 // ---- Backup / Invites ----
 export const getBackup = () => apiFetch("/backup");
+export const restoreBackup = (payload: { people: any[]; relations: any[] }) =>
+  apiFetch("/restore", { method: "POST", body: JSON.stringify(payload) });
 export const createInvite = (email: string) =>
   apiFetch("/invite", { method: "POST", body: JSON.stringify({ email }) });
 export const acceptInvite = (code: string) =>

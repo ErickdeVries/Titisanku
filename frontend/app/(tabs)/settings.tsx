@@ -5,9 +5,10 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as FileSystem from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
+import * as DocumentPicker from "expo-document-picker";
 import Feather from "@react-native-vector-icons/feather";
 import { fonts, makeStyles, useTheme } from "@/src/theme";
-import { getTree, getBackup, createInvite, acceptInvite, listInvites, fileUrl } from "@/src/api";
+import { getTree, getBackup, restoreBackup, createInvite, acceptInvite, listInvites, fileUrl } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { useI18n } from "@/src/i18n";
 import { GradientButton } from "@/src/components/GradientButton";
@@ -71,6 +72,8 @@ export default function SettingsScreen() {
   const [joinMsg, setJoinMsg] = useState("");
   const [joinErr, setJoinErr] = useState("");
   const [backupMsg, setBackupMsg] = useState("");
+  const [restoreMsg, setRestoreMsg] = useState("");
+  const [restoreBusy, setRestoreBusy] = useState(false);
 
   useEffect(() => {
     storage.getItem<boolean>(REMINDER_KEY, false).then((v) => setReminders(!!v));
@@ -109,6 +112,31 @@ export default function SettingsScreen() {
     await FileSystem.writeAsStringAsync(uri, json);
     if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(uri, { mimeType: "application/json" });
     setBackupMsg(t("saved"));
+  };
+
+  const doRestore = async () => {
+    setRestoreMsg("");
+    const res = await DocumentPicker.getDocumentAsync({ type: "application/json", copyToCacheDirectory: true });
+    if (res.canceled || !res.assets?.length) return;
+    const uri = res.assets[0].uri;
+    setRestoreBusy(true);
+    try {
+      let text: string;
+      if (Platform.OS === "web") text = await (await fetch(uri)).text();
+      else text = await FileSystem.readAsStringAsync(uri);
+      const parsed = JSON.parse(text);
+      if (!parsed || !Array.isArray(parsed.people)) {
+        setRestoreMsg(t("restore_invalid"));
+        return;
+      }
+      await restoreBackup({ people: parsed.people, relations: parsed.relations ?? [] });
+      await qc.invalidateQueries({ queryKey: ["tree"] });
+      setRestoreMsg(t("restore_success"));
+    } catch {
+      setRestoreMsg(t("restore_invalid"));
+    } finally {
+      setRestoreBusy(false);
+    }
   };
 
   const sendInvite = async () => {
@@ -205,8 +233,26 @@ export default function SettingsScreen() {
               </View>
               <Feather name="chevron-right" size={20} color={colors.muted} />
             </Pressable>
+            {isAdmin ? (
+              <>
+                <View style={styles.divider} />
+                <Pressable style={styles.rowItem} onPress={doRestore} testID="restore-button">
+                  <Feather name="upload-cloud" size={20} color={colors.onSurfaceSecondary} />
+                  <View style={styles.rowTextWrap}>
+                    <Text style={styles.rowLabel}>{t("restore")}</Text>
+                    <Text style={styles.rowDesc}>{t("restore_desc")}</Text>
+                  </View>
+                  {restoreBusy ? (
+                    <Feather name="loader" size={18} color={colors.muted} />
+                  ) : (
+                    <Feather name="chevron-right" size={20} color={colors.muted} />
+                  )}
+                </Pressable>
+              </>
+            ) : null}
           </View>
           {backupMsg ? <Text style={styles.msg}>{backupMsg}</Text> : null}
+          {restoreMsg ? <Text style={restoreMsg === t("restore_success") ? styles.msg : styles.err}>{restoreMsg}</Text> : null}
         </View>
 
         {/* Collaboration */}

@@ -40,13 +40,15 @@ JSON backup, and email collaboration invites. Google login; first user = admin +
 - [x] Settings: ID/EN toggle, birthday reminders toggle, JSON backup, invite (admin) / join code (viewer), logout.
 - [x] PDF export with generation range (SVG tree diagram + data table).
 - [x] Photo upload + authenticated download verified through Object Storage.
+- [x] Focus/re-center tree on ANY selected person (crosshair button + "back to root" chip).
+- [x] Marriage/divorce dates shown on spouse relations in person detail (PERNIKAHAN card).
+- [x] Family stats strip on tree (members, generations, nearest birthday).
+- [x] Restore backup: admin imports JSON file to restore whole tree (tested end-to-end).
 
 ## Backlog / Next
-- P1: Marriage/divorce dates shown on spouse relation in detail view.
-- P1: Reposition/refocus tree on any selected person (currently rooted at root_node).
 - P2: Node de-overlap layout for very wide generations.
-- P2: Import from JSON backup (restore).
 - P2: Offline caching of tree.
+- P2: Multiple spouses ordering refinement in layout.
 
 ## Notes
 - Birthday reminders + image picker require a native/dev build to fully test (not Expo Go web).

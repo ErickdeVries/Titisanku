@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { View, Text, Pressable, ScrollView, ActivityIndicator } from "react-native";
 import { Image } from "expo-image";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -6,7 +6,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Feather from "@react-native-vector-icons/feather";
 import { fonts, makeStyles, useTheme } from "@/src/theme";
-import { getPerson, updatePerson, deletePerson, fileUrl } from "@/src/api";
+import { getPerson, updatePerson, deletePerson, fileUrl, getTree } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { useI18n } from "@/src/i18n";
 import { nodeColor } from "@/src/components/PersonNode";
@@ -33,6 +33,10 @@ const useStyles = makeStyles((c) => ({
   infoLabel: { fontFamily: fonts.regular, fontSize: 12, color: c.muted },
   infoValue: { fontFamily: fonts.medium, fontSize: 15, color: c.onSurface },
   divider: { height: 1, backgroundColor: c.divider, marginLeft: 14 },
+  marriageTitle: { fontFamily: fonts.semibold, fontSize: 13, color: c.muted, textTransform: "uppercase", letterSpacing: 0.5, marginHorizontal: 20, marginTop: 20, marginBottom: 8 },
+  spouseSub: { fontFamily: fonts.regular, fontSize: 12, color: c.muted, marginTop: 2 },
+  divorceBadge: { backgroundColor: c.error, paddingHorizontal: 10, paddingVertical: 3, borderRadius: 999 },
+  divorceBadgeText: { fontFamily: fonts.semibold, fontSize: 11, color: c.onError },
   actions: { padding: 20, gap: 12 },
   deleteBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, padding: 16, borderRadius: 999, backgroundColor: c.surfaceTertiary },
   deleteText: { fontFamily: fonts.semibold, fontSize: 15, color: c.error },
@@ -69,6 +73,25 @@ export default function PersonDetail() {
   const [deleting, setDeleting] = useState(false);
 
   const { data: person, isLoading } = useQuery({ queryKey: ["person", id], queryFn: () => getPerson(id) });
+  const { data: tree } = useQuery({ queryKey: ["tree"], queryFn: getTree });
+
+  const spouses = useMemo(() => {
+    if (!tree) return [];
+    const rels = tree.relations.filter(
+      (r) => (r.relation_type === "spouse" || r.relation_type === "divorced") && (r.person_id === id || r.related_person_id === id),
+    );
+    return rels.map((r) => {
+      const pid = r.person_id === id ? r.related_person_id : r.person_id;
+      const partner = tree.people.find((p) => p.id === pid);
+      return {
+        id: r.id,
+        name: partner?.name ?? "?",
+        marriage_date: r.marriage_date,
+        divorce_date: r.divorce_date,
+        divorced: r.relation_type === "divorced",
+      };
+    });
+  }, [tree, id]);
 
   const isAdmin = user?.role === "admin";
   const canEdit = user?.role === "admin" || user?.role === "editor";
@@ -211,6 +234,41 @@ export default function PersonDetail() {
               </>
             ) : null}
           </View>
+
+          {spouses.length ? (
+            <>
+              <Text style={styles.marriageTitle}>{t("marriage_info")}</Text>
+              <View style={styles.infoCard}>
+                {spouses.map((s, i) => (
+                  <View key={s.id}>
+                    {i > 0 ? <View style={styles.divider} /> : null}
+                    <View style={styles.infoRow}>
+                      <Feather name="heart" size={18} color={s.divorced ? colors.error : colors.brandPrimary} />
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.infoLabel}>{t("spouse_label")}</Text>
+                        <Text style={styles.infoValue}>{s.name}</Text>
+                        {s.marriage_date ? (
+                          <Text style={styles.spouseSub}>
+                            {t("married_since")} {s.marriage_date}
+                          </Text>
+                        ) : null}
+                        {s.divorced && s.divorce_date ? (
+                          <Text style={[styles.spouseSub, { color: colors.error }]}>
+                            {t("divorced_badge")} · {s.divorce_date}
+                          </Text>
+                        ) : null}
+                      </View>
+                      {s.divorced ? (
+                        <View style={styles.divorceBadge}>
+                          <Text style={styles.divorceBadgeText}>{t("divorced_badge")}</Text>
+                        </View>
+                      ) : null}
+                    </View>
+                  </View>
+                ))}
+              </View>
+            </>
+          ) : null}
 
           {isAdmin && !person.is_root ? (
             <View style={styles.actions}>

@@ -478,6 +478,46 @@ async def accept_invite(body: AcceptInviteInput, user=Depends(get_current_user))
 
 
 # ---------------------------------------------------------------------------
+# Restore from backup
+# ---------------------------------------------------------------------------
+class RestoreInput(BaseModel):
+    people: List[dict] = []
+    relations: List[dict] = []
+
+
+@api_router.post("/restore")
+async def restore(body: RestoreInput, user=Depends(get_current_user)):
+    require_role(user, ["admin"])
+    if not body.people:
+        raise HTTPException(status_code=400, detail="Backup kosong atau tidak valid")
+    people_ids = [p.get("id") for p in body.people if p.get("id")]
+    rel_ids = [r.get("id") for r in body.relations if r.get("id")]
+    # soft-delete current records that are not part of the backup
+    await db.people.update_many({"id": {"$nin": people_ids}, "deleted_at": None}, {"$set": {"deleted_at": now_utc()}})
+    await db.relations.update_many({"id": {"$nin": rel_ids}, "deleted_at": None}, {"$set": {"deleted_at": now_utc()}})
+    root_id = None
+    for p in body.people:
+        pid = p.get("id")
+        if not pid:
+            continue
+        doc = {k: v for k, v in p.items() if k != "_id"}
+        doc["deleted_at"] = None
+        if doc.get("is_root"):
+            root_id = pid
+        await db.people.update_one({"id": pid}, {"$set": doc}, upsert=True)
+    for r in body.relations:
+        rid = r.get("id")
+        if not rid:
+            continue
+        doc = {k: v for k, v in r.items() if k != "_id"}
+        doc["deleted_at"] = None
+        await db.relations.update_one({"id": rid}, {"$set": doc}, upsert=True)
+    if root_id:
+        await db.meta.update_one({"key": "root_person_id"}, {"$set": {"value": root_id}}, upsert=True)
+    return {"ok": True, "people": len(body.people), "relations": len(body.relations)}
+
+
+# ---------------------------------------------------------------------------
 # Startup
 # ---------------------------------------------------------------------------
 @app.on_event("startup")

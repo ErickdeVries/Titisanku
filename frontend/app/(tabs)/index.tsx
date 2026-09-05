@@ -35,6 +35,12 @@ const useStyles = makeStyles((c) => ({
   headerTitle: { fontFamily: fonts.bold, fontSize: 20, color: c.onSurface },
   exportBtn: { flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: c.surfaceTertiary, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 999 },
   exportText: { fontFamily: fonts.medium, fontSize: 13, color: c.onSurfaceSecondary },
+  statsStrip: { flexDirection: "row", gap: 10, paddingHorizontal: 16, paddingVertical: 12, backgroundColor: c.surface, borderBottomWidth: 1, borderBottomColor: c.divider },
+  statCard: { flex: 1, backgroundColor: c.surfaceSecondary, borderRadius: 14, paddingVertical: 10, paddingHorizontal: 12, gap: 2 },
+  statValue: { fontFamily: fonts.bold, fontSize: 18, color: c.onSurface },
+  statLabel: { fontFamily: fonts.regular, fontSize: 11, color: c.muted },
+  focusChip: { flexDirection: "row", alignItems: "center", gap: 6, alignSelf: "flex-start", marginHorizontal: 16, marginTop: 10, backgroundColor: c.brandTertiary, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 999 },
+  focusChipText: { fontFamily: fonts.medium, fontSize: 12, color: c.onBrandTertiary },
   canvasArea: { flex: 1, overflow: "hidden" },
   center: { flex: 1, alignItems: "center", justifyContent: "center", padding: 32, gap: 16 },
   emptyImg: { width: 180, height: 180, borderRadius: 20 },
@@ -98,6 +104,7 @@ export default function TreeScreen() {
 
   const { data, isLoading } = useQuery({ queryKey: ["tree"], queryFn: getTree });
   const [selected, setSelected] = useState<string | null>(null);
+  const [focusId, setFocusId] = useState<string | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
   const [genUp, setGenUp] = useState(2);
   const [genDown, setGenDown] = useState(2);
@@ -105,10 +112,35 @@ export default function TreeScreen() {
 
   const canEdit = user?.role === "admin" || user?.role === "editor";
 
+  useEffect(() => {
+    if (!focusId && data?.root_id) setFocusId(data.root_id);
+  }, [data?.root_id, focusId]);
+
+  const activeFocus = focusId ?? data?.root_id ?? null;
+
   const layout = useMemo(
-    () => buildLayout(data?.people ?? [], data?.relations ?? [], data?.root_id ?? null),
-    [data],
+    () => buildLayout(data?.people ?? [], data?.relations ?? [], activeFocus),
+    [data, activeFocus],
   );
+
+  const stats = useMemo(() => {
+    const people = data?.people ?? [];
+    const members = people.length;
+    const generations = new Set(layout.nodes.map((n) => n.gen)).size;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    let best: { name: string; days: number } | null = null;
+    for (const p of people) {
+      if (!p.birth_date || p.death_date) continue;
+      const bd = new Date(p.birth_date);
+      if (isNaN(bd.getTime())) continue;
+      let next = new Date(today.getFullYear(), bd.getMonth(), bd.getDate());
+      if (next < today) next = new Date(today.getFullYear() + 1, bd.getMonth(), bd.getDate());
+      const days = Math.round((next.getTime() - today.getTime()) / 86400000);
+      if (!best || days < best.days) best = { name: p.name, days };
+    }
+    return { members, generations, birthday: best };
+  }, [data, layout]);
 
   const scale = useSharedValue(1);
   const savedScale = useSharedValue(1);
@@ -118,16 +150,19 @@ export default function TreeScreen() {
   const sy = useSharedValue(0);
 
   useEffect(() => {
-    // center root at top-center
-    const root = layout.nodes.find((n) => n.person.is_root) ?? layout.nodes[0];
-    if (root) {
-      tx.value = withTiming(screenW / 2 - root.x);
-      ty.value = withTiming(100 - root.y);
-      sx.value = screenW / 2 - root.x;
-      sy.value = 100 - root.y;
+    // center the focused node at top-center
+    const focusNode =
+      layout.nodes.find((n) => n.id === activeFocus) ?? layout.nodes.find((n) => n.person.is_root) ?? layout.nodes[0];
+    if (focusNode) {
+      scale.value = withTiming(1);
+      savedScale.value = 1;
+      tx.value = withTiming(screenW / 2 - focusNode.x);
+      ty.value = withTiming(100 - focusNode.y);
+      sx.value = screenW / 2 - focusNode.x;
+      sy.value = 100 - focusNode.y;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [layout.nodes.length]);
+  }, [layout.nodes.length, activeFocus]);
 
   const pan = Gesture.Pan()
     .minDistance(8)
@@ -161,6 +196,15 @@ export default function TreeScreen() {
     router.push(`/add-relative?focus_id=${selNode.id}&direction=${direction}&focus_name=${encodeURIComponent(selNode.person.name)}`);
     setSelected(null);
   };
+
+  const doFocus = () => {
+    if (!selNode) return;
+    setFocusId(selNode.id);
+    setSelected(null);
+  };
+
+  const focusName = layout.nodes.find((n) => n.id === activeFocus)?.person.name;
+  const isRootFocus = !data?.root_id || activeFocus === data?.root_id;
 
   const doExport = async () => {
     setExporting(true);
@@ -197,6 +241,42 @@ export default function TreeScreen() {
           </Pressable>
         ) : null}
       </View>
+
+      {hasTree ? (
+        <>
+          <View style={styles.statsStrip}>
+            <View style={styles.statCard}>
+              <Text style={styles.statValue}>{stats.members}</Text>
+              <Text style={styles.statLabel}>{t("stats_members")}</Text>
+            </View>
+            <View style={styles.statCard}>
+              <Text style={styles.statValue}>{stats.generations}</Text>
+              <Text style={styles.statLabel}>{t("stats_generations")}</Text>
+            </View>
+            <View style={styles.statCard} testID="stat-birthday">
+              <Text style={styles.statValue} numberOfLines={1}>
+                {stats.birthday ? (stats.birthday.days === 0 ? "🎂" : `${stats.birthday.days}`) : "—"}
+              </Text>
+              <Text style={styles.statLabel} numberOfLines={1}>
+                {stats.birthday
+                  ? stats.birthday.days === 0
+                    ? `${t("today_birthday")} ${stats.birthday.name}`
+                    : `${stats.birthday.name} · ${t("days_left")}`
+                  : t("no_birthday")}
+              </Text>
+            </View>
+          </View>
+          {!isRootFocus ? (
+            <Pressable style={styles.focusChip} onPress={() => setFocusId(data?.root_id ?? null)} testID="reset-focus">
+              <Feather name="crosshair" size={13} color={colors.onBrandTertiary} />
+              <Text style={styles.focusChipText}>
+                {t("focused_on")} {focusName} · {t("back_to_root")}
+              </Text>
+              <Feather name="x" size={13} color={colors.onBrandTertiary} />
+            </Pressable>
+          ) : null}
+        </>
+      ) : null}
 
       {!hasTree ? (
         <View style={styles.center}>
@@ -246,6 +326,9 @@ export default function TreeScreen() {
                     </View>
                   ))}
 
+                  {selNode ? (
+                    <AddButton testID="focus-node" x={selNode.x - 62} y={selNode.y - 17} bg={colors.surfaceInverse} icon="crosshair" onPress={doFocus} />
+                  ) : null}
                   {selNode && canEdit ? (
                     <>
                       <AddButton testID="add-father" x={selNode.x - 62} y={selNode.y - NODE_R - 22} bg={colors.maleNode} icon="arrow-up" onPress={() => openAdd("father")} />
