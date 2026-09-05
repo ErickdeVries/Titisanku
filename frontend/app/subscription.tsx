@@ -1,33 +1,63 @@
 import { useState } from "react";
-import { View, Text, Pressable, StyleSheet, ScrollView, ActivityIndicator } from "react-native";
+import { View, Text, Pressable, StyleSheet, ScrollView, ActivityIndicator, Alert } from "react-native";
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
-import { ArrowLeft, Crown, Check } from "lucide-react-native";
+import { ArrowLeft, Crown, Check, Users, Image as ImageIcon, GitBranch } from "lucide-react-native";
 import { fonts, useTheme, brandGradient } from "@/src/theme";
 import { useI18n } from "@/src/i18n";
 import { useTree } from "@/src/tree-context";
-import { UpgradeModal } from "@/src/components/UpgradeModal";
+import { upgradeTree } from "@/src/api";
 
-const PERKS = [
-  "Anggota tak terbatas per pohon",
-  "PDF tanpa watermark",
-  "Backup ke Google Drive",
-  "Dukungan prioritas",
+type PlanId = "free" | "pro" | "family";
+const PLANS: { id: PlanId; name: string; price: string; perks: string[] }[] = [
+  { id: "free", name: "Free", price: "Gratis", perks: ["1 Pohon Keluarga", "50 Orang", "20 Foto", "3 Editor", "PDF dengan watermark"] },
+  { id: "pro", name: "Pro", price: "Rp199.000/tahun", perks: ["Pohon tak terbatas", "Orang tak terbatas", "5GB Foto", "10 Editor", "PDF tanpa watermark", "Backup Google Drive", "Tema Premium"] },
+  { id: "family", name: "Keluarga", price: "Rp399.000/tahun", perks: ["Semua fitur Pro", "50 Editor", "1x Cetak Buku Gratis"] },
 ];
+const RANK: Record<PlanId, number> = { free: 0, pro: 1, family: 2 };
 
 export default function SubscriptionScreen() {
   const { colors } = useTheme();
   const { t } = useI18n();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { activeTree } = useTree();
-  const [upgradeOpen, setUpgradeOpen] = useState(false);
+  const { activeTree, activeTreeId, refreshTrees } = useTree();
+  const [busy, setBusy] = useState<PlanId | null>(null);
 
-  const isPro = activeTree?.plan === "pro";
-  const count = activeTree?.person_count ?? 0;
-  const limit = activeTree?.limit ?? null;
-  const pct = limit ? Math.min(100, Math.round((count / limit) * 100)) : 100;
+  const plan = (activeTree?.plan ?? "free") as PlanId;
+  const isAdmin = activeTree?.role === "admin";
+  const limits = activeTree?.plan_limits;
+  const usage = [
+    { icon: <Users size={16} color={colors.brandSecondary} />, label: "Orang", used: activeTree?.person_count ?? 0, max: limits?.people ?? null },
+    { icon: <GitBranch size={16} color={colors.brandSecondary} />, label: "Editor", used: activeTree?.editor_count ?? 0, max: limits?.editors ?? null },
+    { icon: <ImageIcon size={16} color={colors.brandSecondary} />, label: "Foto", used: activeTree?.photo_count ?? 0, max: limits?.photos ?? null },
+  ];
+
+  const doUpgrade = (target: PlanId) => {
+    if (!activeTreeId) return;
+    Alert.alert(
+      `Upgrade ke ${target === "pro" ? "Pro" : "Keluarga"}`,
+      "Mode simulasi: paket akan langsung aktif (integrasi pembayaran Midtrans menyusul).",
+      [
+        { text: t("cancel"), style: "cancel" },
+        {
+          text: "Aktifkan",
+          onPress: async () => {
+            setBusy(target);
+            try {
+              await upgradeTree(activeTreeId, target);
+              await refreshTrees();
+            } catch (e) {
+              console.log("upgrade error", e);
+            } finally {
+              setBusy(null);
+            }
+          },
+        },
+      ],
+    );
+  };
 
   return (
     <View style={[styles.root, { backgroundColor: colors.surface }]}>
@@ -42,51 +72,69 @@ export default function SubscriptionScreen() {
       {!activeTree ? (
         <View style={styles.center}><ActivityIndicator color={colors.brandPrimary} /></View>
       ) : (
-        <ScrollView contentContainerStyle={{ padding: 16, gap: 16 }}>
-          <LinearGradient colors={brandGradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.planCard}>
-            <View style={styles.planTop}>
-              <Crown size={26} color="#FFFFFF" />
-              <Text style={styles.planName}>{isPro ? t("plan_pro") : t("plan_free")}</Text>
+        <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: insets.bottom + 30, gap: 16 }}>
+          {/* Current usage */}
+          <LinearGradient colors={brandGradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.usageCard}>
+            <View style={styles.usageTop}>
+              <Crown size={22} color="#FFFFFF" />
+              <Text style={styles.usagePlan}>{plan === "free" ? "Free" : plan === "pro" ? "Pro" : "Keluarga"}</Text>
             </View>
-            <Text style={styles.planTree} numberOfLines={1}>{activeTree.name}</Text>
-            <Text style={styles.planSlots}>
-              {t("people_slots")}: {count}{limit ? ` / ${limit}` : ` · ${t("unlimited")}`}
-            </Text>
-            {limit ? (
-              <View style={styles.barBg}>
-                <View style={[styles.barFill, { width: `${pct}%` }]} />
-              </View>
-            ) : null}
+            <Text style={styles.usageTree} numberOfLines={1}>{activeTree.name}</Text>
+            <View style={styles.usageRow}>
+              {usage.map((u) => (
+                <View key={u.label} style={styles.usageItem}>
+                  <Text style={styles.usageVal}>{u.used}{u.max != null ? `/${u.max}` : ""}</Text>
+                  <Text style={styles.usageLabel}>{u.label}{u.max == null ? " ∞" : ""}</Text>
+                </View>
+              ))}
+            </View>
           </LinearGradient>
 
-          <View style={[styles.perkCard, { backgroundColor: colors.surfaceSecondary }]}>
-            <Text style={[styles.perkTitle, { color: colors.onSurface }]}>{t("plan_pro")}</Text>
-            {PERKS.map((p) => (
-              <View key={p} style={styles.perkRow}>
-                <View style={[styles.perkDot, { backgroundColor: colors.brandTertiary }]}>
-                  <Check size={13} color={colors.onBrandTertiary} />
+          {/* Plans */}
+          {PLANS.map((p) => {
+            const current = p.id === plan;
+            const canUpgrade = isAdmin && RANK[p.id] > RANK[plan];
+            return (
+              <View
+                key={p.id}
+                style={[styles.planCard, { backgroundColor: colors.surfaceSecondary, borderColor: current ? colors.brandPrimary : colors.border, borderWidth: current ? 2 : 1 }]}
+              >
+                <View style={styles.planHead}>
+                  <View>
+                    <Text style={[styles.planName, { color: colors.onSurface }]}>{p.name}</Text>
+                    <Text style={[styles.planPrice, { color: colors.brandSecondary }]}>{p.price}</Text>
+                  </View>
+                  {current ? (
+                    <View style={[styles.currentChip, { backgroundColor: colors.brandTertiary }]}>
+                      <Check size={13} color={colors.onBrandTertiary} />
+                      <Text style={[styles.currentChipText, { color: colors.onBrandTertiary }]}>{t("current_plan")}</Text>
+                    </View>
+                  ) : null}
                 </View>
-                <Text style={[styles.perkText, { color: colors.onSurfaceSecondary }]}>{p}</Text>
+                {p.perks.map((perk) => (
+                  <View key={perk} style={styles.perkRow}>
+                    <Check size={15} color={colors.success} />
+                    <Text style={[styles.perkText, { color: colors.onSurfaceSecondary }]}>{perk}</Text>
+                  </View>
+                ))}
+                {canUpgrade ? (
+                  <Pressable onPress={() => doUpgrade(p.id)} disabled={busy === p.id} style={{ marginTop: 10 }} testID={`upgrade-${p.id}`}>
+                    <LinearGradient colors={brandGradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.cta}>
+                      {busy === p.id ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.ctaText}>{t("upgrade_to_pro").replace("Pro", p.name)}</Text>}
+                    </LinearGradient>
+                  </Pressable>
+                ) : null}
               </View>
-            ))}
-          </View>
+            );
+          })}
 
-          {isPro ? (
-            <View style={[styles.activeBanner, { backgroundColor: colors.brandTertiary }]}>
-              <Crown size={18} color={colors.onBrandTertiary} />
-              <Text style={[styles.activeText, { color: colors.onBrandTertiary }]}>{t("pro_active")}</Text>
-            </View>
+          {!isAdmin ? (
+            <Text style={[styles.note, { color: colors.muted }]}>Hanya admin pohon yang dapat mengubah paket. Editor tetap menikmati fitur paket ini.</Text>
           ) : (
-            <Pressable testID="open-upgrade" onPress={() => setUpgradeOpen(true)}>
-              <LinearGradient colors={brandGradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.cta}>
-                <Text style={styles.ctaText}>{t("upgrade_to_pro")}</Text>
-              </LinearGradient>
-            </Pressable>
+            <Text style={[styles.note, { color: colors.muted }]}>Mode simulasi aktif — pembayaran Midtrans akan dipasang saat kunci tersedia.</Text>
           )}
         </ScrollView>
       )}
-
-      <UpgradeModal visible={upgradeOpen} onClose={() => setUpgradeOpen(false)} limit={limit} />
     </View>
   );
 }
@@ -96,20 +144,23 @@ const styles = StyleSheet.create({
   header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 20, paddingBottom: 12 },
   title: { fontFamily: fonts.display, fontSize: 22 },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
-  planCard: { borderRadius: 22, padding: 22, gap: 6 },
-  planTop: { flexDirection: "row", alignItems: "center", gap: 10 },
-  planName: { fontFamily: fonts.bold, fontSize: 20, color: "#FFFFFF" },
-  planTree: { fontFamily: fonts.medium, fontSize: 14, color: "rgba(255,255,255,0.85)" },
-  planSlots: { fontFamily: fonts.regular, fontSize: 13, color: "rgba(255,255,255,0.9)", marginTop: 6 },
-  barBg: { height: 8, borderRadius: 999, backgroundColor: "rgba(255,255,255,0.3)", marginTop: 8, overflow: "hidden" },
-  barFill: { height: 8, borderRadius: 999, backgroundColor: "#FFFFFF" },
-  perkCard: { borderRadius: 18, padding: 18, gap: 12 },
-  perkTitle: { fontFamily: fonts.semibold, fontSize: 16, marginBottom: 2 },
-  perkRow: { flexDirection: "row", alignItems: "center", gap: 10 },
-  perkDot: { width: 24, height: 24, borderRadius: 999, alignItems: "center", justifyContent: "center" },
-  perkText: { fontFamily: fonts.medium, fontSize: 14 },
-  activeBanner: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, borderRadius: 16, paddingVertical: 16 },
-  activeText: { fontFamily: fonts.semibold, fontSize: 15 },
-  cta: { height: 54, borderRadius: 16, alignItems: "center", justifyContent: "center" },
-  ctaText: { fontFamily: fonts.semibold, fontSize: 16, color: "#FFFFFF" },
+  usageCard: { borderRadius: 24, padding: 20, gap: 6 },
+  usageTop: { flexDirection: "row", alignItems: "center", gap: 10 },
+  usagePlan: { fontFamily: fonts.bold, fontSize: 20, color: "#FFFFFF" },
+  usageTree: { fontFamily: fonts.medium, fontSize: 14, color: "rgba(255,255,255,0.85)" },
+  usageRow: { flexDirection: "row", justifyContent: "space-between", marginTop: 12 },
+  usageItem: { alignItems: "center", flex: 1 },
+  usageVal: { fontFamily: fonts.bold, fontSize: 18, color: "#FFFFFF" },
+  usageLabel: { fontFamily: fonts.regular, fontSize: 12, color: "rgba(255,255,255,0.85)" },
+  planCard: { borderRadius: 24, padding: 18, gap: 8 },
+  planHead: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 4 },
+  planName: { fontFamily: fonts.display, fontSize: 20 },
+  planPrice: { fontFamily: fonts.semibold, fontSize: 14, marginTop: 2 },
+  currentChip: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999 },
+  currentChipText: { fontFamily: fonts.semibold, fontSize: 11 },
+  perkRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  perkText: { fontFamily: fonts.regular, fontSize: 14 },
+  cta: { height: 50, borderRadius: 16, alignItems: "center", justifyContent: "center" },
+  ctaText: { fontFamily: fonts.semibold, fontSize: 15, color: "#FFFFFF" },
+  note: { fontFamily: fonts.regular, fontSize: 12, textAlign: "center", paddingHorizontal: 10 },
 });

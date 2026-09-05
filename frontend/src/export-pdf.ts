@@ -40,6 +40,7 @@ export async function exportTreePdf(
   genUp: number,
   genDown: number,
   appName: string,
+  watermark: boolean = false,
 ) {
   const full = buildLayout(people, relations, rootId);
   const inRange = (g: number) => g >= -genUp && g <= genDown;
@@ -112,8 +113,12 @@ export async function exportTreePdf(
       table{width:100%;border-collapse:collapse;font-size:12px}
       th,td{border:1px solid #E2E8F0;padding:6px 8px;text-align:left}
       th{background:#F8FAFC}
+      .wm{position:fixed;top:0;left:0;width:100%;height:100%;z-index:-1;
+          background:repeating-linear-gradient(-45deg,transparent,transparent 120px,rgba(212,175,55,0.10) 120px,rgba(212,175,55,0.10) 240px);}
+      .wmtxt{position:fixed;bottom:16px;right:16px;color:#D4AF37;font-size:11px;opacity:0.8}
     </style></head>
     <body>
+      ${watermark ? '<div class="wm"></div><div class="wmtxt">Dibuat dengan KETURUNANKU · Paket Gratis</div>' : ""}
       <h1>${esc(appName)}</h1>
       <div class="sub">Pohon Keluarga · Generasi -${genUp} sampai +${genDown} · ${nodes.length} anggota</div>
       <div class="tree"><svg width="100%" viewBox="0 0 ${w} ${h}" xmlns="http://www.w3.org/2000/svg">${svgEdges}${svgNodes}</svg></div>

@@ -88,11 +88,14 @@ export type Tree = {
   id: string;
   name: string;
   owner_id: string;
-  plan: "free" | "pro";
+  plan: "free" | "pro" | "family";
   root_person_id: string | null;
   role: "admin" | "editor" | "viewer";
   person_count: number;
   member_count?: number;
+  editor_count?: number;
+  photo_count?: number;
+  plan_limits?: { people: number | null; editors: number | null; photos: number | null };
   limit: number | null;
 };
 
@@ -120,14 +123,16 @@ export const getTree = (): Promise<{
 export const listTrees = (): Promise<Tree[]> => apiFetch("/trees");
 export const createTree = (name: string): Promise<Tree> =>
   apiFetch("/trees", { method: "POST", body: JSON.stringify({ name }) });
-export const upgradeTree = (tid: string) =>
-  apiFetch(`/trees/${tid}/upgrade?tree_id=${tid}`, { method: "POST" });
+export const upgradeTree = (tid: string, plan: "pro" | "family" = "pro") =>
+  apiFetch(`/trees/${tid}/upgrade?tree_id=${tid}`, { method: "POST", body: JSON.stringify({ plan }) });
 export const getMembers = (tid: string): Promise<{ members: TreeMember[]; role: string; owner_id: string }> =>
   apiFetch(`/trees/${tid}/members?tree_id=${tid}`);
 export const changeMemberRole = (tid: string, user_id: string, role: string) =>
   apiFetch(`/trees/${tid}/members/role?tree_id=${tid}`, { method: "PUT", body: JSON.stringify({ user_id, role }) });
 export const removeMember = (tid: string, member_id: string) =>
   apiFetch(`/trees/${tid}/members/${member_id}?tree_id=${tid}`, { method: "DELETE" });
+export const deleteRelation = (relId: string) =>
+  apiFetch(`/relations/${relId}`, { method: "DELETE" });
 
 export const listPeople = (q?: string): Promise<Person[]> =>
   apiFetch(`/people${q ? `?q=${encodeURIComponent(q)}` : ""}`);
@@ -147,6 +152,16 @@ export const createInvite = (email: string) =>
 export const acceptInvite = (code: string) =>
   apiFetch("/invite/accept", { method: "POST", body: JSON.stringify({ code }) });
 export const listInvites = () => apiFetch("/invites");
+
+// ---- Tree invite links ----
+export const createInviteLink = (tid: string): Promise<{ token: string }> =>
+  apiFetch(`/trees/${tid}/invite-link?tree_id=${tid}`, { method: "POST" });
+export const getInviteInfo = (
+  token: string,
+): Promise<{ tree_id: string; tree_name: string; inviter_name: string; role: string; already_member: boolean }> =>
+  apiFetch(`/invite-info/${token}`);
+export const acceptInviteLink = (token: string): Promise<{ tree_id: string; name: string }> =>
+  apiFetch(`/invite-accept/${token}`, { method: "POST" });
 
 // ---- Person notes & files ----
 export const listPersonNotes = (personId: string) => apiFetch(`/people/${personId}/notes`);

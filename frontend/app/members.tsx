@@ -1,13 +1,16 @@
-import { View, Text, Pressable, StyleSheet, ScrollView, ActivityIndicator, Alert } from "react-native";
+import { View, Text, Pressable, StyleSheet, ScrollView, ActivityIndicator, Alert, Platform, Share } from "react-native";
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Image } from "expo-image";
+import * as Linking from "expo-linking";
+import * as Clipboard from "expo-clipboard";
+import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Shield, Trash2 } from "lucide-react-native";
+import { ArrowLeft, Shield, Trash2, Link2, Copy, Check } from "lucide-react-native";
 import { fonts, useTheme } from "@/src/theme";
 import { useI18n } from "@/src/i18n";
 import { useTree } from "@/src/tree-context";
-import { getMembers, changeMemberRole, removeMember, fileUrl, TreeMember } from "@/src/api";
+import { getMembers, changeMemberRole, removeMember, createInviteLink, fileUrl, TreeMember } from "@/src/api";
 
 const ROLES = ["admin", "editor", "viewer"] as const;
 
@@ -35,6 +38,32 @@ export default function MembersScreen() {
   });
 
   const isAdmin = data?.role === "admin";
+  const [inviteUrl, setInviteUrl] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  const buildUrl = (token: string) =>
+    Platform.OS === "web" && typeof window !== "undefined"
+      ? `${window.location.origin}/invite/${token}`
+      : Linking.createURL(`/invite/${token}`);
+
+  const inviteMut = useMutation({
+    mutationFn: () => createInviteLink(activeTreeId!),
+    onSuccess: (r) => setInviteUrl(buildUrl(r.token)),
+  });
+
+  const copyLink = async () => {
+    if (!inviteUrl) return;
+    await Clipboard.setStringAsync(inviteUrl);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1800);
+  };
+
+  const shareLink = async () => {
+    if (!inviteUrl) return;
+    try {
+      await Share.share({ message: inviteUrl });
+    } catch {}
+  };
 
   const cycleRole = (m: TreeMember) => {
     if (!isAdmin || m.is_owner) return;
@@ -64,6 +93,43 @@ export default function MembersScreen() {
         <View style={styles.center}><ActivityIndicator color={colors.brandPrimary} /></View>
       ) : (
         <ScrollView contentContainerStyle={{ padding: 16, gap: 10 }}>
+          {isAdmin ? (
+            <View style={[styles.inviteCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>
+              <View style={styles.inviteHead}>
+                <Link2 size={18} color={colors.brandSecondary} />
+                <Text style={[styles.inviteTitle, { color: colors.onSurface }]}>{t("invite_link")}</Text>
+              </View>
+              {inviteUrl ? (
+                <>
+                  <Text style={[styles.inviteUrl, { color: colors.muted, backgroundColor: colors.surfaceTertiary }]} numberOfLines={1}>
+                    {inviteUrl}
+                  </Text>
+                  <View style={{ flexDirection: "row", gap: 10 }}>
+                    <Pressable onPress={copyLink} style={[styles.inviteBtn, { backgroundColor: colors.brandTertiary }]} testID="copy-invite">
+                      {copied ? <Check size={16} color={colors.onBrandTertiary} /> : <Copy size={16} color={colors.onBrandTertiary} />}
+                      <Text style={[styles.inviteBtnText, { color: colors.onBrandTertiary }]}>{copied ? t("link_copied") : t("copy_link")}</Text>
+                    </Pressable>
+                    <Pressable onPress={shareLink} style={[styles.inviteBtn, { backgroundColor: colors.brandSecondary }]} testID="share-invite">
+                      <Text style={[styles.inviteBtnText, { color: colors.onBrandSecondary }]}>{t("share_link")}</Text>
+                    </Pressable>
+                  </View>
+                </>
+              ) : (
+                <Pressable
+                  onPress={() => inviteMut.mutate()}
+                  disabled={inviteMut.isPending}
+                  style={[styles.inviteCreate, { backgroundColor: colors.brandPrimary, opacity: inviteMut.isPending ? 0.6 : 1 }]}
+                  testID="create-invite-link"
+                >
+                  {inviteMut.isPending ? (
+                    <ActivityIndicator color={colors.onBrandPrimary} />
+                  ) : (
+                    <Text style={[styles.inviteCreateText, { color: colors.onBrandPrimary }]}>{t("create_invite_link")}</Text>
+                  )}
+                </Pressable>
+              )}
+            </View>
+          ) : null}
           <Text style={[styles.sub, { color: colors.muted }]}>
             {(data?.members.length ?? 0)} {t("members_count")}
           </Text>
@@ -122,4 +188,12 @@ const styles = StyleSheet.create({
   roleChip: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999 },
   roleText: { fontFamily: fonts.semibold, fontSize: 12, textTransform: "capitalize" },
   hint: { fontFamily: fonts.regular, fontSize: 12, textAlign: "center", marginTop: 8 },
+  inviteCard: { borderRadius: 16, borderWidth: 1, padding: 16, gap: 12, marginBottom: 4 },
+  inviteHead: { flexDirection: "row", alignItems: "center", gap: 8 },
+  inviteTitle: { fontFamily: fonts.semibold, fontSize: 15 },
+  inviteUrl: { fontFamily: fonts.regular, fontSize: 12, paddingHorizontal: 12, paddingVertical: 10, borderRadius: 10 },
+  inviteBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, borderRadius: 12, paddingVertical: 12 },
+  inviteBtnText: { fontFamily: fonts.semibold, fontSize: 13 },
+  inviteCreate: { borderRadius: 12, paddingVertical: 14, alignItems: "center" },
+  inviteCreateText: { fontFamily: fonts.semibold, fontSize: 15 },
 });

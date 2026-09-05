@@ -92,8 +92,21 @@ const useStyles = makeStyles((c) => ({
   stepVal: { fontFamily: fonts.semibold, fontSize: 16, color: c.onSurface, minWidth: 24, textAlign: "center" },
 }));
 
-function AddButton({ x, y, bg, icon, onPress, testID }: any) {
+function GrowNode({ x, y, children }: { x: number; y: number; children: any }) {
   const styles = useStyles();
+  const p = useSharedValue(0);
+  useEffect(() => {
+    p.value = withTiming(1, { duration: 340 });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const aStyle = useAnimatedStyle(() => ({
+    opacity: p.value,
+    transform: [{ scale: 0.55 + 0.45 * p.value }, { translateY: (1 - p.value) * -10 }],
+  }));
+  return <Animated.View style={[styles.nodeWrap, { left: x, top: y }, aStyle]}>{children}</Animated.View>;
+}
+
+function AddButton({ x, y, bg, icon, onPress, testID }: any) {  const styles = useStyles();
   return (
     <Pressable testID={testID} onPress={onPress} style={[styles.addBtn, { left: x, top: y, backgroundColor: bg }]}>
       <Feather name={icon} size={18} color="#FFFFFF" />
@@ -116,6 +129,9 @@ export default function TreeScreen() {
   const [focusId, setFocusId] = useState<string | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
   const [upgradeOpen, setUpgradeOpen] = useState(false);
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [filterUp, setFilterUp] = useState(2);
+  const [filterDown, setFilterDown] = useState(2);
   const [genUp, setGenUp] = useState(2);
   const [genDown, setGenDown] = useState(2);
   const [exporting, setExporting] = useState(false);
@@ -134,8 +150,8 @@ export default function TreeScreen() {
   const activeFocus = focusId ?? data?.root_id ?? null;
 
   const layout = useMemo(
-    () => buildLayout(data?.people ?? [], data?.relations ?? [], activeFocus),
-    [data, activeFocus],
+    () => buildLayout(data?.people ?? [], data?.relations ?? [], activeFocus, filterUp, filterDown),
+    [data, activeFocus, filterUp, filterDown],
   );
 
   const stats = useMemo(() => {
@@ -229,7 +245,7 @@ export default function TreeScreen() {
   const doExport = async () => {
     setExporting(true);
     try {
-      await exportTreePdf(data!.people, data!.relations, data!.root_id, genUp, genDown, "KETURUNANKU");
+      await exportTreePdf(data!.people, data!.relations, data!.root_id, genUp, genDown, "KETURUNANKU", plan === "free");
       setExportOpen(false);
     } catch (e) {
       console.log("export error", e);
@@ -253,12 +269,12 @@ export default function TreeScreen() {
   return (
     <View style={styles.root}>
       <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
-        <Pressable style={styles.headerLeft} onPress={() => router.push("/trees")} testID="tree-switcher">
+        <View style={styles.headerLeft}>
           <Text style={styles.headerTitle} numberOfLines={1}>{activeTree?.name ?? t("tree")}</Text>
           <View style={styles.headerMeta}>
-            <View style={[styles.planChip, { backgroundColor: plan === "pro" ? colors.brandSecondary : colors.brandTertiary }]}>
-              <Text style={[styles.planChipText, { color: plan === "pro" ? colors.onBrandSecondary : colors.onBrandTertiary }]}>
-                {plan === "pro" ? "PRO" : "GRATIS"}
+            <View style={[styles.planChip, { backgroundColor: plan === "free" ? colors.brandTertiary : colors.brandSecondary }]}>
+              <Text style={[styles.planChipText, { color: plan === "free" ? colors.onBrandTertiary : colors.onBrandSecondary }]}>
+                {plan === "pro" ? "PRO" : plan === "family" ? "KELUARGA" : "GRATIS"}
               </Text>
             </View>
             {limit != null ? (
@@ -266,11 +282,13 @@ export default function TreeScreen() {
             ) : (
               <Text style={styles.headerCount}>{personCount} orang</Text>
             )}
-            <Feather name="chevron-down" size={15} color={colors.muted} />
           </View>
-        </Pressable>
+        </View>
         {hasTree ? (
           <View style={styles.headerActions}>
+            <Pressable style={styles.iconBtn} onPress={() => setFilterOpen(true)} testID="open-filter">
+              <Feather name="sliders" size={18} color={colors.brandSecondary} />
+            </Pressable>
             <Pressable
               style={styles.iconBtn}
               onPress={() => router.push(`/explorer/${activeFocus ?? data?.root_id}`)}
@@ -358,7 +376,7 @@ export default function TreeScreen() {
                   </Svg>
 
                   {layout.nodes.map((n) => (
-                    <View key={n.id} style={[styles.nodeWrap, { left: n.x - 48, top: n.y - NODE_R - 3 }]}>
+                    <GrowNode key={n.id} x={n.x - 48} y={n.y - NODE_R - 3}>
                       <PersonNode
                         person={n.person}
                         selected={selected === n.id}
@@ -367,7 +385,7 @@ export default function TreeScreen() {
                           else setSelected(n.id);
                         }}
                       />
-                    </View>
+                    </GrowNode>
                   ))}
 
                   {selNode ? (
@@ -439,6 +457,53 @@ export default function TreeScreen() {
       </Modal>
 
       <UpgradeModal visible={upgradeOpen} onClose={() => setUpgradeOpen(false)} limit={limit} />
+
+      <Modal visible={filterOpen} transparent animationType="slide" onRequestClose={() => setFilterOpen(false)}>
+        <Pressable style={styles.modalBg} onPress={() => setFilterOpen(false)}>
+          <Pressable style={[styles.sheet, { paddingBottom: insets.bottom + 24 }]} onPress={() => {}}>
+            <Text style={styles.sheetTitle}>{t("filter_generations")}</Text>
+            <View style={styles.stepperRow}>
+              <Text style={styles.stepperLabel}>⬆︎ {t("gen_above")}</Text>
+              <View style={styles.stepper}>
+                <Pressable style={styles.stepBtn} onPress={() => setFilterUp((v) => Math.max(0, v - 1))} testID="filter-up-minus">
+                  <Feather name="minus" size={16} color={colors.onSurface} />
+                </Pressable>
+                <Text style={styles.stepVal}>{filterUp > 20 ? "∞" : filterUp}</Text>
+                <Pressable style={styles.stepBtn} onPress={() => setFilterUp((v) => Math.min(10, v + 1))} testID="filter-up-plus">
+                  <Feather name="plus" size={16} color={colors.onSurface} />
+                </Pressable>
+              </View>
+            </View>
+            <View style={styles.stepperRow}>
+              <Text style={styles.stepperLabel}>⬇︎ {t("gen_below")}</Text>
+              <View style={styles.stepper}>
+                <Pressable style={styles.stepBtn} onPress={() => setFilterDown((v) => Math.max(0, v - 1))} testID="filter-down-minus">
+                  <Feather name="minus" size={16} color={colors.onSurface} />
+                </Pressable>
+                <Text style={styles.stepVal}>{filterDown > 20 ? "∞" : filterDown}</Text>
+                <Pressable style={styles.stepBtn} onPress={() => setFilterDown((v) => Math.min(10, v + 1))} testID="filter-down-plus">
+                  <Feather name="plus" size={16} color={colors.onSurface} />
+                </Pressable>
+              </View>
+            </View>
+            <View style={{ flexDirection: "row", gap: 12 }}>
+              <GradientButton
+                testID="filter-show-all"
+                variant="secondary"
+                title={t("show_all")}
+                onPress={() => { setFilterUp(99); setFilterDown(99); }}
+                style={{ flex: 1 }}
+              />
+              <GradientButton
+                testID="filter-apply"
+                title={t("save")}
+                onPress={() => setFilterOpen(false)}
+                style={{ flex: 1 }}
+              />
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 }

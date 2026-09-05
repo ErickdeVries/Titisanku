@@ -111,3 +111,34 @@ JSON backup, and email collaboration invites. Google login; first user = admin +
   6th add button (Saudara). add.tsx & person detail quick-actions gained Kakak/Adik.
 - Role checks in index/add/person-detail now use per-tree role (data.role) with user.role fallback.
 - Verified via screenshots: Explorer + Tree canvas render correctly with Modern Heritage theme.
+
+## Iteration 6 — Invite Links + Generation Filter (2026-06)
+- Backend (tested: invite 8/8, sibling 3/3, no regressions):
+  - Collection `tree_invites` {id,tree_id,token,role:editor,created_by,active}.
+  - POST /trees/{tid}/invite-link (admin, reuses active link), GET /invite-info/{token} (auth),
+    POST /invite-accept/{token} (adds caller as editor member, idempotent).
+- Frontend:
+  - members.tsx: admin "Buat Link Undangan" → copy (expo-clipboard) / share (Share). Link =
+    origin/invite/{token} (web) or Linking.createURL (native).
+  - app/invite/[token].tsx: if logged out → store pending_invite + Google login; after login
+    RootNav resumes to /invite/{token}. If logged in → shows inviter + tree, "Gabung sebagai
+    Editor" (accept) or "Buat Pohon Baru Milik Saya". RootNav allows /invite unauthenticated.
+  - Generation filter: buildLayout(people,relations,focus,genUp,genDown) filters nodes by signed
+    generation distance from focus. Tree canvas: "sliders" header button → Filter Generasi modal
+    (steppers, default 2/2, "Tampilkan Semua"=99). Explorer: per-page depth steppers (0-2) that
+    reveal Kakek/Nenek (2 up) and Cucu (2 down) sections.
+- All verified via screenshots (Explorer depth, Members invite, Invite landing, Filter modal).
+
+## Iteration 7 — Plan tiers, 1-tree-per-account, auto relations (2026-06)
+- Plans: free/pro/family. Limits people(50/∞/∞), editors(3/10/50), photos(20/∞/∞). 402 codes:
+  LIMIT_REACHED (people), EDITOR_LIMIT, PHOTO_LIMIT. Payment = SIMULATION (Midtrans pending key).
+- Subscription screen shows 3 tiers + usage (orang/editor/foto). UpgradeModal exact copy +
+  [Upgrade Sekarang]->/subscription + [Tanya ke Admin]. PDF watermark when plan=free.
+  Settings: "Backup ke Google Drive" visible for pro/family (function deferred).
+- 1 TREE PER ACCOUNT: removed Add/Switch tree UI (header name non-tappable, settings row gone,
+  invite screen keeps only "Gabung sebagai Editor"). TreeProvider still resolves the primary/active
+  tree internally (persisted), so invited editors stay on the joined tree.
+- Auto family relations on person detail: computes Ayah/Ibu/Kakek/Nenek/Saudara/Anak from graph,
+  each tappable + deletable (admin/editor) via new DELETE /relations/{rel_id}. All person fields
+  editable via existing edit form.
+- Backend tested: plan limits, family upgrade, editor limit 402, relation delete + viewer 403.

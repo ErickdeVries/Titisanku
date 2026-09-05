@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { View, Text, Pressable, TextInput, ScrollView, Switch, Platform } from "react-native";
+import { View, Text, Pressable, TextInput, ScrollView, Switch, Platform, Alert } from "react-native";
 import { Image } from "expo-image";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -30,6 +30,8 @@ const useStyles = makeStyles((c) => ({
   roleText: { fontFamily: fonts.semibold, fontSize: 11, color: c.onBrandTertiary },
   section: { paddingHorizontal: 20, marginTop: 20 },
   sectionTitle: { fontFamily: fonts.semibold, fontSize: 13, color: c.muted, marginBottom: 10, textTransform: "uppercase", letterSpacing: 0.5 },
+  proTag: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999 },
+  proTagText: { fontFamily: fonts.bold, fontSize: 10, letterSpacing: 0.5 },
   card: { backgroundColor: c.surfaceSecondary, borderRadius: 16, overflow: "hidden" },
   rowItem: { flexDirection: "row", alignItems: "center", gap: 12, padding: 16 },
   rowTextWrap: { flex: 1 },
@@ -65,6 +67,7 @@ export default function SettingsScreen() {
   const qc = useQueryClient();
 
   const isAdmin = (activeTree?.role ?? user?.role) === "admin";
+  const isPro = activeTree?.plan === "pro" || activeTree?.plan === "family";
   const { data } = useQuery({ queryKey: ["tree"], queryFn: getTree });
   const { data: invites } = useQuery({ queryKey: ["invites"], queryFn: listInvites, enabled: isAdmin });
 
@@ -197,17 +200,8 @@ export default function SettingsScreen() {
 
         {/* Tree & Subscription */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>{t("my_trees")}</Text>
+          <Text style={styles.sectionTitle}>{activeTree?.name ?? t("my_trees")}</Text>
           <View style={styles.card}>
-            <Pressable style={styles.rowItem} onPress={() => router.push("/trees")} testID="switch-tree-row">
-              <Feather name="git-merge" size={20} color={colors.onSurfaceSecondary} />
-              <View style={styles.rowTextWrap}>
-                <Text style={styles.rowLabel}>{t("switch_tree")}</Text>
-                <Text style={styles.rowDesc}>{activeTree?.name ?? "—"}</Text>
-              </View>
-              <Feather name="chevron-right" size={20} color={colors.muted} />
-            </Pressable>
-            <View style={styles.divider} />
             <Pressable style={styles.rowItem} onPress={() => router.push("/subscription")} testID="subscription-row">
               <Feather name="award" size={20} color={colors.onSurfaceSecondary} />
               <View style={styles.rowTextWrap}>
@@ -285,6 +279,35 @@ export default function SettingsScreen() {
                   </View>
                   {restoreBusy ? (
                     <Feather name="loader" size={18} color={colors.muted} />
+                  ) : (
+                    <Feather name="chevron-right" size={20} color={colors.muted} />
+                  )}
+                </Pressable>
+              </>
+            ) : null}
+            {isAdmin ? (
+              <>
+                <View style={styles.divider} />
+                <Pressable
+                  style={styles.rowItem}
+                  testID="gdrive-backup-button"
+                  onPress={() => {
+                    if (isPro) {
+                      Alert.alert("Backup Google Drive", "Fitur backup otomatis ke Google Drive akan segera hadir untuk paket Pro & Keluarga.");
+                    } else {
+                      router.push("/subscription");
+                    }
+                  }}
+                >
+                  <Feather name="hard-drive" size={20} color={isPro ? colors.brandSecondary : colors.muted} />
+                  <View style={styles.rowTextWrap}>
+                    <Text style={styles.rowLabel}>Backup ke Google Drive</Text>
+                    <Text style={styles.rowDesc}>{isPro ? "Cadangkan otomatis ke Drive Anda" : "Khusus paket Pro & Keluarga"}</Text>
+                  </View>
+                  {!isPro ? (
+                    <View style={[styles.proTag, { backgroundColor: colors.brandTertiary }]}>
+                      <Text style={[styles.proTagText, { color: colors.onBrandTertiary }]}>PRO</Text>
+                    </View>
                   ) : (
                     <Feather name="chevron-right" size={20} color={colors.muted} />
                   )}

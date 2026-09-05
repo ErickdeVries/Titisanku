@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { View, Text, Pressable, ActivityIndicator, TextInput, Modal } from "react-native";
+import { View, Text, Pressable, ActivityIndicator, TextInput, Modal, Alert } from "react-native";
 import { Image } from "expo-image";
 import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
@@ -10,7 +10,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Feather from "@react-native-vector-icons/feather";
 import { fonts, makeStyles, useTheme } from "@/src/theme";
-import { getPerson, updatePerson, deletePerson, fileUrl, getTree, listPersonNotes, addPersonNote, addPersonFile, deleteNote } from "@/src/api";
+import { getPerson, updatePerson, deletePerson, fileUrl, getTree, listPersonNotes, addPersonNote, addPersonFile, deleteNote, deleteRelation } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { useI18n } from "@/src/i18n";
 import { nodeColor } from "@/src/components/PersonNode";
@@ -176,6 +176,77 @@ export default function PersonDetail() {
 
   const isAdmin = (tree?.role ?? user?.role) === "admin";
   const canEdit = (tree?.role ?? user?.role) === "admin" || (tree?.role ?? user?.role) === "editor";
+
+  const relatives = useMemo(() => {
+    if (!tree) return [] as { key: string; label: string; icon: string; person: any }[];
+    const byId = new Map(tree.people.map((p) => [p.id, p] as const));
+    const PAR = ["parent", "adopted_child"];
+    const parentIds = tree.relations
+      .filter((r) => r.related_person_id === id && PAR.includes(r.relation_type))
+      .map((r) => r.person_id);
+    const parentRelId = (pid: string) =>
+      tree.relations.find((r) => r.related_person_id === id && r.person_id === pid && PAR.includes(r.relation_type))?.id;
+    const parents = parentIds.map((pid) => byId.get(pid)).filter(Boolean) as any[];
+    const father = parents.find((p) => p.gender === "male");
+    const mother = parents.find((p) => p.gender === "female");
+    const gp: any[] = [];
+    parentIds.forEach((pid) => {
+      tree.relations
+        .filter((r) => r.related_person_id === pid && PAR.includes(r.relation_type))
+        .forEach((r) => { const g = byId.get(r.person_id); if (g) gp.push(g); });
+    });
+    const sibSet = new Set<string>();
+    const explicitSibRel = new Map<string, string>();
+    if (parentIds.length) {
+      parentIds.forEach((pid) =>
+        tree.relations
+          .filter((r) => r.person_id === pid && PAR.includes(r.relation_type))
+          .forEach((r) => { if (r.related_person_id !== id) sibSet.add(r.related_person_id); }),
+      );
+    } else {
+      tree.relations
+        .filter((r) => r.relation_type === "sibling" && (r.person_id === id || r.related_person_id === id))
+        .forEach((r) => {
+          const sid = r.person_id === id ? r.related_person_id : r.person_id;
+          sibSet.add(sid);
+          explicitSibRel.set(sid, r.id);
+        });
+    }
+    const siblings = [...sibSet].map((sid) => byId.get(sid)).filter(Boolean) as any[];
+    const childRelId = (cid: string) =>
+      tree.relations.find((r) => r.person_id === id && r.related_person_id === cid && PAR.includes(r.relation_type))?.id;
+    const children = tree.relations
+      .filter((r) => r.person_id === id && PAR.includes(r.relation_type))
+      .map((r) => byId.get(r.related_person_id))
+      .filter(Boolean) as any[];
+    const rows: { key: string; label: string; icon: string; person: any; relId?: string }[] = [];
+    if (father) rows.push({ key: "ayah", label: "Ayah", icon: "arrow-up", person: father, relId: parentRelId(father.id) });
+    if (mother) rows.push({ key: "ibu", label: "Ibu", icon: "arrow-up", person: mother, relId: parentRelId(mother.id) });
+    gp.filter((g) => g.gender === "male").forEach((g, i) => rows.push({ key: `kakek${i}`, label: "Kakek", icon: "chevrons-up", person: g }));
+    gp.filter((g) => g.gender === "female").forEach((g, i) => rows.push({ key: `nenek${i}`, label: "Nenek", icon: "chevrons-up", person: g }));
+    siblings.forEach((s, i) => rows.push({ key: `sib${i}`, label: t("siblings_label"), icon: "users", person: s, relId: explicitSibRel.get(s.id) }));
+    children.forEach((ch, i) => rows.push({ key: `anak${i}`, label: t("children_label"), icon: "arrow-down", person: ch, relId: childRelId(ch.id) }));
+    return rows;
+  }, [tree, id, t]);
+
+  const delRel = (relId: string, name: string) => {
+    Alert.alert("Hapus Relasi", `Hapus hubungan dengan ${name}? Orang tetap ada di pohon.`, [
+      { text: t("cancel"), style: "cancel" },
+      {
+        text: t("delete"),
+        style: "destructive",
+        onPress: async () => {
+          try {
+            await deleteRelation(relId);
+            await qc.invalidateQueries({ queryKey: ["tree"] });
+            await qc.invalidateQueries({ queryKey: ["person", id] });
+          } catch (e) {
+            console.log("delete relation error", e);
+          }
+        },
+      },
+    ]);
+  };
 
   const save = async (v: PersonFormValue) => {
     setSaving(true);
@@ -405,7 +476,38 @@ export default function PersonDetail() {
                               <Text style={styles.divorceBadgeText}>{t("divorced_badge")}</Text>
                             </View>
                           ) : null}
+                          {canEdit ? (
+                            <Pressable onPress={() => delRel(s.id, s.name)} hitSlop={10} testID={`spouse-del-${s.id}`} style={{ marginLeft: 6 }}>
+                              <Feather name="trash-2" size={17} color={colors.error} />
+                            </Pressable>
+                          ) : null}
                         </View>
+                      </View>
+                    ))}
+                  </View>
+                </>
+              ) : null}
+
+              {relatives.length ? (
+                <>
+                  <Text style={styles.marriageTitle}>Relasi Keluarga</Text>
+                  <View style={styles.infoCard}>
+                    {relatives.map((r, i) => (
+                      <View key={r.key}>
+                        {i > 0 ? <View style={styles.divider} /> : null}
+                        <Pressable style={styles.infoRow} onPress={() => router.push(`/person/${r.person.id}`)} testID={`rel-${r.key}`}>
+                          <Feather name={r.icon as any} size={18} color={colors.brandSecondary} />
+                          <View style={{ flex: 1 }}>
+                            <Text style={styles.infoLabel}>{r.label}</Text>
+                            <Text style={styles.infoValue}>{r.person.name}</Text>
+                          </View>
+                          {canEdit && r.relId ? (
+                            <Pressable onPress={() => delRel(r.relId!, r.person.name)} hitSlop={10} testID={`rel-del-${r.key}`} style={{ marginRight: 4 }}>
+                              <Feather name="trash-2" size={17} color={colors.error} />
+                            </Pressable>
+                          ) : null}
+                          <Feather name="chevron-right" size={18} color={colors.muted} />
+                        </Pressable>
                       </View>
                     ))}
                   </View>

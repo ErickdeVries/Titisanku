@@ -39,6 +39,8 @@ export default function Explorer() {
   const { activeTree } = useTree();
   const { id } = useLocalSearchParams<{ id: string }>();
   const [zoom, setZoom] = useState(1);
+  const [expUp, setExpUp] = useState(1);
+  const [expDown, setExpDown] = useState(1);
 
   const { data, isLoading } = useQuery({ queryKey: ["tree"], queryFn: getTree });
   const role = data?.role ?? user?.role;
@@ -78,9 +80,19 @@ export default function Explorer() {
       .map((r) => byId.get(r.related_person_id))
       .filter(Boolean)
       .sort(byBirth) as Person[];
+    const parentsOf = (pid: string) =>
+      relations.filter((r) => r.related_person_id === pid && PARENT_TYPES.includes(r.relation_type)).map((r) => byId.get(r.person_id)).filter(Boolean) as Person[];
+    const childrenOf = (pid: string) =>
+      relations.filter((r) => r.person_id === pid && PARENT_TYPES.includes(r.relation_type)).map((r) => byId.get(r.related_person_id)).filter(Boolean) as Person[];
+    const gpSet = new Map<string, Person>();
+    parents.forEach((p) => parentsOf(p.id).forEach((gp) => gpSet.set(gp.id, gp)));
+    const grandparents = [...gpSet.values()];
+    const gcSet = new Map<string, Person>();
+    children.forEach((c) => childrenOf(c.id).forEach((gc) => gcSet.set(gc.id, gc)));
+    const grandchildren = [...gcSet.values()].sort(byBirth);
     const hasFather = parents.some((p) => p.gender === "male");
     const hasMother = parents.some((p) => p.gender === "female");
-    return { center, parents, spouses, siblings, children, hasFather, hasMother };
+    return { center, parents, spouses, siblings, children, grandparents, grandchildren, hasFather, hasMother };
   }, [data, id]);
 
   const setZ = (v: number) => setZoom(Math.min(1.6, Math.max(0.7, Math.round(v * 20) / 20)));
@@ -122,10 +134,39 @@ export default function Explorer() {
         </Pressable>
       </View>
 
+      <View style={styles.filterBar}>
+        <View style={styles.filterGroup}>
+          <ChevronUp size={15} color={colors.muted} />
+          <Pressable onPress={() => setExpUp((v) => Math.max(0, v - 1))} hitSlop={8} testID="exp-up-minus"><Minus size={16} color={colors.onSurface} /></Pressable>
+          <Text style={[styles.filterVal, { color: colors.onSurface }]}>{expUp}</Text>
+          <Pressable onPress={() => setExpUp((v) => Math.min(2, v + 1))} hitSlop={8} testID="exp-up-plus"><Plus size={16} color={colors.onSurface} /></Pressable>
+        </View>
+        <View style={styles.filterGroup}>
+          <ChevronDown size={15} color={colors.muted} />
+          <Pressable onPress={() => setExpDown((v) => Math.max(0, v - 1))} hitSlop={8} testID="exp-down-minus"><Minus size={16} color={colors.onSurface} /></Pressable>
+          <Text style={[styles.filterVal, { color: colors.onSurface }]}>{expDown}</Text>
+          <Pressable onPress={() => setExpDown((v) => Math.min(2, v + 1))} hitSlop={8} testID="exp-down-plus"><Plus size={16} color={colors.onSurface} /></Pressable>
+        </View>
+      </View>
+
       <GestureDetector gesture={pinch}>
         <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: insets.bottom + 90, gap: 18 }} showsVerticalScrollIndicator={false}>
+          {/* Grandparents */}
+          {expUp >= 2 && rel.grandparents.length ? (
+            <>
+              <Section label={t("grandparents_label")} icon={<ChevronUp size={16} color={colors.muted} />} />
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.rowContent}>
+                {rel.grandparents.map((p) => (
+                  <BigPersonCard key={p.id} person={p} scale={zoom} onPress={() => goExplore(p.id)} testID={`exp-gp-${p.id}`} />
+                ))}
+              </ScrollView>
+            </>
+          ) : null}
+
           {/* Parents */}
-          <Section label={t("parents_label")} icon={<ChevronUp size={16} color={colors.muted} />} />
+          {expUp >= 1 ? (
+            <>
+              <Section label={t("parents_label")} icon={<ChevronUp size={16} color={colors.muted} />} />
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.rowContent}>
             {rel.parents.map((p) => (
               <BigPersonCard key={p.id} person={p} scale={zoom} onPress={() => goExplore(p.id)} testID={`exp-parent-${p.id}`} />
@@ -134,6 +175,8 @@ export default function Explorer() {
             {canEdit && !rel.hasMother ? <AddChip label={t("add_mother")} color={colors.femaleNode} onPress={() => goAdd("mother")} testID="exp-add-mother" /> : null}
             {!rel.parents.length && !canEdit ? <Text style={[styles.empty, { color: colors.muted }]}>{t("no_relatives")}</Text> : null}
           </ScrollView>
+            </>
+          ) : null}
 
           {/* Center + spouse */}
           <View style={styles.centerRow}>
@@ -172,14 +215,30 @@ export default function Explorer() {
           </ScrollView>
 
           {/* Children */}
-          <Section label={t("children_label")} icon={<ChevronDown size={16} color={colors.muted} />} />
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.rowContent}>
-            {rel.children.map((p) => (
-              <BigPersonCard key={p.id} person={p} scale={zoom} onPress={() => goExplore(p.id)} testID={`exp-child-${p.id}`} />
-            ))}
-            {canEdit ? <AddChip label={t("add_child")} color={colors.success} onPress={() => goAdd("child")} testID="exp-add-child" /> : null}
-            {!rel.children.length && !canEdit ? <Text style={[styles.empty, { color: colors.muted }]}>{t("no_relatives")}</Text> : null}
-          </ScrollView>
+          {expDown >= 1 ? (
+            <>
+              <Section label={t("children_label")} icon={<ChevronDown size={16} color={colors.muted} />} />
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.rowContent}>
+                {rel.children.map((p) => (
+                  <BigPersonCard key={p.id} person={p} scale={zoom} onPress={() => goExplore(p.id)} testID={`exp-child-${p.id}`} />
+                ))}
+                {canEdit ? <AddChip label={t("add_child")} color={colors.success} onPress={() => goAdd("child")} testID="exp-add-child" /> : null}
+                {!rel.children.length && !canEdit ? <Text style={[styles.empty, { color: colors.muted }]}>{t("no_relatives")}</Text> : null}
+              </ScrollView>
+            </>
+          ) : null}
+
+          {/* Grandchildren */}
+          {expDown >= 2 && rel.grandchildren.length ? (
+            <>
+              <Section label={t("grandchildren_label")} icon={<ChevronDown size={16} color={colors.muted} />} />
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.rowContent}>
+                {rel.grandchildren.map((p) => (
+                  <BigPersonCard key={p.id} person={p} scale={zoom} onPress={() => goExplore(p.id)} testID={`exp-gc-${p.id}`} />
+                ))}
+              </ScrollView>
+            </>
+          ) : null}
         </ScrollView>
       </GestureDetector>
 
@@ -199,6 +258,9 @@ const styles = StyleSheet.create({
   header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16, paddingBottom: 12, gap: 12 },
   title: { fontFamily: fonts.display, fontSize: 20, flex: 1, textAlign: "center" },
   detailLink: { fontFamily: fonts.medium, fontSize: 12 },
+  filterBar: { flexDirection: "row", justifyContent: "center", gap: 20, paddingBottom: 10 },
+  filterGroup: { flexDirection: "row", alignItems: "center", gap: 10 },
+  filterVal: { fontFamily: fonts.semibold, fontSize: 14, minWidth: 16, textAlign: "center" },
   sectionHead: { flexDirection: "row", alignItems: "center", gap: 6 },
   sectionLabel: { fontFamily: fonts.semibold, fontSize: 12, textTransform: "uppercase", letterSpacing: 0.6 },
   rowContent: { gap: 14, paddingVertical: 10, paddingHorizontal: 2, alignItems: "flex-start" },

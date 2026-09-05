@@ -165,9 +165,32 @@ def require_role(user, roles):
 # ---------------------------------------------------------------------------
 FREE_PERSON_LIMIT = 50
 
+# Subscription plan limits. None = unlimited.
+PLAN_LIMITS = {
+    "free": {"people": 50, "editors": 3, "photos": 20},
+    "pro": {"people": None, "editors": 10, "photos": None},
+    "family": {"people": None, "editors": 50, "photos": None},
+}
+
+
+def plan_limits(plan: str) -> dict:
+    return PLAN_LIMITS.get(plan or "free", PLAN_LIMITS["free"])
+
+
+async def editor_count(tree_id: str) -> int:
+    return await db.tree_members.count_documents({"tree_id": tree_id, "role": "editor"})
+
+
+async def photo_count(tree_id: str) -> int:
+    return await db.person_notes.count_documents({"tree_id": tree_id, "attachments": {"$ne": []}, "deleted_at": None})
+
 
 class TreeCreateInput(BaseModel):
     name: str
+
+
+class UpgradeInput(BaseModel):
+    plan: str = "pro"
 
 
 class MemberRoleInput(BaseModel):
@@ -345,7 +368,7 @@ async def get_tree(tree_id: Optional[str] = Query(None), user=Depends(get_curren
         "tree": tree,
         "role": role,
         "person_count": len(people),
-        "limit": None if tree.get("plan") == "pro" else FREE_PERSON_LIMIT,
+        "limit": plan_limits(tree.get("plan")).get("people"),
     }
 
 
@@ -402,17 +425,29 @@ async def delete_person(person_id: str, tree_id: Optional[str] = Query(None), us
     return {"ok": True}
 
 
+@api_router.delete("/relations/{rel_id}")
+async def delete_relation(rel_id: str, tree_id: Optional[str] = Query(None), user=Depends(get_current_user)):
+    tree, role = await resolve_tree(user, tree_id)
+    require_role_t(role, ["admin", "editor"])
+    r = await db.relations.find_one({"id": rel_id, "tree_id": tree["id"], "deleted_at": None}, {"_id": 0})
+    if not r:
+        raise HTTPException(status_code=404, detail="Relation not found")
+    await db.relations.update_one({"id": rel_id}, {"$set": {"deleted_at": now_utc()}})
+    return {"ok": True}
+
+
 @api_router.post("/people/add-relative")
 async def add_relative(body: AddRelativeInput, tree_id: Optional[str] = Query(None), user=Depends(get_current_user)):
     tree, role = await resolve_tree(user, tree_id)
     require_role_t(role, ["admin", "editor"])
-    # Subscription limit for Free plan
-    if tree.get("plan") != "pro":
+    # Subscription limit for people
+    lim_people = plan_limits(tree.get("plan")).get("people")
+    if lim_people is not None:
         count = await tree_person_count(tree["id"])
-        if count >= FREE_PERSON_LIMIT:
+        if count >= lim_people:
             raise HTTPException(
                 status_code=402,
-                detail=f"LIMIT_REACHED:Pohon gratis dibatasi {FREE_PERSON_LIMIT} orang. Upgrade ke Pro untuk menambah lebih banyak.",
+                detail=f"LIMIT_REACHED:Pohon '{tree.get('name')}' sudah mencapai {lim_people} orang. Upgrade untuk membuka kunci generasi selanjutnya.",
             )
     focus = await db.people.find_one({"id": body.focus_id, "tree_id": tree["id"], "deleted_at": None}, {"_id": 0})
     if not focus:
@@ -704,6 +739,9 @@ async def add_person_file(person_id: str, file: UploadFile = File(...), tree_id:
     person = await db.people.find_one({"id": person_id, "tree_id": tree["id"], "deleted_at": None}, {"_id": 0})
     if not person:
         raise HTTPException(status_code=404, detail="Person not found")
+    lim_photos = plan_limits(tree.get("plan")).get("photos")
+    if lim_photos is not None and await photo_count(tree["id"]) >= lim_photos:
+        raise HTTPException(status_code=402, detail=f"PHOTO_LIMIT:Batas {lim_photos} foto/file untuk paket gratis sudah tercapai. Upgrade untuk penyimpanan lebih besar.")
     content = await file.read()
     ext = (file.filename or "file").split(".")[-1].lower()
     path = f"{APP_NAME}/uploads/{user['user_id']}/{uuid.uuid4().hex}.{ext}"
@@ -947,12 +985,16 @@ async def list_trees(user=Depends(get_current_user)):
             continue
         count = await tree_person_count(tree["id"])
         member_count = await db.tree_members.count_documents({"tree_id": tree["id"]})
+        limits = plan_limits(tree.get("plan"))
         out.append({
             **tree,
             "role": m["role"],
             "person_count": count,
             "member_count": member_count,
-            "limit": None if tree.get("plan") == "pro" else FREE_PERSON_LIMIT,
+            "editor_count": await editor_count(tree["id"]),
+            "photo_count": await photo_count(tree["id"]),
+            "plan_limits": limits,
+            "limit": limits.get("people"),
         })
     return out
 
@@ -961,16 +1003,19 @@ async def list_trees(user=Depends(get_current_user)):
 async def create_tree(body: TreeCreateInput, user=Depends(get_current_user)):
     name = (body.name or "").strip() or f"Keluarga {user['name']}"
     tree = await create_tree_for_user(user, name)
-    return {**tree, "role": "admin", "person_count": 1, "member_count": 1, "limit": FREE_PERSON_LIMIT}
+    return {**tree, "role": "admin", "person_count": 1, "member_count": 1,
+            "editor_count": 0, "photo_count": 0, "plan_limits": plan_limits("free"), "limit": 50}
 
 
 @api_router.post("/trees/{tid}/upgrade")
-async def upgrade_tree(tid: str, user=Depends(get_current_user)):
-    """Activate Pro plan for a tree. (Payment via Midtrans handled separately.)"""
+async def upgrade_tree(tid: str, body: UpgradeInput, user=Depends(get_current_user)):
+    """Activate a paid plan for a tree (admin only). Payment via Midtrans is
+    handled separately; in simulation mode this activates the plan directly."""
     tree, role = await resolve_tree(user, tid)
     require_role_t(role, ["admin"])
-    await db.trees.update_one({"id": tid}, {"$set": {"plan": "pro", "upgraded_at": now_utc()}})
-    return {"ok": True, "plan": "pro"}
+    plan = body.plan if body.plan in ("free", "pro", "family") else "pro"
+    await db.trees.update_one({"id": tid}, {"$set": {"plan": plan, "upgraded_at": now_utc()}})
+    return {"ok": True, "plan": plan}
 
 
 @api_router.get("/trees/{tid}/members")
@@ -999,6 +1044,11 @@ async def change_member_role(tid: str, body: MemberRoleInput, user=Depends(get_c
         raise HTTPException(status_code=400, detail="Tidak bisa mengubah peran pemilik pohon")
     if body.role not in ("admin", "editor", "viewer"):
         raise HTTPException(status_code=400, detail="Peran tidak valid")
+    current = await db.tree_members.find_one({"tree_id": tid, "user_id": body.user_id}, {"_id": 0})
+    if body.role == "editor" and (not current or current.get("role") != "editor"):
+        lim_ed = plan_limits(tree.get("plan")).get("editors")
+        if lim_ed is not None and await editor_count(tid) >= lim_ed:
+            raise HTTPException(status_code=402, detail=f"EDITOR_LIMIT:Batas {lim_ed} editor untuk paket ini sudah tercapai.")
     await db.tree_members.update_one({"tree_id": tid, "user_id": body.user_id}, {"$set": {"role": body.role}})
     return {"ok": True}
 
@@ -1011,6 +1061,70 @@ async def remove_member(tid: str, member_id: str, user=Depends(get_current_user)
         raise HTTPException(status_code=400, detail="Pemilik pohon tidak bisa dihapus")
     await db.tree_members.delete_one({"tree_id": tid, "user_id": member_id})
     return {"ok": True}
+
+
+@api_router.post("/trees/{tid}/invite-link")
+async def create_invite_link(tid: str, user=Depends(get_current_user)):
+    tree, role = await resolve_tree(user, tid)
+    require_role_t(role, ["admin"])
+    # reuse an existing active link for this tree if present
+    existing = await db.tree_invites.find_one({"tree_id": tid, "active": True}, {"_id": 0})
+    if existing:
+        return {"token": existing["token"]}
+    token = secrets.token_urlsafe(9)
+    await db.tree_invites.insert_one({
+        "id": str(uuid.uuid4()),
+        "tree_id": tid,
+        "token": token,
+        "role": "editor",
+        "created_by": user["user_id"],
+        "created_at": now_utc(),
+        "active": True,
+    })
+    return {"token": token}
+
+
+@api_router.get("/invite-info/{token}")
+async def invite_info(token: str, user=Depends(get_current_user)):
+    inv = await db.tree_invites.find_one({"token": token, "active": True}, {"_id": 0})
+    if not inv:
+        raise HTTPException(status_code=404, detail="Undangan tidak valid atau sudah tidak aktif")
+    tree = await db.trees.find_one({"id": inv["tree_id"]}, {"_id": 0})
+    if not tree:
+        raise HTTPException(status_code=404, detail="Pohon tidak ditemukan")
+    inviter = await db.users.find_one({"user_id": inv["created_by"]}, {"_id": 0})
+    member = await db.tree_members.find_one({"tree_id": inv["tree_id"], "user_id": user["user_id"]})
+    return {
+        "tree_id": inv["tree_id"],
+        "tree_name": tree.get("name"),
+        "inviter_name": inviter["name"] if inviter else "?",
+        "role": inv.get("role", "editor"),
+        "already_member": bool(member),
+    }
+
+
+@api_router.post("/invite-accept/{token}")
+async def invite_accept(token: str, user=Depends(get_current_user)):
+    inv = await db.tree_invites.find_one({"token": token, "active": True}, {"_id": 0})
+    if not inv:
+        raise HTTPException(status_code=404, detail="Undangan tidak valid atau sudah tidak aktif")
+    tree = await db.trees.find_one({"id": inv["tree_id"]}, {"_id": 0})
+    if not tree:
+        raise HTTPException(status_code=404, detail="Pohon tidak ditemukan")
+    existing = await db.tree_members.find_one({"tree_id": inv["tree_id"], "user_id": user["user_id"]})
+    if not existing:
+        lim_ed = plan_limits(tree.get("plan")).get("editors")
+        if lim_ed is not None and await editor_count(inv["tree_id"]) >= lim_ed:
+            raise HTTPException(status_code=402, detail=f"EDITOR_LIMIT:Batas {lim_ed} editor untuk paket ini sudah tercapai. Upgrade untuk menambah editor.")
+        await db.tree_members.insert_one({
+            "id": str(uuid.uuid4()),
+            "tree_id": inv["tree_id"],
+            "user_id": user["user_id"],
+            "role": inv.get("role", "editor"),
+            "joined_at": now_utc(),
+        })
+    return {"tree_id": inv["tree_id"], "name": tree.get("name")}
+
 
 
 # ---------------------------------------------------------------------------

@@ -163,3 +163,7 @@
 ## agent_communication:
 ##     -agent: "main"
 ##     -message: "Phase 1 (P0) complete: multi-tenant backend + Modern Heritage theme + subscription limits + tree/subscription/member screens. Please test backend endpoints by seeding a session (see test_credentials.md). Focus: tree isolation, 50-person limit (402 LIMIT_REACHED), upgrade to pro unlocks add, members role/remove, backup/chat/notes tree-scoped. Do NOT wipe real data; clean up only synthetic docs you insert."
+
+## agent_communication (iteration 7 - plan tiers + limits + payment-sim):
+##     -agent: "main"
+##     -message: "Added 3-tier plans (free/pro/family) with per-plan limits: people(50/inf/inf), editors(3/10/50), photos(20/inf/inf). Endpoints: POST /trees/{id}/upgrade now takes {plan}. add-relative returns 402 LIMIT_REACHED at people cap. invite-accept & change-member-role return 402 EDITOR_LIMIT when editor cap reached. add_person_file returns 402 PHOTO_LIMIT at photo cap (free=20). /trees returns editor_count, photo_count, plan_limits. Payment is SIMULATION (no Midtrans key yet) - upgrade activates plan directly. Please test backend: create 2 trees (leave 1 free, upgrade 1 to pro/family), verify people limit, editor limit, photo limit, and cross-tenant isolation still holds. Seed sessions in Mongo; clean only synthetic docs."

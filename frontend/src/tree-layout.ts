@@ -38,6 +38,8 @@ export function buildLayout(
   people: Person[],
   relations: Relation[],
   focusId: string | null,
+  genUp: number = Infinity,
+  genDown: number = Infinity,
 ): TreeLayout {
   const byId = new Map(people.map((p) => [p.id, p]));
   const start = focusId && byId.has(focusId) ? focusId : people[0]?.id;
@@ -75,6 +77,11 @@ export function buildLayout(
         queue.push(nid);
       }
     }
+  }
+
+  // limit visible generations relative to focus (focus = gen 0)
+  for (const [nid, g] of [...gen.entries()]) {
+    if (g < -genUp || g > genDown) gen.delete(nid);
   }
 
   // group by generation

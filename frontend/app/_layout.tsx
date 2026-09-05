@@ -14,6 +14,7 @@ import { queryClient } from "@/src/query-client";
 import { AuthProvider, useAuth } from "@/src/auth";
 import { TreeProvider } from "@/src/tree-context";
 import { LanguageProvider } from "@/src/i18n";
+import { storage } from "@/src/utils/storage";
 
 LogBox.ignoreAllLogs(true);
 SplashScreen.preventAutoHideAsync().catch(() => {});
@@ -26,9 +27,23 @@ function RootNav() {
   useEffect(() => {
     if (loading) return;
     const inAuth = segments[0] === "login";
-    if (!user && !inAuth) router.replace("/login");
+    const inInvite = segments[0] === "invite";
+    if (!user && !inAuth && !inInvite) router.replace("/login");
     else if (user && inAuth) router.replace("/(tabs)");
   }, [user, loading, segments, router]);
+
+  // Resume a pending invite once the user is authenticated (works on web + native).
+  useEffect(() => {
+    if (loading || !user) return;
+    if (segments[0] === "invite") return;
+    storage.getItem<string>("pending_invite", "").then((tok) => {
+      if (tok) {
+        storage.removeItem("pending_invite");
+        router.replace(`/invite/${tok}`);
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, loading]);
 
   if (loading) {
     return (
@@ -48,6 +63,7 @@ function RootNav() {
       <Stack.Screen name="subscription" />
       <Stack.Screen name="members" />
       <Stack.Screen name="explorer/[id]" />
+      <Stack.Screen name="invite/[token]" />
     </Stack>
   );
 }
