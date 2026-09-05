@@ -299,3 +299,223 @@ class TestBackupInvite:
         assert r2.status_code == 200, r2.text
         data = r2.json()
         assert "code" in data and len(data["code"]) >= 6
+
+
+# ---------- NEW FEATURES: Chat filters (is_alive annotation, room_name, members, counts) ----------
+class TestChatFilters:
+    """New in this iteration: sender_is_alive/sender_person_id via email-join,
+    alive_count, total_count, room_name (=admin.name), members(admin+editors)."""
+
+    def test_chat_annotates_sender_is_alive_and_person_id(self, seeded, mongo_db):
+        # Ensure at least one message from admin (alive) and one from editor2 (dead by seeding)
+        mongo_db.family_chat.delete_many({})
+        r_admin = requests.post(f"{API}/chat", json={"message": "TEST alive admin"},
+                                headers=auth(seeded["admin"]["token"]))
+        assert r_admin.status_code == 200, r_admin.text
+        r_ed2 = requests.post(f"{API}/chat", json={"message": "TEST dead editor2"},
+                              headers=auth(seeded["editor2"]["token"]))
+        assert r_ed2.status_code == 200, r_ed2.text
+
+        r = requests.get(f"{API}/chat", headers=auth(seeded["admin"]["token"]))
+        assert r.status_code == 200
+        data = r.json()
+        # room_name = admin.name; members includes admin + both editors (not viewer)
+        assert data["room_name"] == seeded["admin"]["name"]
+        member_ids = {m["user_id"] for m in data["members"]}
+        assert seeded["admin"]["id"] in member_ids
+        assert seeded["editor"]["id"] in member_ids
+        assert seeded["editor2"]["id"] in member_ids
+        assert seeded["viewer"]["id"] not in member_ids
+
+        # total_count >= 3 (root + editor + editor2 seeded); alive_count = total - 1 (editor2 dead)
+        assert data["total_count"] >= 3
+        assert data["alive_count"] == data["total_count"] - 1
+
+        # per-message annotation
+        by_sender = {m["sender_id"]: m for m in data["messages"]}
+        assert by_sender[seeded["admin"]["id"]]["sender_is_alive"] is True
+        assert by_sender[seeded["admin"]["id"]]["sender_person_id"] == seeded["root_person_id"]
+        assert by_sender[seeded["editor2"]["id"]]["sender_is_alive"] is False
+        assert by_sender[seeded["editor2"]["id"]]["sender_person_id"] == seeded["editor2"]["person_id"]
+
+
+# ---------- NEW FEATURES: Read receipts ----------
+class TestReadReceipts:
+    def test_read_by_populated_when_other_user_fetches(self, seeded, mongo_db):
+        mongo_db.family_chat.delete_many({})
+        r = requests.post(f"{API}/chat", json={"message": "TEST read receipt"},
+                          headers=auth(seeded["admin"]["token"]))
+        assert r.status_code == 200
+        msg_id = r.json()["id"]
+
+        # editor fetches chat -> should mark admin's message as read by editor
+        r_get = requests.get(f"{API}/chat", headers=auth(seeded["editor"]["token"]))
+        assert r_get.status_code == 200
+
+        # Now admin fetches — should see editor's user_id in own message read_by
+        r_admin = requests.get(f"{API}/chat", headers=auth(seeded["admin"]["token"]))
+        assert r_admin.status_code == 200
+        msgs = {m["id"]: m for m in r_admin.json()["messages"]}
+        assert msg_id in msgs
+        assert seeded["editor"]["id"] in msgs[msg_id]["read_by"]
+
+    def test_read_by_does_not_include_self(self, seeded, mongo_db):
+        mongo_db.family_chat.delete_many({})
+        r = requests.post(f"{API}/chat", json={"message": "TEST self read"},
+                          headers=auth(seeded["admin"]["token"]))
+        msg_id = r.json()["id"]
+        # Admin re-fetches; should not add self to read_by
+        r_admin = requests.get(f"{API}/chat", headers=auth(seeded["admin"]["token"]))
+        msgs = {m["id"]: m for m in r_admin.json()["messages"]}
+        assert seeded["admin"]["id"] not in msgs[msg_id]["read_by"]
+
+
+# ---------- NEW FEATURES: Mentions ----------
+class TestMentions:
+    def test_mention_creates_notification(self, seeded, mongo_db):
+        mongo_db.app_notifications.delete_many({"type": "mention"})
+        r = requests.post(
+            f"{API}/chat",
+            json={"message": "TEST @editor2", "mentions": [seeded["editor2"]["id"]]},
+            headers=auth(seeded["admin"]["token"]),
+        )
+        assert r.status_code == 200, r.text
+        notifs = list(mongo_db.app_notifications.find({"type": "mention"}))
+        assert len(notifs) == 1
+        assert notifs[0]["user_id"] == seeded["editor2"]["id"]
+
+        # GET /notifications for editor2 shows the mention
+        r2 = requests.get(f"{API}/notifications", headers=auth(seeded["editor2"]["token"]))
+        assert r2.status_code == 200
+        types = [n["type"] for n in r2.json()["items"]]
+        assert "mention" in types
+
+    def test_mention_self_ignored_and_normal_fanout_still_works(self, seeded, mongo_db):
+        mongo_db.app_notifications.delete_many({})
+        r = requests.post(
+            f"{API}/chat",
+            json={"message": "TEST self mention", "mentions": [seeded["admin"]["id"]]},
+            headers=auth(seeded["admin"]["token"]),
+        )
+        assert r.status_code == 200
+        # No mention notification for self
+        assert mongo_db.app_notifications.count_documents(
+            {"type": "mention", "user_id": seeded["admin"]["id"]}
+        ) == 0
+        # Chat fan-out to editors still happens
+        chat_recipients = {
+            n["user_id"]
+            for n in mongo_db.app_notifications.find({"type": "chat"})
+        }
+        assert seeded["editor"]["id"] in chat_recipients
+        assert seeded["editor2"]["id"] in chat_recipients
+
+
+# ---------- NEW FEATURES: DELETE /api/notes/{id} ----------
+class TestDeleteNote:
+    def _create_note(self, seeded, token):
+        r = requests.post(
+            f"{API}/people/{seeded['root_person_id']}/notes",
+            json={"note_text": "TEST delete me"},
+            headers=auth(token),
+        )
+        assert r.status_code == 200, r.text
+        return r.json()["id"]
+
+    def test_author_can_delete(self, seeded):
+        note_id = self._create_note(seeded, seeded["editor"]["token"])
+        r = requests.delete(f"{API}/notes/{note_id}", headers=auth(seeded["editor"]["token"]))
+        assert r.status_code == 200
+        # 404 on delete again
+        r2 = requests.delete(f"{API}/notes/{note_id}", headers=auth(seeded["editor"]["token"]))
+        assert r2.status_code == 404
+
+    def test_non_author_non_admin_forbidden(self, seeded):
+        note_id = self._create_note(seeded, seeded["editor"]["token"])
+        # editor2 is neither author nor admin
+        r = requests.delete(f"{API}/notes/{note_id}", headers=auth(seeded["editor2"]["token"]))
+        assert r.status_code == 403
+
+    def test_admin_can_delete_anyones_note(self, seeded):
+        note_id = self._create_note(seeded, seeded["editor"]["token"])
+        r = requests.delete(f"{API}/notes/{note_id}", headers=auth(seeded["admin"]["token"]))
+        assert r.status_code == 200
+
+    def test_delete_missing_returns_404(self, seeded):
+        r = requests.delete(f"{API}/notes/does-not-exist", headers=auth(seeded["admin"]["token"]))
+        assert r.status_code == 404
+
+
+# ---------- NEW FEATURES: is_alive auto + override ----------
+class TestIsAlive:
+    def test_put_person_death_date_auto_is_alive_false(self, seeded):
+        # create a person via add-relative
+        r = requests.post(
+            f"{API}/people/add-relative",
+            json={
+                "focus_id": seeded["root_person_id"],
+                "direction": "child",
+                "person": {"name": "TEST_IA_Child"},
+            },
+            headers=auth(seeded["admin"]["token"]),
+        )
+        assert r.status_code == 200
+        pid = r.json()["person"]["id"]
+
+        r2 = requests.put(
+            f"{API}/people/{pid}",
+            json={"name": "TEST_IA_Child", "death_date": "2010-05-05"},
+            headers=auth(seeded["admin"]["token"]),
+        )
+        assert r2.status_code == 200
+        assert r2.json()["is_alive"] is False
+
+    def test_put_person_explicit_is_alive_override(self, seeded):
+        r = requests.post(
+            f"{API}/people/add-relative",
+            json={
+                "focus_id": seeded["root_person_id"],
+                "direction": "child",
+                "person": {"name": "TEST_IA_Override"},
+            },
+            headers=auth(seeded["admin"]["token"]),
+        )
+        assert r.status_code == 200
+        pid = r.json()["person"]["id"]
+
+        r2 = requests.put(
+            f"{API}/people/{pid}",
+            json={
+                "name": "TEST_IA_Override",
+                "death_date": "2010-05-05",
+                "is_alive": True,  # override: keep alive despite death_date
+            },
+            headers=auth(seeded["admin"]["token"]),
+        )
+        assert r2.status_code == 200
+        assert r2.json()["is_alive"] is True
+
+    def test_add_relative_death_date_sets_is_alive_false(self, seeded):
+        r = requests.post(
+            f"{API}/people/add-relative",
+            json={
+                "focus_id": seeded["root_person_id"],
+                "direction": "child",
+                "person": {"name": "TEST_IA_Dead", "death_date": "2000-01-01"},
+            },
+            headers=auth(seeded["admin"]["token"]),
+        )
+        assert r.status_code == 200
+        person = r.json()["person"]
+        assert person["is_alive"] is False
+
+    def test_tree_returns_is_alive_per_person(self, seeded):
+        r = requests.get(f"{API}/tree", headers=auth(seeded["admin"]["token"]))
+        assert r.status_code == 200
+        for p in r.json()["people"]:
+            assert "is_alive" in p
+            assert isinstance(p["is_alive"], bool)
+        # editor2's seeded person should be is_alive=False
+        by_id = {p["id"]: p for p in r.json()["people"]}
+        assert by_id[seeded["editor2"]["person_id"]]["is_alive"] is False
+        assert by_id[seeded["editor"]["person_id"]]["is_alive"] is True

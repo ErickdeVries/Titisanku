@@ -1,0 +1,40 @@
+{
+  "summary": "Backend-only regression + new-feature verification for KETURUNANKU iteration 2 (chat filters/is_alive annotation, read receipts, mentions, DELETE /notes/{id} RBAC, is_alive auto+override). Extended /app/backend/tests/test_keturunanku_api.py with 13 new tests across 5 classes (TestChatFilters, TestReadReceipts, TestMentions, TestDeleteNote, TestIsAlive). Updated conftest.py to seed people docs linked by email to admin/editor/editor2 users (editor2 seeded with death_date to force sender_is_alive=false). Total: 40/40 tests pass (100%). Independently verified: (a) GET /api/chat returns sender_is_alive=False + sender_person_id (matched by email) for editor2's messages, alive_count==total_count-1, room_name==admin.name, members list includes admin+2 editors and excludes viewer; (b) after user B GETs /chat, user A's message read_by contains B (self is NOT added on own re-fetch); (c) POST /chat mentions=[uid] creates exactly one 'mention' notification per target and self-mention is ignored while chat fan-out to other editors still fires; (d) DELETE /notes/{id}: author 200, non-author non-admin 403, admin 200, missing/already-deleted 404; (e) PUT /people/{id} with death_date auto-returns is_alive=false, explicit is_alive=true overrides even with death_date; add-relative with death_date sets is_alive=false; GET /tree exposes is_alive per person as bool. RBAC regression intact (viewer 403 on POST /chat and POST /notes). DB collections wiped in fixture teardown so a real Google user still becomes admin+root.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/conftest.py",
+    "/app/backend/tests/test_keturunanku_api.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "No backend bugs found. Main agent can proceed with frontend integration for chat filters (alive/dead indicators, room_name header, member list, read-receipt ticks), mention picker, note delete affordance, and is_alive override toggle.",
+    "IMPORTANT: /app/backend/pytest.ini forces `-n 2 --dist loadscope`. This suite uses a session-scoped seed fixture with cross-class shared state (child_id, admin_msg_id, editor2 death_date person) — MUST be run with `-n 0` to disable xdist parallelism. Command: `cd /app/backend/tests && pytest test_keturunanku_api.py -n 0 -v`."
+  ],
+  "critical_code_review_comments": [
+    "get_chat performs email-join by loading ALL people + ALL users into memory each request; correct at family-tree scale but scales O(P+U) per fetch. Consider an in-memory LRU or precomputed sender_person_id on message write.",
+    "read_by is updated via a single update_many at the top of get_chat, so a client that fetches with a stale token could still mark messages read after logout (until token expires). Consider guarding on session validity in the update predicate.",
+    "mentions accepts arbitrary user_ids without validating they exist / are admin+editor members — a client could spam notifications to unrelated user_ids. Consider filtering `mentions` against the members list.",
+    "DELETE /notes/{id} has no explicit `require_role` — viewers who somehow own a note (currently impossible since only admin/editor can create) would be allowed. Not exploitable today, but tightening to `require_role(user, ['admin','editor'])` before author check would be defensive.",
+    "update_person accepts `is_alive=True` even when death_date is set, which is the intended override, but there is no audit trail of who overrode — consider logging or storing override_by/override_at for provenance.",
+    "get_tree fallback (`p['is_alive'] = not bool(death_date)` when None) is only applied in GET /tree, not in GET /people or /people/{id} — those endpoints return raw docs so older records missing is_alive won't get the derived value. Minor consistency gap."
+  ],
+  "updated_files": [
+    "/app/backend/tests/conftest.py (added email on root person; seeded editor & editor2 people docs linked by email; editor2 has death_date to force sender_is_alive=false)",
+    "/app/backend/tests/test_keturunanku_api.py (added TestChatFilters, TestReadReceipts, TestMentions, TestDeleteNote, TestIsAlive — 13 new tests)"
+  ],
+  "success_rate": {"backend": "100% (40/40)", "frontend": "not tested (per request — Google OAuth cannot be automated)"},
+  "seed_data_creation": "Session-scoped fixture wipes 9 collections then seeds: 1 admin (with matching root person, email-linked), 2 editors (each with an email-linked person; editor2's person has death_date=2020-01-01 → is_alive=false), 1 viewer. Each user has a Bearer session_token in user_sessions with expires_at=now+7d. meta.root_person_id set. Teardown wipes all 9 collections; verified post-run docs=0 across users/people/relations/user_sessions/invites/meta/person_notes/family_chat/app_notifications.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Run backend tests with `cd /app/backend/tests && pytest test_keturunanku_api.py -n 0 -v` (the `-n 0` is REQUIRED — pytest.ini forces `-n 2 --dist loadscope` which double-seeds under xdist). Endpoints exercised: /api/auth/{me,session,logout}, /api/tree (with is_alive + note_count), /api/people (CRUD + add-relative with death_date + is_alive override), /api/people/{id}/notes (GET+POST), /api/people/{id}/files, /api/notes/{id} (DELETE — RBAC), /api/chat (GET with sender_is_alive/sender_person_id/alive_count/total_count/room_name/members + read_by; POST with mentions + reply), /api/notifications (GET + POST /read?type=chat; mention type), /api/backup, /api/restore, /api/invite. DB collections are wiped in fixture teardown (verified 0 docs across all 9 collections).",
+  "rca_of_issue": "N/A — no bugs found. All 13 new-feature test cases and 27 regression cases pass on first run."
+}

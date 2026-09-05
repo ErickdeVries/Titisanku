@@ -1,14 +1,16 @@
 import { useMemo, useState } from "react";
-import { View, Text, Pressable, ActivityIndicator, TextInput } from "react-native";
+import { View, Text, Pressable, ActivityIndicator, TextInput, Modal } from "react-native";
 import { Image } from "expo-image";
 import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
+import { Gesture, GestureDetector } from "react-native-gesture-handler";
+import Animated, { useSharedValue, useAnimatedStyle } from "react-native-reanimated";
 import * as ImagePicker from "expo-image-picker";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Feather from "@react-native-vector-icons/feather";
 import { fonts, makeStyles, useTheme } from "@/src/theme";
-import { getPerson, updatePerson, deletePerson, fileUrl, getTree, listPersonNotes, addPersonNote, addPersonFile } from "@/src/api";
+import { getPerson, updatePerson, deletePerson, fileUrl, getTree, listPersonNotes, addPersonNote, addPersonFile, deleteNote } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { useI18n } from "@/src/i18n";
 import { nodeColor } from "@/src/components/PersonNode";
@@ -51,13 +53,22 @@ const useStyles = makeStyles((c) => ({
   noteInputRow: { marginHorizontal: 20, marginTop: 16, gap: 10 },
   noteInput: { backgroundColor: c.surfaceTertiary, borderRadius: 12, padding: 14, minHeight: 80, textAlignVertical: "top", fontFamily: fonts.regular, fontSize: 15, color: c.onSurface },
   noteCard: { marginHorizontal: 20, marginTop: 12, backgroundColor: c.surfaceSecondary, borderRadius: 14, padding: 14, gap: 4 },
+  noteHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   noteMeta: { fontFamily: fonts.semibold, fontSize: 13, color: c.brandSecondary },
   noteText: { fontFamily: fonts.regular, fontSize: 14, color: c.onSurface, lineHeight: 20 },
   emptyTab: { alignItems: "center", padding: 40, gap: 8 },
   emptyTabText: { fontFamily: fonts.regular, fontSize: 14, color: c.muted },
   fileCard: { marginHorizontal: 20, marginTop: 12, backgroundColor: c.surfaceSecondary, borderRadius: 14, overflow: "hidden" },
   fileImg: { width: "100%", height: 180, backgroundColor: c.surfaceTertiary },
-  fileMeta: { fontFamily: fonts.medium, fontSize: 13, color: c.onSurfaceSecondary, padding: 12 },
+  fileMetaRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10, padding: 12 },
+  fileMeta: { flex: 1, fontFamily: fonts.medium, fontSize: 13, color: c.onSurfaceSecondary },
+  viewerBg: { flex: 1, backgroundColor: "rgba(0,0,0,0.95)", alignItems: "center", justifyContent: "center" },
+  viewerImg: { width: "100%", height: "80%" },
+  viewerClose: { position: "absolute", top: 50, right: 20, width: 40, height: 40, borderRadius: 999, backgroundColor: "rgba(255,255,255,0.2)", alignItems: "center", justifyContent: "center" },
+  confirmBg: { flex: 1, backgroundColor: "rgba(15,23,42,0.5)", alignItems: "center", justifyContent: "center", padding: 30 },
+  confirmCard: { backgroundColor: c.surface, borderRadius: 20, padding: 24, gap: 16, width: "100%" },
+  confirmTitle: { fontFamily: fonts.semibold, fontSize: 17, color: c.onSurface, textAlign: "center", lineHeight: 24 },
+  confirmRow: { flexDirection: "row", gap: 12 },
 }));
 
 function InfoRow({ icon, label, value }: { icon: string; label: string; value?: string | null }) {
@@ -92,6 +103,11 @@ export default function PersonDetail() {
   const [noteText, setNoteText] = useState("");
   const [noteBusy, setNoteBusy] = useState(false);
   const [fileBusy, setFileBusy] = useState(false);
+  const [viewerUri, setViewerUri] = useState<string | null>(null);
+  const [deathConfirm, setDeathConfirm] = useState(false);
+  const [lastSaved, setLastSaved] = useState<any>(null);
+  const zScale = useSharedValue(1);
+  const zSaved = useSharedValue(1);
 
   const { data: person, isLoading } = useQuery({ queryKey: ["person", id], queryFn: () => getPerson(id) });
   const { data: tree } = useQuery({ queryKey: ["tree"], queryFn: getTree });
@@ -163,25 +179,52 @@ export default function PersonDetail() {
 
   const save = async (v: PersonFormValue) => {
     setSaving(true);
+    const fields = {
+      name: v.name,
+      gender: v.gender,
+      birth_date: v.birth_date,
+      birth_place: v.birth_place,
+      death_date: v.death_date,
+      photo_url: v.photo_url,
+      job: v.job,
+      is_adopted: v.is_adopted,
+      notes: v.notes,
+    };
+    const newlyDeceased = !!v.death_date && !person?.death_date;
     try {
-      await updatePerson(id, {
-        name: v.name,
-        gender: v.gender,
-        birth_date: v.birth_date,
-        birth_place: v.birth_place,
-        death_date: v.death_date,
-        photo_url: v.photo_url,
-        job: v.job,
-        is_adopted: v.is_adopted,
-        notes: v.notes,
-      });
+      await updatePerson(id, fields);
       await qc.invalidateQueries({ queryKey: ["person", id] });
       await qc.invalidateQueries({ queryKey: ["tree"] });
       setEditing(false);
+      if (newlyDeceased) {
+        setLastSaved(fields);
+        setDeathConfirm(true);
+      }
     } catch (e) {
       console.log("save error", e);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const keepChatVisible = async () => {
+    // "No" -> override is_alive back to true so their chat stays visible
+    try {
+      await updatePerson(id, { ...lastSaved, is_alive: true });
+      await qc.invalidateQueries({ queryKey: ["tree"] });
+    } catch (e) {
+      console.log("override error", e);
+    }
+    setDeathConfirm(false);
+  };
+
+  const delNote = async (noteId: string) => {
+    try {
+      await deleteNote(noteId);
+      await qc.invalidateQueries({ queryKey: ["notes", id] });
+      await qc.invalidateQueries({ queryKey: ["tree"] });
+    } catch (e) {
+      console.log("delete note error", e);
     }
   };
 
@@ -196,6 +239,15 @@ export default function PersonDetail() {
       setDeleting(false);
     }
   };
+
+  const pinch = Gesture.Pinch()
+    .onUpdate((e) => {
+      zScale.value = Math.min(Math.max(zSaved.value * e.scale, 1), 4);
+    })
+    .onEnd(() => {
+      zSaved.value = zScale.value;
+    });
+  const zStyle = useAnimatedStyle(() => ({ transform: [{ scale: zScale.value }] }));
 
   const goAdd = (direction: string) => {
     if (!person) return;
@@ -388,9 +440,16 @@ export default function PersonDetail() {
               ) : (
                 textNotes.map((n: any) => (
                   <View key={n.id} style={styles.noteCard} testID={`note-${n.id}`}>
-                    <Text style={styles.noteMeta}>
-                      {n.author_name} · {fmtDate(n.created_at)}
-                    </Text>
+                    <View style={styles.noteHeader}>
+                      <Text style={styles.noteMeta}>
+                        {n.author_name} · {fmtDate(n.created_at)}
+                      </Text>
+                      {isAdmin || n.author_id === user?.user_id ? (
+                        <Pressable onPress={() => delNote(n.id)} hitSlop={10} testID={`delete-note-${n.id}`}>
+                          <Feather name="trash-2" size={16} color={colors.error} />
+                        </Pressable>
+                      ) : null}
+                    </View>
                     <Text style={styles.noteText}>{n.note_text}</Text>
                   </View>
                 ))
@@ -413,10 +472,19 @@ export default function PersonDetail() {
               ) : (
                 fileNotes.map((n: any) => (
                   <View key={n.id} style={styles.fileCard} testID={`file-${n.id}`}>
-                    <Image source={{ uri: fileUrl(n.attachments[0]) }} style={styles.fileImg} contentFit="cover" />
-                    <Text style={styles.fileMeta}>
-                      {n.note_text} · {n.author_name} · {fmtDate(n.created_at)}
-                    </Text>
+                    <Pressable onPress={() => setViewerUri(fileUrl(n.attachments[0]) ?? null)} testID={`file-open-${n.id}`}>
+                      <Image source={{ uri: fileUrl(n.attachments[0]) }} style={styles.fileImg} contentFit="cover" />
+                    </Pressable>
+                    <View style={styles.fileMetaRow}>
+                      <Text style={styles.fileMeta} numberOfLines={1}>
+                        {n.note_text} · {n.author_name} · {fmtDate(n.created_at)}
+                      </Text>
+                      {isAdmin || n.author_id === user?.user_id ? (
+                        <Pressable onPress={() => delNote(n.id)} hitSlop={10} testID={`delete-file-${n.id}`}>
+                          <Feather name="trash-2" size={16} color={colors.error} />
+                        </Pressable>
+                      ) : null}
+                    </View>
                   </View>
                 ))
               )}
@@ -424,6 +492,34 @@ export default function PersonDetail() {
           ) : null}
         </KeyboardAwareScrollView>
       )}
+
+      <Modal visible={!!viewerUri} transparent animationType="fade" onRequestClose={() => { setViewerUri(null); zScale.value = 1; zSaved.value = 1; }}>
+        <View style={styles.viewerBg}>
+          <GestureDetector gesture={pinch}>
+            <Animated.View style={[{ width: "100%", height: "80%" }, zStyle]}>
+              {viewerUri ? <Image source={{ uri: viewerUri }} style={styles.viewerImg} contentFit="contain" /> : null}
+            </Animated.View>
+          </GestureDetector>
+          <Pressable style={styles.viewerClose} onPress={() => { setViewerUri(null); zScale.value = 1; zSaved.value = 1; }} testID="viewer-close">
+            <Feather name="x" size={22} color="#FFFFFF" />
+          </Pressable>
+        </View>
+      </Modal>
+
+      <Modal visible={deathConfirm} transparent animationType="fade" onRequestClose={() => setDeathConfirm(false)}>
+        <View style={styles.confirmBg}>
+          <View style={styles.confirmCard}>
+            <Feather name="help-circle" size={32} color={colors.brandPrimary} style={{ alignSelf: "center" }} />
+            <Text style={styles.confirmTitle}>
+              {t("hide_chat_prompt")} {person.name} {t("hide_chat_prompt2")}
+            </Text>
+            <View style={styles.confirmRow}>
+              <GradientButton testID="death-confirm-no" variant="secondary" title={t("no")} onPress={keepChatVisible} style={{ flex: 1 }} />
+              <GradientButton testID="death-confirm-yes" title={t("yes")} onPress={() => setDeathConfirm(false)} style={{ flex: 1 }} />
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }

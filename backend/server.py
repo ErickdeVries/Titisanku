@@ -110,6 +110,7 @@ class PersonData(BaseModel):
     job: Optional[str] = None
     is_adopted: bool = False
     notes: Optional[str] = None
+    is_alive: Optional[bool] = None  # override; else auto from death_date
 
 
 class AddRelativeInput(BaseModel):
@@ -203,6 +204,7 @@ async def auth_session(body: SessionInput):
             await db.people.insert_one({
                 "id": person_id,
                 "name": name,
+                "email": email,
                 "gender": None,
                 "birth_date": None,
                 "birth_place": None,
@@ -211,6 +213,7 @@ async def auth_session(body: SessionInput):
                 "job": None,
                 "is_adopted": False,
                 "notes": None,
+                "is_alive": True,
                 "is_root": True,
                 "created_by": user_id,
                 "created_at": now_utc(),
@@ -262,6 +265,8 @@ async def get_tree(user=Depends(get_current_user)):
         counts[row["_id"]] = row["c"]
     for p in people:
         p["note_count"] = counts.get(p["id"], 0)
+        if p.get("is_alive") is None:
+            p["is_alive"] = not bool(p.get("death_date"))
     return {"people": people, "relations": relations, "root_id": root_id}
 
 
@@ -288,7 +293,12 @@ async def update_person(person_id: str, data: PersonData, user=Depends(get_curre
     p = await db.people.find_one({"id": person_id, "deleted_at": None})
     if not p:
         raise HTTPException(status_code=404, detail="Person not found")
-    await db.people.update_one({"id": person_id}, {"$set": data.model_dump()})
+    d = data.model_dump()
+    is_alive = d.pop("is_alive", None)
+    if is_alive is None:
+        is_alive = not bool(d.get("death_date"))
+    d["is_alive"] = is_alive
+    await db.people.update_one({"id": person_id}, {"$set": d})
     return await db.people.find_one({"id": person_id}, {"_id": 0})
 
 
@@ -314,6 +324,7 @@ async def add_relative(body: AddRelativeInput, user=Depends(get_current_user)):
         raise HTTPException(status_code=404, detail="Focus person not found")
 
     pd = body.person.model_dump()
+    pd.pop("is_alive", None)
     if body.direction == "father":
         pd["gender"] = "male"
     elif body.direction == "mother":
@@ -323,6 +334,7 @@ async def add_relative(body: AddRelativeInput, user=Depends(get_current_user)):
     person_doc = {
         "id": new_id,
         **pd,
+        "is_alive": not bool(pd.get("death_date")),
         "is_root": False,
         "created_by": user["user_id"],
         "created_at": now_utc(),
@@ -495,6 +507,7 @@ class ChatInput(BaseModel):
     message: Optional[str] = ""
     attachments: List[str] = []
     reply_to: Optional[str] = None
+    mentions: List[str] = []  # user_ids mentioned
 
 
 async def get_family_room_id():
@@ -573,13 +586,43 @@ async def add_person_file(person_id: str, file: UploadFile = File(...), user=Dep
     return _serialize([doc])[0]
 
 
+@api_router.delete("/notes/{note_id}")
+async def delete_note(note_id: str, user=Depends(get_current_user)):
+    note = await db.person_notes.find_one({"id": note_id, "deleted_at": None}, {"_id": 0})
+    if not note:
+        raise HTTPException(status_code=404, detail="Note not found")
+    if user["role"] != "admin" and note["author_id"] != user["user_id"]:
+        raise HTTPException(status_code=403, detail="Hanya penulis atau admin yang bisa menghapus")
+    await db.person_notes.update_one({"id": note_id}, {"$set": {"deleted_at": now_utc()}})
+    return {"ok": True}
+
+
 @api_router.get("/chat")
 async def get_chat(user=Depends(get_current_user)):
     room = await get_family_room_id()
     admin = await db.users.find_one({"role": "admin"}, {"_id": 0})
     room_name = admin["name"] if admin else "Keluarga"
+    # people alive stats + email->person map for filtering
+    people = await db.people.find({"deleted_at": None}, {"_id": 0}).to_list(5000)
+    total_count = len(people)
+    alive_count = 0
+    email_person = {}
+    for p in people:
+        alive = p.get("is_alive")
+        if alive is None:
+            alive = not bool(p.get("death_date"))
+        if alive:
+            alive_count += 1
+        if p.get("email"):
+            email_person[p["email"]] = {"id": p["id"], "is_alive": alive}
+    members = await db.users.find({"role": {"$in": ["admin", "editor"]}}, {"_id": 0, "user_id": 1, "name": 1}).to_list(2000)
     if not room:
-        return {"room_id": None, "room_name": room_name, "messages": []}
+        return {"room_id": None, "room_name": room_name, "messages": [], "alive_count": alive_count, "total_count": total_count, "members": members}
+    # read receipts: mark all others' messages as read by me
+    await db.family_chat.update_many(
+        {"room_id": room, "sender_id": {"$ne": user["user_id"]}, "read_by": {"$ne": user["user_id"]}, "deleted_at": None},
+        {"$addToSet": {"read_by": user["user_id"]}},
+    )
     msgs = await db.family_chat.find({"room_id": room, "deleted_at": None}, {"_id": 0}).sort("created_at", 1).to_list(3000)
     users = {u["user_id"]: u for u in await db.users.find({}, {"_id": 0}).to_list(2000)}
     out = []
@@ -587,8 +630,19 @@ async def get_chat(user=Depends(get_current_user)):
         s = users.get(m["sender_id"], {})
         m["sender_name"] = s.get("name", "?")
         m["sender_picture"] = s.get("picture")
+        match = email_person.get(s.get("email"))
+        m["sender_is_alive"] = match["is_alive"] if match else True
+        m["sender_person_id"] = match["id"] if match else None
+        m["read_by"] = m.get("read_by", [])
         out.append(m)
-    return {"room_id": room, "room_name": room_name, "messages": out}
+    return {
+        "room_id": room,
+        "room_name": room_name,
+        "messages": out,
+        "alive_count": alive_count,
+        "total_count": total_count,
+        "members": members,
+    }
 
 
 @api_router.post("/chat")
@@ -615,11 +669,28 @@ async def send_chat(body: ChatInput, user=Depends(get_current_user)):
         "message": body.message or "",
         "attachments": body.attachments,
         "reply_to": reply,
+        "read_by": [],
         "created_at": now_utc(),
         "deleted_at": None,
     }
     await db.family_chat.insert_one(doc)
     await notify_editors(user["user_id"], "chat", "Pesan baru di Chat Keluarga", f"{user['name']}: {(body.message or 'Foto')[:60]}")
+    # mention notifications
+    mention_docs = []
+    for uid in set(body.mentions):
+        if uid == user["user_id"]:
+            continue
+        mention_docs.append({
+            "id": str(uuid.uuid4()),
+            "user_id": uid,
+            "type": "mention",
+            "title": "Anda disebut di Chat Keluarga",
+            "body": f"{user['name']} menyebut Anda: {(body.message or '')[:60]}",
+            "read": False,
+            "created_at": now_utc(),
+        })
+    if mention_docs:
+        await db.app_notifications.insert_many(mention_docs)
     return _serialize([doc])[0]
 
 

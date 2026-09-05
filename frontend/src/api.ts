@@ -96,6 +96,7 @@ export const listInvites = () => apiFetch("/invites");
 export const listPersonNotes = (personId: string) => apiFetch(`/people/${personId}/notes`);
 export const addPersonNote = (personId: string, note_text: string) =>
   apiFetch(`/people/${personId}/notes`, { method: "POST", body: JSON.stringify({ note_text }) });
+export const deleteNote = (noteId: string) => apiFetch(`/notes/${noteId}`, { method: "DELETE" });
 
 export async function addPersonFile(personId: string, uri: string): Promise<any> {
   const name = uri.split("/").pop() || `file_${Date.now()}`;
@@ -119,7 +120,7 @@ export async function addPersonFile(personId: string, uri: string): Promise<any>
 
 // ---- Family chat ----
 export const getChat = () => apiFetch("/chat");
-export const sendChat = (payload: { message?: string; attachments?: string[]; reply_to?: string | null }) =>
+export const sendChat = (payload: { message?: string; attachments?: string[]; reply_to?: string | null; mentions?: string[] }) =>
   apiFetch("/chat", { method: "POST", body: JSON.stringify(payload) });
 
 // ---- Notifications ----
