@@ -439,6 +439,7 @@ async def add_relative(body: AddRelativeInput, tree_id: Optional[str] = Query(No
     await db.people.insert_one(person_doc)
 
     rel_id = str(uuid.uuid4())
+    extra_rels = []
     if body.direction in ("father", "mother"):
         rel = {
             "id": rel_id,
@@ -462,12 +463,48 @@ async def add_relative(body: AddRelativeInput, tree_id: Optional[str] = Query(No
             "marriage_date": body.marriage_date,
             "divorce_date": body.divorce_date,
         }
+    elif body.direction == "sibling":
+        # A sibling shares the same parents as the focus person.
+        parent_rels = await db.relations.find(
+            {"tree_id": tree["id"], "related_person_id": body.focus_id,
+             "relation_type": {"$in": ["parent", "adopted_child"]}, "deleted_at": None},
+            {"_id": 0, "person_id": 1},
+        ).to_list(50)
+        parent_ids = [r["person_id"] for r in parent_rels]
+        if parent_ids:
+            # link the new sibling as a child of every parent of the focus person
+            rel = {
+                "id": rel_id,
+                "person_id": parent_ids[0],
+                "related_person_id": new_id,
+                "relation_type": "parent",
+            }
+            for pid in parent_ids[1:]:
+                extra_rels.append({
+                    "id": str(uuid.uuid4()),
+                    "person_id": pid,
+                    "related_person_id": new_id,
+                    "relation_type": "parent",
+                    "tree_id": tree["id"],
+                    "deleted_at": None,
+                    "created_at": now_utc(),
+                })
+        else:
+            # focus has no parents yet -> connect the two as explicit siblings
+            rel = {
+                "id": rel_id,
+                "person_id": body.focus_id,
+                "related_person_id": new_id,
+                "relation_type": "sibling",
+            }
     else:
         raise HTTPException(status_code=400, detail="Invalid direction")
     rel["tree_id"] = tree["id"]
     rel["deleted_at"] = None
     rel["created_at"] = now_utc()
     await db.relations.insert_one(rel)
+    if extra_rels:
+        await db.relations.insert_many(extra_rels)
 
     return {"person": clean_person(person_doc), "relation_id": rel_id}
 

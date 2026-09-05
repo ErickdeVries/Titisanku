@@ -97,3 +97,17 @@ JSON backup, and email collaboration invites. Google login; first user = admin +
 - P2: Midtrans payment for Pro upgrade (chosen by user).
 - P2: PDF watermark on Free; Backup to Google Drive (Pro, needs GDrive integration).
 - P2: Node "grow" animation from parent to child on add.
+
+## Iteration 5 — Siblings + Hybrid Explorer (2026-06)
+- Backend: add-relative supports direction "sibling". Shares focus's parents (links new person
+  as child of every parent); if focus has no parents, creates explicit relation_type "sibling".
+  Verified by test_sibling.py (3/3). delete_person soft-deletes sibling relations too.
+- tree-layout.ts understands "sibling" (same generation + connector edge).
+- Explorer (Hybrid, user-chosen): app/explorer/[id].tsx — drill-down card view. Sections
+  Orang Tua / Center+Pasangan / Saudara (Kakak left, Adik right, sorted by birth_date) / Anak.
+  Big photo cards (src/components/BigPersonCard.tsx), pinch + +/- zoom, tap card = push new
+  explorer page (stack/back), info button = person detail, contextual +add chips for editors.
+- Entry points: compass button in Tree header + person detail header. Tree canvas gained a
+  6th add button (Saudara). add.tsx & person detail quick-actions gained Kakak/Adik.
+- Role checks in index/add/person-detail now use per-tree role (data.role) with user.role fallback.
+- Verified via screenshots: Explorer + Tree canvas render correctly with Modern Heritage theme.

@@ -32,6 +32,7 @@ export type TreeLayout = {
 
 const PARENT_TYPES = ["parent", "adopted_child"];
 const SPOUSE_TYPES = ["spouse", "divorced"];
+const SIBLING_TYPES = ["sibling"];
 
 export function buildLayout(
   people: Person[],
@@ -50,6 +51,10 @@ export function buildLayout(
     relations
       .filter((r) => SPOUSE_TYPES.includes(r.relation_type) && (r.person_id === id || r.related_person_id === id))
       .map((r) => (r.person_id === id ? r.related_person_id : r.person_id));
+  const siblingsOf = (id: string) =>
+    relations
+      .filter((r) => SIBLING_TYPES.includes(r.relation_type) && (r.person_id === id || r.related_person_id === id))
+      .map((r) => (r.person_id === id ? r.related_person_id : r.person_id));
 
   // BFS to assign generations
   const gen = new Map<string, number>();
@@ -62,6 +67,7 @@ export function buildLayout(
     parentsOf(id).forEach((p) => neighbors.push([p, g - 1]));
     childrenOf(id).forEach((c) => neighbors.push([c, g + 1]));
     spousesOf(id).forEach((s) => neighbors.push([s, g]));
+    siblingsOf(id).forEach((s) => neighbors.push([s, g]));
     for (const [nid, ng] of neighbors) {
       if (!byId.has(nid)) continue;
       if (!gen.has(nid)) {
@@ -138,6 +144,15 @@ export function buildLayout(
         x2: b.x,
         y2: b.y,
         kind: r.relation_type === "divorced" ? "divorce" : "spouse",
+      });
+    } else if (SIBLING_TYPES.includes(r.relation_type)) {
+      edges.push({
+        key: r.id,
+        x1: a.x,
+        y1: a.y,
+        x2: b.x,
+        y2: b.y,
+        kind: "relation",
       });
     }
   }

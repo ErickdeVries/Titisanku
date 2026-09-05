@@ -65,7 +65,7 @@ export type Relation = {
   id: string;
   person_id: string;
   related_person_id: string;
-  relation_type: "parent" | "adopted_child" | "spouse" | "divorced";
+  relation_type: "parent" | "adopted_child" | "spouse" | "divorced" | "sibling";
   marriage_date?: string | null;
   divorce_date?: string | null;
 };

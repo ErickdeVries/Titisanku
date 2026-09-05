@@ -47,6 +47,7 @@ function RootNav() {
       <Stack.Screen name="trees" options={{ presentation: "modal" }} />
       <Stack.Screen name="subscription" />
       <Stack.Screen name="members" />
+      <Stack.Screen name="explorer/[id]" />
     </Stack>
   );
 }

@@ -24,12 +24,24 @@ export default function AddRelative() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const qc = useQueryClient();
-  const { focus_id, direction, focus_name } = useLocalSearchParams<{ focus_id: string; direction: string; focus_name: string }>();
+  const { focus_id, direction, focus_name, sib } = useLocalSearchParams<{ focus_id: string; direction: string; focus_name: string; sib?: string }>();
 
   const [submitting, setSubmitting] = useState(false);
 
   const dirLabel =
-    direction === "father" ? t("add_father") : direction === "mother" ? t("add_mother") : direction === "spouse" ? t("add_spouse") : t("add_child");
+    direction === "father"
+      ? t("add_father")
+      : direction === "mother"
+        ? t("add_mother")
+        : direction === "spouse"
+          ? t("add_spouse")
+          : direction === "sibling"
+            ? sib === "older"
+              ? t("add_older_sibling")
+              : sib === "younger"
+                ? t("add_younger_sibling")
+                : t("add_sibling")
+            : t("add_child");
 
   const onSubmit = async (v: PersonFormValue) => {
     setSubmitting(true);

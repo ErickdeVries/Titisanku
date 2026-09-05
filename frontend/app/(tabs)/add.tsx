@@ -60,7 +60,7 @@ export default function AddScreen() {
   }, [data?.root_id, targetId]);
 
   const target = people.find((p) => p.id === targetId);
-  const canEdit = user?.role === "admin" || user?.role === "editor";
+  const canEdit = (data?.role ?? user?.role) === "admin" || (data?.role ?? user?.role) === "editor";
 
   const filtered = useMemo(
     () => (q.trim() ? people.filter((p) => p.name.toLowerCase().includes(q.toLowerCase())) : people),
@@ -68,15 +68,20 @@ export default function AddScreen() {
   );
 
   const directions = [
-    { key: "father", label: t("add_father"), icon: "arrow-up", color: colors.maleNode },
-    { key: "mother", label: t("add_mother"), icon: "arrow-up", color: colors.femaleNode },
-    { key: "spouse", label: t("add_spouse"), icon: "heart", color: colors.brandPrimary },
-    { key: "child", label: t("add_child"), icon: "arrow-down", color: colors.success },
+    { key: "father", label: t("add_father"), icon: "arrow-up", color: colors.maleNode, dir: "father" },
+    { key: "mother", label: t("add_mother"), icon: "arrow-up", color: colors.femaleNode, dir: "mother" },
+    { key: "spouse", label: t("add_spouse"), icon: "heart", color: colors.brandPrimary, dir: "spouse" },
+    { key: "older", label: t("add_older_sibling"), icon: "users", color: colors.brandSecondary, dir: "sibling", sib: "older" },
+    { key: "younger", label: t("add_younger_sibling"), icon: "users", color: colors.brandSecondary, dir: "sibling", sib: "younger" },
+    { key: "child", label: t("add_child"), icon: "arrow-down", color: colors.success, dir: "child" },
   ];
 
   const cont = () => {
     if (!target || !direction) return;
-    router.push(`/add-relative?focus_id=${target.id}&direction=${direction}&focus_name=${encodeURIComponent(target.name)}`);
+    const sel = directions.find((d) => d.key === direction);
+    if (!sel) return;
+    const sibQ = (sel as any).sib ? `&sib=${(sel as any).sib}` : "";
+    router.push(`/add-relative?focus_id=${target.id}&direction=${sel.dir}&focus_name=${encodeURIComponent(target.name)}${sibQ}`);
     setDirection(null);
   };
 
@@ -126,7 +131,7 @@ export default function AddScreen() {
                 testID={`dir-${d.key}`}
               >
                 <View style={[styles.dirIcon, { backgroundColor: d.color }]}>
-                  <Feather name={d.icon as any} size={20} color={colors.onBrandPrimary} />
+                  <Feather name={d.icon as any} size={20} color="#FFFFFF" />
                 </View>
                 <Text style={styles.dirText}>{d.label}</Text>
               </Pressable>

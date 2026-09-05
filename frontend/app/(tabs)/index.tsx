@@ -40,6 +40,8 @@ const useStyles = makeStyles((c) => ({
   planChip: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999 },
   planChipText: { fontFamily: fonts.bold, fontSize: 10, letterSpacing: 0.5 },
   headerCount: { fontFamily: fonts.medium, fontSize: 12, color: c.muted },
+  headerActions: { flexDirection: "row", alignItems: "center", gap: 8 },
+  iconBtn: { width: 38, height: 38, borderRadius: 999, backgroundColor: c.brandTertiary, alignItems: "center", justifyContent: "center" },
   exportBtn: { flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: c.surfaceTertiary, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 999 },
   exportText: { fontFamily: fonts.medium, fontSize: 13, color: c.onSurfaceSecondary },
   statsStrip: { flexDirection: "row", gap: 10, paddingHorizontal: 16, paddingVertical: 12, backgroundColor: c.surface, borderBottomWidth: 1, borderBottomColor: c.divider },
@@ -268,10 +270,19 @@ export default function TreeScreen() {
           </View>
         </Pressable>
         {hasTree ? (
-          <Pressable style={styles.exportBtn} onPress={() => setExportOpen(true)} testID="export-pdf-button">
-            <Feather name="file-text" size={15} color={colors.onSurfaceSecondary} />
-            <Text style={styles.exportText}>{t("export_pdf")}</Text>
-          </Pressable>
+          <View style={styles.headerActions}>
+            <Pressable
+              style={styles.iconBtn}
+              onPress={() => router.push(`/explorer/${activeFocus ?? data?.root_id}`)}
+              testID="open-explorer"
+            >
+              <Feather name="compass" size={18} color={colors.brandSecondary} />
+            </Pressable>
+            <Pressable style={styles.exportBtn} onPress={() => setExportOpen(true)} testID="export-pdf-button">
+              <Feather name="file-text" size={15} color={colors.onSurfaceSecondary} />
+              <Text style={styles.exportText}>{t("export_pdf")}</Text>
+            </Pressable>
+          </View>
         ) : null}
       </View>
 
@@ -367,7 +378,8 @@ export default function TreeScreen() {
                       <AddButton testID="add-father" x={selNode.x - 62} y={selNode.y - NODE_R - 22} bg={colors.maleNode} icon="arrow-up" onPress={() => openAdd("father")} />
                       <AddButton testID="add-mother" x={selNode.x + 28} y={selNode.y - NODE_R - 22} bg={colors.femaleNode} icon="arrow-up" onPress={() => openAdd("mother")} />
                       <AddButton testID="add-spouse" x={selNode.x + 42} y={selNode.y - 17} bg={colors.brandPrimary} icon="heart" onPress={() => openAdd("spouse")} />
-                      <AddButton testID="add-child" x={selNode.x - 17} y={selNode.y + NODE_R - 6} bg={colors.success} icon="arrow-down" onPress={() => openAdd("child")} />
+                      <AddButton testID="add-sibling" x={selNode.x - 62} y={selNode.y + NODE_R - 6} bg={colors.brandSecondary} icon="users" onPress={() => openAdd("sibling")} />
+                      <AddButton testID="add-child" x={selNode.x + 28} y={selNode.y + NODE_R - 6} bg={colors.success} icon="arrow-down" onPress={() => openAdd("child")} />
                     </>
                   ) : null}
                 </Animated.View>

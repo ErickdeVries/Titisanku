@@ -174,8 +174,8 @@ export default function PersonDetail() {
     });
   }, [tree, id]);
 
-  const isAdmin = user?.role === "admin";
-  const canEdit = user?.role === "admin" || user?.role === "editor";
+  const isAdmin = (tree?.role ?? user?.role) === "admin";
+  const canEdit = (tree?.role ?? user?.role) === "admin" || (tree?.role ?? user?.role) === "editor";
 
   const save = async (v: PersonFormValue) => {
     setSaving(true);
@@ -249,9 +249,11 @@ export default function PersonDetail() {
     });
   const zStyle = useAnimatedStyle(() => ({ transform: [{ scale: zScale.value }] }));
 
-  const goAdd = (direction: string) => {
+  const goAdd = (direction: string, sib?: string) => {
     if (!person) return;
-    router.push(`/add-relative?focus_id=${person.id}&direction=${direction}&focus_name=${encodeURIComponent(person.name)}`);
+    router.push(
+      `/add-relative?focus_id=${person.id}&direction=${direction}&focus_name=${encodeURIComponent(person.name)}${sib ? `&sib=${sib}` : ""}`,
+    );
   };
 
   if (isLoading || !person) {
@@ -268,10 +270,12 @@ export default function PersonDetail() {
   const photo = fileUrl(person.photo_url);
 
   const quick = [
-    { key: "father", label: t("add_father"), icon: "arrow-up", color: colors.maleNode },
-    { key: "mother", label: t("add_mother"), icon: "arrow-up", color: colors.femaleNode },
-    { key: "spouse", label: t("add_spouse"), icon: "heart", color: colors.brandPrimary },
-    { key: "child", label: t("add_child"), icon: "arrow-down", color: colors.success },
+    { key: "father", label: t("add_father"), icon: "arrow-up", color: colors.maleNode, dir: "father" },
+    { key: "mother", label: t("add_mother"), icon: "arrow-up", color: colors.femaleNode, dir: "mother" },
+    { key: "spouse", label: t("add_spouse"), icon: "heart", color: colors.brandPrimary, dir: "spouse" },
+    { key: "older", label: t("add_older_sibling"), icon: "users", color: colors.brandSecondary, dir: "sibling", sib: "older" },
+    { key: "younger", label: t("add_younger_sibling"), icon: "users", color: colors.brandSecondary, dir: "sibling", sib: "younger" },
+    { key: "child", label: t("add_child"), icon: "arrow-down", color: colors.success, dir: "child" },
   ];
 
   return (
@@ -281,13 +285,22 @@ export default function PersonDetail() {
           <Feather name={editing ? "x" : "chevron-left"} size={20} color={colors.onSurface} />
         </Pressable>
         <Text style={styles.headerTitle}>{editing ? t("edit") : t("detail")}</Text>
-        {canEdit && !editing ? (
-          <Pressable style={styles.iconBtn} onPress={() => setEditing(true)} testID="edit-button">
-            <Feather name="edit-2" size={17} color={colors.onSurface} />
-          </Pressable>
-        ) : (
-          <View style={styles.iconBtn} />
-        )}
+        <View style={{ flexDirection: "row", gap: 8 }}>
+          {!editing ? (
+            <Pressable style={styles.iconBtn} onPress={() => router.push(`/explorer/${id}`)} testID="open-explorer">
+              <Feather name="compass" size={17} color={colors.brandSecondary} />
+            </Pressable>
+          ) : null}
+          {canEdit && !editing ? (
+            <Pressable style={styles.iconBtn} onPress={() => setEditing(true)} testID="edit-button">
+              <Feather name="edit-2" size={17} color={colors.onSurface} />
+            </Pressable>
+          ) : !editing ? (
+            <View style={styles.iconBtn} />
+          ) : (
+            <View style={styles.iconBtn} />
+          )}
+        </View>
       </View>
 
       {editing ? (
@@ -326,9 +339,9 @@ export default function PersonDetail() {
           {canEdit ? (
             <View style={styles.quickRow}>
               {quick.map((d) => (
-                <Pressable key={d.key} style={styles.quickBtn} onPress={() => goAdd(d.key)} testID={`quick-${d.key}`}>
+                <Pressable key={d.key} style={styles.quickBtn} onPress={() => goAdd(d.dir, (d as any).sib)} testID={`quick-${d.key}`}>
                   <View style={[styles.quickIcon, { backgroundColor: d.color }]}>
-                    <Feather name={d.icon as any} size={20} color={colors.onBrandPrimary} />
+                    <Feather name={d.icon as any} size={20} color="#FFFFFF" />
                   </View>
                   <Text style={styles.quickLabel}>{d.label}</Text>
                 </Pressable>
