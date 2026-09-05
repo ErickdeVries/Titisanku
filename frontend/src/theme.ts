@@ -5,45 +5,45 @@ import { Appearance, StyleSheet, useColorScheme } from "react-native";
 export type ColorScheme = "light" | "dark";
 
 const light = {
-  surface: "#FFFFFF",
-  onSurface: "#0F172A",
-  surfaceSecondary: "#F8FAFC",
-  onSurfaceSecondary: "#334155",
-  surfaceTertiary: "#F1F5F9",
-  onSurfaceTertiary: "#475569",
-  surfaceInverse: "#0F172A",
+  surface: "#FFFBF0",
+  onSurface: "#1F2A44",
+  surfaceSecondary: "#FFFFFF",
+  onSurfaceSecondary: "#3A3F52",
+  surfaceTertiary: "#F5EEDC",
+  onSurfaceTertiary: "#6B5E3A",
+  surfaceInverse: "#1E3A8A",
   onSurfaceInverse: "#FFFFFF",
-  muted: "#64748B",
+  muted: "#8A8577",
 
-  brand: "#F59E0B",
-  onBrand: "#FFFFFF",
-  brandPrimary: "#F59E0B",
-  onBrandPrimary: "#FFFFFF",
-  brandSecondary: "#3B82F6",
+  brand: "#D4AF37",
+  onBrand: "#3A2E00",
+  brandPrimary: "#D4AF37",
+  onBrandPrimary: "#3A2E00",
+  brandSecondary: "#1E3A8A",
   onBrandSecondary: "#FFFFFF",
-  brandTertiary: "#FEF3C7",
-  onBrandTertiary: "#B45309",
+  brandTertiary: "#FBF3D5",
+  onBrandTertiary: "#8A6D1B",
 
-  success: "#10B981",
+  success: "#2E9E6B",
   onSuccess: "#FFFFFF",
-  warning: "#F59E0B",
-  onWarning: "#FFFFFF",
-  error: "#EF4444",
+  warning: "#D4AF37",
+  onWarning: "#3A2E00",
+  error: "#DC2626",
   onError: "#FFFFFF",
-  info: "#3B82F6",
+  info: "#1E3A8A",
   onInfo: "#FFFFFF",
 
-  border: "#E2E8F0",
-  borderStrong: "#CBD5E1",
-  divider: "#F1F5F9",
+  border: "#EAE0C8",
+  borderStrong: "#D8CBA6",
+  divider: "#F0E8D4",
 
   // Family-tree specific tokens
-  maleNode: "#3B82F6",
-  femaleNode: "#EC4899",
-  adminNode: "#F59E0B",
-  nodeAdoptedLine: "#94A3B8",
-  nodeDivorceLine: "#EF4444",
-  nodeRelationLine: "#CBD5E1",
+  maleNode: "#1E3A8A",
+  femaleNode: "#B84A7A",
+  adminNode: "#D4AF37",
+  nodeAdoptedLine: "#B0A583",
+  nodeDivorceLine: "#DC2626",
+  nodeRelationLine: "#D8CBA6",
 };
 
 export type ThemeColors = typeof light;
@@ -51,16 +51,19 @@ export type ThemeColors = typeof light;
 export const defaultScheme = "light" satisfies ColorScheme;
 export const themes: { light: ThemeColors; dark?: ThemeColors } = { light };
 
-// Poppins font family names (registered in app/_layout.tsx via expo-font).
+// Font family names (registered in app/_layout.tsx via expo-font).
 export const fonts = {
   regular: "Poppins-Regular",
   medium: "Poppins-Medium",
   semibold: "Poppins-SemiBold",
   bold: "Poppins-Bold",
+  // Playfair Display — used for headings / display titles ("Modern Heritage").
+  display: "PlayfairDisplay-Bold",
+  displaySemibold: "PlayfairDisplay-SemiBold",
 };
 
-// Gradient used for primary CTA buttons (no border / shadow per brief).
-export const brandGradient = ["#F59E0B", "#EA580C"] as const;
+// Gradient used for primary CTA buttons — Gold -> Royal Blue ("Modern Heritage").
+export const brandGradient = ["#D4AF37", "#1E3A8A"] as const;
 
 export function setColorScheme(scheme: ColorScheme | null) {
   Appearance.setColorScheme?.(scheme);

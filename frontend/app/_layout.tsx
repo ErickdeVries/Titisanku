@@ -12,6 +12,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { ErrorBoundary } from "@/src/components/error-boundary";
 import { queryClient } from "@/src/query-client";
 import { AuthProvider, useAuth } from "@/src/auth";
+import { TreeProvider } from "@/src/tree-context";
 import { LanguageProvider } from "@/src/i18n";
 
 LogBox.ignoreAllLogs(true);
@@ -32,7 +33,7 @@ function RootNav() {
   if (loading) {
     return (
       <View style={styles.center}>
-        <ActivityIndicator size="large" color="#F59E0B" />
+        <ActivityIndicator size="large" color="#D4AF37" />
       </View>
     );
   }
@@ -43,6 +44,9 @@ function RootNav() {
       <Stack.Screen name="(tabs)" />
       <Stack.Screen name="person/[id]" options={{ presentation: "modal" }} />
       <Stack.Screen name="add-relative" options={{ presentation: "modal" }} />
+      <Stack.Screen name="trees" options={{ presentation: "modal" }} />
+      <Stack.Screen name="subscription" />
+      <Stack.Screen name="members" />
     </Stack>
   );
 }
@@ -53,6 +57,8 @@ export default function RootLayout() {
     "Poppins-Medium": require("../assets/fonts/Poppins-Medium.ttf"),
     "Poppins-SemiBold": require("../assets/fonts/Poppins-SemiBold.ttf"),
     "Poppins-Bold": require("../assets/fonts/Poppins-Bold.ttf"),
+    "PlayfairDisplay-Bold": require("../assets/fonts/PlayfairDisplay-Bold.ttf"),
+    "PlayfairDisplay-SemiBold": require("../assets/fonts/PlayfairDisplay-SemiBold.ttf"),
     Feather: require("../node_modules/@react-native-vector-icons/feather/fonts/Feather.ttf"),
   });
 
@@ -63,7 +69,7 @@ export default function RootLayout() {
   if (!fontsLoaded) {
     return (
       <View style={styles.center}>
-        <ActivityIndicator size="large" color="#F59E0B" />
+        <ActivityIndicator size="large" color="#D4AF37" />
       </View>
     );
   }
@@ -75,9 +81,11 @@ export default function RootLayout() {
           <ErrorBoundary>
             <QueryClientProvider client={queryClient}>
               <AuthProvider>
-                <LanguageProvider>
-                  <RootNav />
-                </LanguageProvider>
+                <TreeProvider>
+                  <LanguageProvider>
+                    <RootNav />
+                  </LanguageProvider>
+                </TreeProvider>
               </AuthProvider>
             </QueryClientProvider>
           </ErrorBoundary>
@@ -88,5 +96,5 @@ export default function RootLayout() {
 }
 
 const styles = StyleSheet.create({
-  center: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "#FFFFFF" },
+  center: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "#FFFBF0" },
 });

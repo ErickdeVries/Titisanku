@@ -161,6 +161,93 @@ def require_role(user, roles):
 
 
 # ---------------------------------------------------------------------------
+# Multi-tenant Tree helpers
+# ---------------------------------------------------------------------------
+FREE_PERSON_LIMIT = 50
+
+
+class TreeCreateInput(BaseModel):
+    name: str
+
+
+class MemberRoleInput(BaseModel):
+    user_id: str
+    role: str  # editor | viewer
+
+
+async def resolve_tree(user, tree_id: Optional[str]):
+    """Return (tree, role) for the given user. If tree_id is None, use the
+    user's primary (first joined) tree. Raises 403 if not a member."""
+    q = {"user_id": user["user_id"]}
+    if tree_id:
+        q["tree_id"] = tree_id
+    member = await db.tree_members.find_one(q, {"_id": 0}, sort=[("joined_at", 1)])
+    if not member:
+        if tree_id:
+            raise HTTPException(status_code=403, detail="Anda bukan anggota pohon ini")
+        return None, None
+    tree = await db.trees.find_one({"id": member["tree_id"]}, {"_id": 0})
+    if not tree:
+        raise HTTPException(status_code=404, detail="Pohon tidak ditemukan")
+    return tree, member["role"]
+
+
+def require_role_t(role, roles):
+    if role not in roles:
+        raise HTTPException(status_code=403, detail="Permission denied")
+
+
+async def tree_person_count(tree_id: str) -> int:
+    return await db.people.count_documents({"tree_id": tree_id, "deleted_at": None})
+
+
+async def create_tree_for_user(user, name: str, make_root: bool = True) -> dict:
+    """Create a new tree owned by the user, add them as admin member,
+    and optionally create a root person."""
+    tree_id = f"tree_{uuid.uuid4().hex[:12]}"
+    root_person_id = None
+    if make_root:
+        root_person_id = str(uuid.uuid4())
+        await db.people.insert_one({
+            "id": root_person_id,
+            "tree_id": tree_id,
+            "name": user["name"],
+            "email": user["email"],
+            "gender": None,
+            "birth_date": None,
+            "birth_place": None,
+            "death_date": None,
+            "photo_url": user.get("picture"),
+            "job": None,
+            "is_adopted": False,
+            "notes": None,
+            "is_alive": True,
+            "is_root": True,
+            "created_by": user["user_id"],
+            "created_at": now_utc(),
+            "deleted_at": None,
+        })
+    tree_doc = {
+        "id": tree_id,
+        "name": name,
+        "owner_id": user["user_id"],
+        "plan": "free",
+        "root_person_id": root_person_id,
+        "created_at": now_utc(),
+    }
+    await db.trees.insert_one(tree_doc)
+    await db.tree_members.insert_one({
+        "id": str(uuid.uuid4()),
+        "tree_id": tree_id,
+        "user_id": user["user_id"],
+        "role": "admin",
+        "joined_at": now_utc(),
+    })
+    tree_doc.pop("_id", None)
+    return tree_doc
+
+
+# ---------------------------------------------------------------------------
 # Auth routes
 # ---------------------------------------------------------------------------
 @api_router.post("/auth/session")
@@ -199,27 +286,8 @@ async def auth_session(body: SessionInput):
             "created_at": now_utc(),
         }
         await db.users.insert_one(user_doc)
-        if is_first:
-            person_id = str(uuid.uuid4())
-            await db.people.insert_one({
-                "id": person_id,
-                "name": name,
-                "email": email,
-                "gender": None,
-                "birth_date": None,
-                "birth_place": None,
-                "death_date": None,
-                "photo_url": picture,
-                "job": None,
-                "is_adopted": False,
-                "notes": None,
-                "is_alive": True,
-                "is_root": True,
-                "created_by": user_id,
-                "created_at": now_utc(),
-                "deleted_at": None,
-            })
-            await db.meta.update_one({"key": "root_person_id"}, {"$set": {"value": person_id}}, upsert=True)
+        # Every brand-new user gets their own tree (they are its admin/owner).
+        await create_tree_for_user(user_doc, f"Keluarga {name}")
 
     await db.user_sessions.insert_one({
         "session_token": session_token,
@@ -253,26 +321,40 @@ def clean_person(p: dict) -> dict:
 
 
 @api_router.get("/tree")
-async def get_tree(user=Depends(get_current_user)):
-    people = await db.people.find({"deleted_at": None}, {"_id": 0}).to_list(5000)
-    relations = await db.relations.find({"deleted_at": None}, {"_id": 0}).to_list(10000)
-    meta = await db.meta.find_one({"key": "root_person_id"}, {"_id": 0})
-    root_id = meta["value"] if meta else (people[0]["id"] if people else None)
+async def get_tree(tree_id: Optional[str] = Query(None), user=Depends(get_current_user)):
+    tree, role = await resolve_tree(user, tree_id)
+    if not tree:
+        return {"people": [], "relations": [], "root_id": None, "tree": None, "role": None}
+    tid = tree["id"]
+    people = await db.people.find({"tree_id": tid, "deleted_at": None}, {"_id": 0}).to_list(5000)
+    relations = await db.relations.find({"tree_id": tid, "deleted_at": None}, {"_id": 0}).to_list(10000)
+    root_id = tree.get("root_person_id") or (people[0]["id"] if people else None)
     counts = {}
     async for row in db.person_notes.aggregate(
-        [{"$match": {"deleted_at": None}}, {"$group": {"_id": "$person_id", "c": {"$sum": 1}}}]
+        [{"$match": {"tree_id": tid, "deleted_at": None}}, {"$group": {"_id": "$person_id", "c": {"$sum": 1}}}]
     ):
         counts[row["_id"]] = row["c"]
     for p in people:
         p["note_count"] = counts.get(p["id"], 0)
         if p.get("is_alive") is None:
             p["is_alive"] = not bool(p.get("death_date"))
-    return {"people": people, "relations": relations, "root_id": root_id}
+    return {
+        "people": people,
+        "relations": relations,
+        "root_id": root_id,
+        "tree": tree,
+        "role": role,
+        "person_count": len(people),
+        "limit": None if tree.get("plan") == "pro" else FREE_PERSON_LIMIT,
+    }
 
 
 @api_router.get("/people")
-async def list_people(q: Optional[str] = None, user=Depends(get_current_user)):
-    query = {"deleted_at": None}
+async def list_people(q: Optional[str] = None, tree_id: Optional[str] = Query(None), user=Depends(get_current_user)):
+    tree, role = await resolve_tree(user, tree_id)
+    if not tree:
+        return []
+    query = {"tree_id": tree["id"], "deleted_at": None}
     if q:
         query["name"] = {"$regex": q, "$options": "i"}
     people = await db.people.find(query, {"_id": 0}).to_list(5000)
@@ -280,17 +362,21 @@ async def list_people(q: Optional[str] = None, user=Depends(get_current_user)):
 
 
 @api_router.get("/people/{person_id}")
-async def get_person(person_id: str, user=Depends(get_current_user)):
-    p = await db.people.find_one({"id": person_id, "deleted_at": None}, {"_id": 0})
+async def get_person(person_id: str, tree_id: Optional[str] = Query(None), user=Depends(get_current_user)):
+    tree, role = await resolve_tree(user, tree_id)
+    if not tree:
+        raise HTTPException(status_code=404, detail="Person not found")
+    p = await db.people.find_one({"id": person_id, "tree_id": tree["id"], "deleted_at": None}, {"_id": 0})
     if not p:
         raise HTTPException(status_code=404, detail="Person not found")
     return p
 
 
 @api_router.put("/people/{person_id}")
-async def update_person(person_id: str, data: PersonData, user=Depends(get_current_user)):
-    require_role(user, ["admin", "editor"])
-    p = await db.people.find_one({"id": person_id, "deleted_at": None})
+async def update_person(person_id: str, data: PersonData, tree_id: Optional[str] = Query(None), user=Depends(get_current_user)):
+    tree, role = await resolve_tree(user, tree_id)
+    require_role_t(role, ["admin", "editor"])
+    p = await db.people.find_one({"id": person_id, "tree_id": tree["id"], "deleted_at": None})
     if not p:
         raise HTTPException(status_code=404, detail="Person not found")
     d = data.model_dump()
@@ -303,23 +389,32 @@ async def update_person(person_id: str, data: PersonData, user=Depends(get_curre
 
 
 @api_router.delete("/people/{person_id}")
-async def delete_person(person_id: str, user=Depends(get_current_user)):
-    require_role(user, ["admin"])
-    meta = await db.meta.find_one({"key": "root_person_id"}, {"_id": 0})
-    if meta and meta["value"] == person_id:
+async def delete_person(person_id: str, tree_id: Optional[str] = Query(None), user=Depends(get_current_user)):
+    tree, role = await resolve_tree(user, tree_id)
+    require_role_t(role, ["admin"])
+    if tree.get("root_person_id") == person_id:
         raise HTTPException(status_code=400, detail="Cannot delete root person")
-    await db.people.update_one({"id": person_id}, {"$set": {"deleted_at": now_utc()}})
+    await db.people.update_one({"id": person_id, "tree_id": tree["id"]}, {"$set": {"deleted_at": now_utc()}})
     await db.relations.update_many(
-        {"$or": [{"person_id": person_id}, {"related_person_id": person_id}]},
+        {"tree_id": tree["id"], "$or": [{"person_id": person_id}, {"related_person_id": person_id}]},
         {"$set": {"deleted_at": now_utc()}},
     )
     return {"ok": True}
 
 
 @api_router.post("/people/add-relative")
-async def add_relative(body: AddRelativeInput, user=Depends(get_current_user)):
-    require_role(user, ["admin", "editor"])
-    focus = await db.people.find_one({"id": body.focus_id, "deleted_at": None}, {"_id": 0})
+async def add_relative(body: AddRelativeInput, tree_id: Optional[str] = Query(None), user=Depends(get_current_user)):
+    tree, role = await resolve_tree(user, tree_id)
+    require_role_t(role, ["admin", "editor"])
+    # Subscription limit for Free plan
+    if tree.get("plan") != "pro":
+        count = await tree_person_count(tree["id"])
+        if count >= FREE_PERSON_LIMIT:
+            raise HTTPException(
+                status_code=402,
+                detail=f"LIMIT_REACHED:Pohon gratis dibatasi {FREE_PERSON_LIMIT} orang. Upgrade ke Pro untuk menambah lebih banyak.",
+            )
+    focus = await db.people.find_one({"id": body.focus_id, "tree_id": tree["id"], "deleted_at": None}, {"_id": 0})
     if not focus:
         raise HTTPException(status_code=404, detail="Focus person not found")
 
@@ -333,6 +428,7 @@ async def add_relative(body: AddRelativeInput, user=Depends(get_current_user)):
     new_id = str(uuid.uuid4())
     person_doc = {
         "id": new_id,
+        "tree_id": tree["id"],
         **pd,
         "is_alive": not bool(pd.get("death_date")),
         "is_root": False,
@@ -368,6 +464,7 @@ async def add_relative(body: AddRelativeInput, user=Depends(get_current_user)):
         }
     else:
         raise HTTPException(status_code=400, detail="Invalid direction")
+    rel["tree_id"] = tree["id"]
     rel["deleted_at"] = None
     rel["created_at"] = now_utc()
     await db.relations.insert_one(rel)
@@ -426,14 +523,15 @@ def _serialize(docs):
 
 
 @api_router.get("/backup")
-async def backup(user=Depends(get_current_user)):
-    require_role(user, ["admin"])
-    users = await db.users.find({}, {"_id": 0}).to_list(5000)
-    people = await db.people.find({}, {"_id": 0}).to_list(5000)
-    relations = await db.relations.find({}, {"_id": 0}).to_list(10000)
+async def backup(tree_id: Optional[str] = Query(None), user=Depends(get_current_user)):
+    tree, role = await resolve_tree(user, tree_id)
+    require_role_t(role, ["admin"])
+    tid = tree["id"]
+    people = await db.people.find({"tree_id": tid}, {"_id": 0}).to_list(5000)
+    relations = await db.relations.find({"tree_id": tid}, {"_id": 0}).to_list(10000)
     return {
         "exported_at": now_utc().isoformat(),
-        "users": _serialize(users),
+        "tree": {"id": tid, "name": tree.get("name")},
         "people": _serialize(people),
         "relations": _serialize(relations),
     }
@@ -510,20 +608,18 @@ class ChatInput(BaseModel):
     mentions: List[str] = []  # user_ids mentioned
 
 
-async def get_family_room_id():
-    admin = await db.users.find_one({"role": "admin"}, {"_id": 0})
-    return admin["user_id"] if admin else None
-
-
-async def notify_editors(actor_id: str, ntype: str, title: str, body: str):
-    recipients = await db.users.find({"role": {"$in": ["admin", "editor"]}}, {"_id": 0, "user_id": 1}).to_list(2000)
+async def notify_tree(tree_id: str, actor_id: str, ntype: str, title: str, body: str):
+    members = await db.tree_members.find(
+        {"tree_id": tree_id, "role": {"$in": ["admin", "editor"]}}, {"_id": 0, "user_id": 1}
+    ).to_list(2000)
     docs = []
-    for r in recipients:
+    for r in members:
         if r["user_id"] == actor_id:
             continue
         docs.append({
             "id": str(uuid.uuid4()),
             "user_id": r["user_id"],
+            "tree_id": tree_id,
             "type": ntype,
             "title": title,
             "body": body,
@@ -535,20 +631,23 @@ async def notify_editors(actor_id: str, ntype: str, title: str, body: str):
 
 
 @api_router.get("/people/{person_id}/notes")
-async def list_person_notes(person_id: str, user=Depends(get_current_user)):
-    notes = await db.person_notes.find({"person_id": person_id, "deleted_at": None}, {"_id": 0}).sort("created_at", -1).to_list(2000)
+async def list_person_notes(person_id: str, tree_id: Optional[str] = Query(None), user=Depends(get_current_user)):
+    tree, role = await resolve_tree(user, tree_id)
+    notes = await db.person_notes.find({"person_id": person_id, "tree_id": tree["id"], "deleted_at": None}, {"_id": 0}).sort("created_at", -1).to_list(2000)
     return _serialize(notes)
 
 
 @api_router.post("/people/{person_id}/notes")
-async def add_person_note(person_id: str, body: NoteInput, user=Depends(get_current_user)):
-    require_role(user, ["admin", "editor"])
-    person = await db.people.find_one({"id": person_id, "deleted_at": None}, {"_id": 0})
+async def add_person_note(person_id: str, body: NoteInput, tree_id: Optional[str] = Query(None), user=Depends(get_current_user)):
+    tree, role = await resolve_tree(user, tree_id)
+    require_role_t(role, ["admin", "editor"])
+    person = await db.people.find_one({"id": person_id, "tree_id": tree["id"], "deleted_at": None}, {"_id": 0})
     if not person:
         raise HTTPException(status_code=404, detail="Person not found")
     doc = {
         "id": str(uuid.uuid4()),
         "person_id": person_id,
+        "tree_id": tree["id"],
         "author_id": user["user_id"],
         "author_name": user["name"],
         "note_text": body.note_text,
@@ -557,14 +656,15 @@ async def add_person_note(person_id: str, body: NoteInput, user=Depends(get_curr
         "deleted_at": None,
     }
     await db.person_notes.insert_one(doc)
-    await notify_editors(user["user_id"], "note", f"Catatan baru: {person['name']}", f"{user['name']}: {body.note_text[:60]}")
+    await notify_tree(tree["id"], user["user_id"], "note", f"Catatan baru: {person['name']}", f"{user['name']}: {body.note_text[:60]}")
     return _serialize([doc])[0]
 
 
 @api_router.post("/people/{person_id}/files")
-async def add_person_file(person_id: str, file: UploadFile = File(...), user=Depends(get_current_user)):
-    require_role(user, ["admin", "editor"])
-    person = await db.people.find_one({"id": person_id, "deleted_at": None}, {"_id": 0})
+async def add_person_file(person_id: str, file: UploadFile = File(...), tree_id: Optional[str] = Query(None), user=Depends(get_current_user)):
+    tree, role = await resolve_tree(user, tree_id)
+    require_role_t(role, ["admin", "editor"])
+    person = await db.people.find_one({"id": person_id, "tree_id": tree["id"], "deleted_at": None}, {"_id": 0})
     if not person:
         raise HTTPException(status_code=404, detail="Person not found")
     content = await file.read()
@@ -574,6 +674,7 @@ async def add_person_file(person_id: str, file: UploadFile = File(...), user=Dep
     doc = {
         "id": str(uuid.uuid4()),
         "person_id": person_id,
+        "tree_id": tree["id"],
         "author_id": user["user_id"],
         "author_name": user["name"],
         "note_text": file.filename or "File",
@@ -582,7 +683,7 @@ async def add_person_file(person_id: str, file: UploadFile = File(...), user=Dep
         "deleted_at": None,
     }
     await db.person_notes.insert_one(doc)
-    await notify_editors(user["user_id"], "file", f"File baru: {person['name']}", f"{user['name']} menambahkan file")
+    await notify_tree(tree["id"], user["user_id"], "file", f"File baru: {person['name']}", f"{user['name']} menambahkan file")
     return _serialize([doc])[0]
 
 
@@ -591,19 +692,21 @@ async def delete_note(note_id: str, user=Depends(get_current_user)):
     note = await db.person_notes.find_one({"id": note_id, "deleted_at": None}, {"_id": 0})
     if not note:
         raise HTTPException(status_code=404, detail="Note not found")
-    if user["role"] != "admin" and note["author_id"] != user["user_id"]:
+    tree, role = await resolve_tree(user, note.get("tree_id"))
+    if role != "admin" and note["author_id"] != user["user_id"]:
         raise HTTPException(status_code=403, detail="Hanya penulis atau admin yang bisa menghapus")
     await db.person_notes.update_one({"id": note_id}, {"$set": {"deleted_at": now_utc()}})
     return {"ok": True}
 
 
 @api_router.get("/chat")
-async def get_chat(user=Depends(get_current_user)):
-    room = await get_family_room_id()
-    admin = await db.users.find_one({"role": "admin"}, {"_id": 0})
-    room_name = admin["name"] if admin else "Keluarga"
-    # people alive stats + email->person map for filtering
-    people = await db.people.find({"deleted_at": None}, {"_id": 0}).to_list(5000)
+async def get_chat(tree_id: Optional[str] = Query(None), user=Depends(get_current_user)):
+    tree, role = await resolve_tree(user, tree_id)
+    if not tree:
+        return {"room_id": None, "room_name": "Keluarga", "messages": [], "alive_count": 0, "total_count": 0, "members": [], "typing": []}
+    room = tree["id"]
+    room_name = tree.get("name", "Keluarga")
+    people = await db.people.find({"tree_id": room, "deleted_at": None}, {"_id": 0}).to_list(5000)
     total_count = len(people)
     alive_count = 0
     email_person = {}
@@ -615,9 +718,10 @@ async def get_chat(user=Depends(get_current_user)):
             alive_count += 1
         if p.get("email"):
             email_person[p["email"]] = {"id": p["id"], "is_alive": alive}
-    members = await db.users.find({"role": {"$in": ["admin", "editor"]}}, {"_id": 0, "user_id": 1, "name": 1}).to_list(2000)
-    if not room:
-        return {"room_id": None, "room_name": room_name, "messages": [], "alive_count": alive_count, "total_count": total_count, "members": members}
+    member_rows = await db.tree_members.find({"tree_id": room}, {"_id": 0, "user_id": 1, "role": 1}).to_list(2000)
+    member_ids = [m["user_id"] for m in member_rows if m["role"] in ("admin", "editor")]
+    users_map = {u["user_id"]: u for u in await db.users.find({"user_id": {"$in": [m["user_id"] for m in member_rows]}}, {"_id": 0}).to_list(2000)}
+    members = [{"user_id": uid, "name": users_map.get(uid, {}).get("name", "?")} for uid in member_ids]
     # read receipts: mark all others' messages as read by me
     await db.family_chat.update_many(
         {"room_id": room, "sender_id": {"$ne": user["user_id"]}, "read_by": {"$ne": user["user_id"]}, "deleted_at": None},
@@ -655,11 +759,12 @@ async def get_chat(user=Depends(get_current_user)):
 
 
 @api_router.post("/chat/typing")
-async def chat_typing(user=Depends(get_current_user)):
-    require_role(user, ["admin", "editor"])
-    room = await get_family_room_id()
+async def chat_typing(tree_id: Optional[str] = Query(None), user=Depends(get_current_user)):
+    tree, role = await resolve_tree(user, tree_id)
+    require_role_t(role, ["admin", "editor"])
+    room = tree["id"]
     await db.chat_typing.update_one(
-        {"user_id": user["user_id"]},
+        {"user_id": user["user_id"], "room_id": room},
         {"$set": {"user_id": user["user_id"], "name": user["name"], "room_id": room, "updated_at": now_utc()}},
         upsert=True,
     )
@@ -671,16 +776,18 @@ async def delete_chat(msg_id: str, user=Depends(get_current_user)):
     m = await db.family_chat.find_one({"id": msg_id, "deleted_at": None}, {"_id": 0})
     if not m:
         raise HTTPException(status_code=404, detail="Message not found")
-    if user["role"] != "admin" and m["sender_id"] != user["user_id"]:
+    tree, role = await resolve_tree(user, m.get("room_id"))
+    if role != "admin" and m["sender_id"] != user["user_id"]:
         raise HTTPException(status_code=403, detail="Hanya pengirim atau admin yang bisa menghapus pesan")
     await db.family_chat.update_one({"id": msg_id}, {"$set": {"deleted_at": now_utc()}})
     return {"ok": True}
 
 
 @api_router.post("/chat")
-async def send_chat(body: ChatInput, user=Depends(get_current_user)):
-    require_role(user, ["admin", "editor"])
-    room = await get_family_room_id()
+async def send_chat(body: ChatInput, tree_id: Optional[str] = Query(None), user=Depends(get_current_user)):
+    tree, role = await resolve_tree(user, tree_id)
+    require_role_t(role, ["admin", "editor"])
+    room = tree["id"]
     reply = None
     if body.reply_to:
         rmsg = await db.family_chat.find_one({"id": body.reply_to}, {"_id": 0})
@@ -697,16 +804,18 @@ async def send_chat(body: ChatInput, user=Depends(get_current_user)):
     doc = {
         "id": str(uuid.uuid4()),
         "room_id": room,
+        "tree_id": room,
         "sender_id": user["user_id"],
         "message": body.message or "",
         "attachments": body.attachments,
         "reply_to": reply,
         "read_by": [],
+        "edited": False,
         "created_at": now_utc(),
         "deleted_at": None,
     }
     await db.family_chat.insert_one(doc)
-    await notify_editors(user["user_id"], "chat", "Pesan baru di Chat Keluarga", f"{user['name']}: {(body.message or 'Foto')[:60]}")
+    await notify_tree(room, user["user_id"], "chat", "Pesan baru di Chat Keluarga", f"{user['name']}: {(body.message or 'Foto')[:60]}")
     # mention notifications
     mention_docs = []
     for uid in set(body.mentions):
@@ -715,6 +824,7 @@ async def send_chat(body: ChatInput, user=Depends(get_current_user)):
         mention_docs.append({
             "id": str(uuid.uuid4()),
             "user_id": uid,
+            "tree_id": room,
             "type": "mention",
             "title": "Anda disebut di Chat Keluarga",
             "body": f"{user['name']} menyebut Anda: {(body.message or '')[:60]}",
@@ -752,15 +862,17 @@ class RestoreInput(BaseModel):
 
 
 @api_router.post("/restore")
-async def restore(body: RestoreInput, user=Depends(get_current_user)):
-    require_role(user, ["admin"])
+async def restore(body: RestoreInput, tree_id: Optional[str] = Query(None), user=Depends(get_current_user)):
+    tree, role = await resolve_tree(user, tree_id)
+    require_role_t(role, ["admin"])
     if not body.people:
         raise HTTPException(status_code=400, detail="Backup kosong atau tidak valid")
+    tid = tree["id"]
     people_ids = [p.get("id") for p in body.people if p.get("id")]
     rel_ids = [r.get("id") for r in body.relations if r.get("id")]
-    # soft-delete current records that are not part of the backup
-    await db.people.update_many({"id": {"$nin": people_ids}, "deleted_at": None}, {"$set": {"deleted_at": now_utc()}})
-    await db.relations.update_many({"id": {"$nin": rel_ids}, "deleted_at": None}, {"$set": {"deleted_at": now_utc()}})
+    # soft-delete current records (in THIS tree) that are not part of the backup
+    await db.people.update_many({"tree_id": tid, "id": {"$nin": people_ids}, "deleted_at": None}, {"$set": {"deleted_at": now_utc()}})
+    await db.relations.update_many({"tree_id": tid, "id": {"$nin": rel_ids}, "deleted_at": None}, {"$set": {"deleted_at": now_utc()}})
     root_id = None
     for p in body.people:
         pid = p.get("id")
@@ -768,6 +880,7 @@ async def restore(body: RestoreInput, user=Depends(get_current_user)):
             continue
         doc = {k: v for k, v in p.items() if k != "_id"}
         doc["deleted_at"] = None
+        doc["tree_id"] = tid
         if doc.get("is_root"):
             root_id = pid
         await db.people.update_one({"id": pid}, {"$set": doc}, upsert=True)
@@ -777,15 +890,144 @@ async def restore(body: RestoreInput, user=Depends(get_current_user)):
             continue
         doc = {k: v for k, v in r.items() if k != "_id"}
         doc["deleted_at"] = None
+        doc["tree_id"] = tid
         await db.relations.update_one({"id": rid}, {"$set": doc}, upsert=True)
     if root_id:
-        await db.meta.update_one({"key": "root_person_id"}, {"$set": {"value": root_id}}, upsert=True)
+        await db.trees.update_one({"id": tid}, {"$set": {"root_person_id": root_id}})
     return {"ok": True, "people": len(body.people), "relations": len(body.relations)}
+
+
+# ---------------------------------------------------------------------------
+# Trees (multi-tenant) + Subscription + Members
+# ---------------------------------------------------------------------------
+@api_router.get("/trees")
+async def list_trees(user=Depends(get_current_user)):
+    members = await db.tree_members.find({"user_id": user["user_id"]}, {"_id": 0}).sort("joined_at", 1).to_list(200)
+    out = []
+    for m in members:
+        tree = await db.trees.find_one({"id": m["tree_id"]}, {"_id": 0})
+        if not tree:
+            continue
+        count = await tree_person_count(tree["id"])
+        member_count = await db.tree_members.count_documents({"tree_id": tree["id"]})
+        out.append({
+            **tree,
+            "role": m["role"],
+            "person_count": count,
+            "member_count": member_count,
+            "limit": None if tree.get("plan") == "pro" else FREE_PERSON_LIMIT,
+        })
+    return out
+
+
+@api_router.post("/trees")
+async def create_tree(body: TreeCreateInput, user=Depends(get_current_user)):
+    name = (body.name or "").strip() or f"Keluarga {user['name']}"
+    tree = await create_tree_for_user(user, name)
+    return {**tree, "role": "admin", "person_count": 1, "member_count": 1, "limit": FREE_PERSON_LIMIT}
+
+
+@api_router.post("/trees/{tid}/upgrade")
+async def upgrade_tree(tid: str, user=Depends(get_current_user)):
+    """Activate Pro plan for a tree. (Payment via Midtrans handled separately.)"""
+    tree, role = await resolve_tree(user, tid)
+    require_role_t(role, ["admin"])
+    await db.trees.update_one({"id": tid}, {"$set": {"plan": "pro", "upgraded_at": now_utc()}})
+    return {"ok": True, "plan": "pro"}
+
+
+@api_router.get("/trees/{tid}/members")
+async def list_members(tid: str, user=Depends(get_current_user)):
+    tree, role = await resolve_tree(user, tid)
+    members = await db.tree_members.find({"tree_id": tid}, {"_id": 0}).to_list(2000)
+    out = []
+    for m in members:
+        u = await db.users.find_one({"user_id": m["user_id"]}, {"_id": 0})
+        out.append({
+            "user_id": m["user_id"],
+            "role": m["role"],
+            "name": u["name"] if u else "?",
+            "email": u["email"] if u else None,
+            "picture": u.get("picture") if u else None,
+            "is_owner": tree.get("owner_id") == m["user_id"],
+        })
+    return {"members": _serialize(out), "role": role, "owner_id": tree.get("owner_id")}
+
+
+@api_router.put("/trees/{tid}/members/role")
+async def change_member_role(tid: str, body: MemberRoleInput, user=Depends(get_current_user)):
+    tree, role = await resolve_tree(user, tid)
+    require_role_t(role, ["admin"])
+    if body.user_id == tree.get("owner_id"):
+        raise HTTPException(status_code=400, detail="Tidak bisa mengubah peran pemilik pohon")
+    if body.role not in ("admin", "editor", "viewer"):
+        raise HTTPException(status_code=400, detail="Peran tidak valid")
+    await db.tree_members.update_one({"tree_id": tid, "user_id": body.user_id}, {"$set": {"role": body.role}})
+    return {"ok": True}
+
+
+@api_router.delete("/trees/{tid}/members/{member_id}")
+async def remove_member(tid: str, member_id: str, user=Depends(get_current_user)):
+    tree, role = await resolve_tree(user, tid)
+    require_role_t(role, ["admin"])
+    if member_id == tree.get("owner_id"):
+        raise HTTPException(status_code=400, detail="Pemilik pohon tidak bisa dihapus")
+    await db.tree_members.delete_one({"tree_id": tid, "user_id": member_id})
+    return {"ok": True}
 
 
 # ---------------------------------------------------------------------------
 # Startup
 # ---------------------------------------------------------------------------
+async def migrate_multitenant():
+    """One-time migration: attach existing single-tree data to a default tree.
+    Idempotent via a meta flag. Never deletes data."""
+    flag = await db.meta.find_one({"key": "migrated_multitenant"})
+    if flag:
+        return
+    people_exist = await db.people.count_documents({})
+    trees_exist = await db.trees.count_documents({})
+    if trees_exist == 0 and people_exist > 0:
+        admin = await db.users.find_one({"role": "admin"}, {"_id": 0})
+        if not admin:
+            admin = await db.users.find_one({}, {"_id": 0})
+        meta = await db.meta.find_one({"key": "root_person_id"}, {"_id": 0})
+        root_pid = meta["value"] if meta else None
+        tree_id = f"tree_{uuid.uuid4().hex[:12]}"
+        owner_id = admin["user_id"] if admin else "unknown"
+        await db.trees.insert_one({
+            "id": tree_id,
+            "name": f"Keluarga {admin['name']}" if admin else "Keluarga Saya",
+            "owner_id": owner_id,
+            "plan": "free",
+            "root_person_id": root_pid,
+            "created_at": now_utc(),
+        })
+        # stamp all existing data with tree_id
+        await db.people.update_many({"tree_id": {"$exists": False}}, {"$set": {"tree_id": tree_id}})
+        await db.relations.update_many({"tree_id": {"$exists": False}}, {"$set": {"tree_id": tree_id}})
+        await db.person_notes.update_many({"tree_id": {"$exists": False}}, {"$set": {"tree_id": tree_id}})
+        await db.app_notifications.update_many({"tree_id": {"$exists": False}}, {"$set": {"tree_id": tree_id}})
+        # migrate chat room_id (was admin user_id) -> tree_id (only docs not yet migrated)
+        await db.family_chat.update_many({"tree_id": {"$exists": False}}, {"$set": {"room_id": tree_id, "tree_id": tree_id}})
+        await db.chat_typing.update_many({"room_id": {"$exists": True}}, {"$set": {"room_id": tree_id}})
+        # add all existing users as members with their global role
+        all_users = await db.users.find({}, {"_id": 0}).to_list(5000)
+        for u in all_users:
+            existing = await db.tree_members.find_one({"tree_id": tree_id, "user_id": u["user_id"]})
+            if existing:
+                continue
+            await db.tree_members.insert_one({
+                "id": str(uuid.uuid4()),
+                "tree_id": tree_id,
+                "user_id": u["user_id"],
+                "role": u.get("role", "viewer"),
+                "joined_at": u.get("created_at", now_utc()),
+            })
+        logger.info(f"Migrated existing data to default tree {tree_id}")
+    await db.meta.update_one({"key": "migrated_multitenant"}, {"$set": {"value": True}}, upsert=True)
+
+
 @app.on_event("startup")
 async def startup():
     try:
@@ -795,8 +1037,17 @@ async def startup():
         await db.user_sessions.create_index("user_id")
         await db.user_sessions.create_index("expires_at", expireAfterSeconds=0)
         await db.people.create_index("id", unique=True)
+        await db.people.create_index("tree_id")
+        await db.relations.create_index("tree_id")
+        await db.tree_members.create_index([("tree_id", 1), ("user_id", 1)])
+        await db.tree_members.create_index("user_id")
+        await db.trees.create_index("id", unique=True)
     except Exception as e:
         logger.warning(f"Index setup: {e}")
+    try:
+        await migrate_multitenant()
+    except Exception as e:
+        logger.warning(f"Multitenant migration: {e}")
     try:
         await run_in_threadpool(init_storage)
     except Exception as e:

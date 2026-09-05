@@ -1,7 +1,7 @@
 import { Tabs } from "expo-router";
 import { Platform } from "react-native";
 import { useQuery } from "@tanstack/react-query";
-import Feather from "@react-native-vector-icons/feather";
+import { Network, MessageCircle, Search, User } from "lucide-react-native";
 import { useTheme, fonts } from "@/src/theme";
 import { useI18n } from "@/src/i18n";
 import { getNotifications } from "@/src/api";
@@ -19,7 +19,7 @@ export default function TabsLayout() {
         tabBarActiveTintColor: colors.brandPrimary,
         tabBarInactiveTintColor: colors.muted,
         tabBarStyle: {
-          backgroundColor: colors.surface,
+          backgroundColor: colors.surfaceSecondary,
           borderTopColor: colors.divider,
           ...(Platform.OS === "web" ? { height: 64 } : {}),
         },
@@ -31,14 +31,7 @@ export default function TabsLayout() {
         name="index"
         options={{
           title: t("tree"),
-          tabBarIcon: ({ color, size }) => <Feather name="git-merge" size={size} color={color} />,
-        }}
-      />
-      <Tabs.Screen
-        name="search"
-        options={{
-          title: t("search"),
-          tabBarIcon: ({ color, size }) => <Feather name="search" size={size} color={color} />,
+          tabBarIcon: ({ color, size }) => <Network size={size} color={color} />,
         }}
       />
       <Tabs.Screen
@@ -46,23 +39,24 @@ export default function TabsLayout() {
         options={{
           title: t("chat"),
           tabBarBadge: unreadChat > 0 ? unreadChat : undefined,
-          tabBarIcon: ({ color, size }) => <Feather name="message-circle" size={size} color={color} />,
+          tabBarIcon: ({ color, size }) => <MessageCircle size={size} color={color} />,
         }}
       />
       <Tabs.Screen
-        name="add"
+        name="search"
         options={{
-          title: t("add"),
-          tabBarIcon: ({ color, size }) => <Feather name="plus-circle" size={size} color={color} />,
+          title: t("search"),
+          tabBarIcon: ({ color, size }) => <Search size={size} color={color} />,
         }}
       />
       <Tabs.Screen
         name="settings"
         options={{
-          title: t("settings"),
-          tabBarIcon: ({ color, size }) => <Feather name="settings" size={size} color={color} />,
+          title: t("profile"),
+          tabBarIcon: ({ color, size }) => <User size={size} color={color} />,
         }}
       />
+      <Tabs.Screen name="add" options={{ href: null }} />
     </Tabs>
   );
 }

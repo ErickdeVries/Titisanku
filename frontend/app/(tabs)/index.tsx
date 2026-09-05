@@ -11,11 +11,13 @@ import Feather from "@react-native-vector-icons/feather";
 import { fonts, makeStyles, useTheme } from "@/src/theme";
 import { getTree } from "@/src/api";
 import { useAuth } from "@/src/auth";
+import { useTree } from "@/src/tree-context";
 import { useI18n } from "@/src/i18n";
 import { PersonNode } from "@/src/components/PersonNode";
 import { buildLayout, NODE_R } from "@/src/tree-layout";
 import { exportTreePdf } from "@/src/export-pdf";
 import { GradientButton } from "@/src/components/GradientButton";
+import { UpgradeModal } from "@/src/components/UpgradeModal";
 
 const EMPTY_IMG =
   "https://images.unsplash.com/photo-1749006813623-bc3bd798158c?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjY2NzF8MHwxfHNlYXJjaHwxfHxmYW1pbHklMjB0cmVlJTIwY29uY2VwdCUyMGlsbHVzdHJhdGlvbnxlbnwwfHx8fDE3ODg2MTg1Nzl8MA&ixlib=rb-4.1.0&q=85";
@@ -32,7 +34,12 @@ const useStyles = makeStyles((c) => ({
     borderBottomWidth: 1,
     borderBottomColor: c.divider,
   },
-  headerTitle: { fontFamily: fonts.bold, fontSize: 20, color: c.onSurface },
+  headerTitle: { fontFamily: fonts.display, fontSize: 22, color: c.onSurface },
+  headerLeft: { flex: 1, marginRight: 12 },
+  headerMeta: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 2 },
+  planChip: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999 },
+  planChipText: { fontFamily: fonts.bold, fontSize: 10, letterSpacing: 0.5 },
+  headerCount: { fontFamily: fonts.medium, fontSize: 12, color: c.muted },
   exportBtn: { flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: c.surfaceTertiary, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 999 },
   exportText: { fontFamily: fonts.medium, fontSize: 13, color: c.onSurfaceSecondary },
   statsStrip: { flexDirection: "row", gap: 10, paddingHorizontal: 16, paddingVertical: 12, backgroundColor: c.surface, borderBottomWidth: 1, borderBottomColor: c.divider },
@@ -85,10 +92,9 @@ const useStyles = makeStyles((c) => ({
 
 function AddButton({ x, y, bg, icon, onPress, testID }: any) {
   const styles = useStyles();
-  const { colors } = useTheme();
   return (
     <Pressable testID={testID} onPress={onPress} style={[styles.addBtn, { left: x, top: y, backgroundColor: bg }]}>
-      <Feather name={icon} size={18} color={colors.onBrandPrimary} />
+      <Feather name={icon} size={18} color="#FFFFFF" />
     </Pressable>
   );
 }
@@ -103,14 +109,21 @@ export default function TreeScreen() {
   const { width: screenW } = useWindowDimensions();
 
   const { data, isLoading } = useQuery({ queryKey: ["tree"], queryFn: getTree });
+  const { activeTree } = useTree();
   const [selected, setSelected] = useState<string | null>(null);
   const [focusId, setFocusId] = useState<string | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
+  const [upgradeOpen, setUpgradeOpen] = useState(false);
   const [genUp, setGenUp] = useState(2);
   const [genDown, setGenDown] = useState(2);
   const [exporting, setExporting] = useState(false);
 
-  const canEdit = user?.role === "admin" || user?.role === "editor";
+  const role = data?.role ?? user?.role;
+  const canEdit = role === "admin" || role === "editor";
+  const plan = activeTree?.plan ?? data?.tree?.plan ?? "free";
+  const limit = data?.limit ?? null;
+  const personCount = data?.person_count ?? data?.people?.length ?? 0;
+  const atLimit = limit != null && personCount >= limit;
 
   useEffect(() => {
     if (!focusId && data?.root_id) setFocusId(data.root_id);
@@ -193,6 +206,11 @@ export default function TreeScreen() {
 
   const openAdd = (direction: string) => {
     if (!selNode) return;
+    if (atLimit) {
+      setSelected(null);
+      setUpgradeOpen(true);
+      return;
+    }
     router.push(`/add-relative?focus_id=${selNode.id}&direction=${direction}&focus_name=${encodeURIComponent(selNode.person.name)}`);
     setSelected(null);
   };
@@ -233,7 +251,22 @@ export default function TreeScreen() {
   return (
     <View style={styles.root}>
       <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
-        <Text style={styles.headerTitle}>{t("tree")}</Text>
+        <Pressable style={styles.headerLeft} onPress={() => router.push("/trees")} testID="tree-switcher">
+          <Text style={styles.headerTitle} numberOfLines={1}>{activeTree?.name ?? t("tree")}</Text>
+          <View style={styles.headerMeta}>
+            <View style={[styles.planChip, { backgroundColor: plan === "pro" ? colors.brandSecondary : colors.brandTertiary }]}>
+              <Text style={[styles.planChipText, { color: plan === "pro" ? colors.onBrandSecondary : colors.onBrandTertiary }]}>
+                {plan === "pro" ? "PRO" : "GRATIS"}
+              </Text>
+            </View>
+            {limit != null ? (
+              <Text style={styles.headerCount}>{personCount}/{limit}</Text>
+            ) : (
+              <Text style={styles.headerCount}>{personCount} orang</Text>
+            )}
+            <Feather name="chevron-down" size={15} color={colors.muted} />
+          </View>
+        </Pressable>
         {hasTree ? (
           <Pressable style={styles.exportBtn} onPress={() => setExportOpen(true)} testID="export-pdf-button">
             <Feather name="file-text" size={15} color={colors.onSurfaceSecondary} />
@@ -392,6 +425,8 @@ export default function TreeScreen() {
           </Pressable>
         </Pressable>
       </Modal>
+
+      <UpgradeModal visible={upgradeOpen} onClose={() => setUpgradeOpen(false)} limit={limit} />
     </View>
   );
 }

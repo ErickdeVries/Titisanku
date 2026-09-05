@@ -10,6 +10,8 @@ import Feather from "@react-native-vector-icons/feather";
 import { fonts, makeStyles, useTheme } from "@/src/theme";
 import { getTree, getBackup, restoreBackup, createInvite, acceptInvite, listInvites, fileUrl } from "@/src/api";
 import { useAuth } from "@/src/auth";
+import { useTree } from "@/src/tree-context";
+import { useRouter } from "expo-router";
 import { useI18n } from "@/src/i18n";
 import { GradientButton } from "@/src/components/GradientButton";
 import { ensureNotificationPermission, scheduleBirthdayReminders } from "@/src/notifications";
@@ -18,7 +20,7 @@ import { storage } from "@/src/utils/storage";
 const useStyles = makeStyles((c) => ({
   root: { flex: 1, backgroundColor: c.surface },
   header: { paddingHorizontal: 20, paddingBottom: 12, backgroundColor: c.surface, borderBottomWidth: 1, borderBottomColor: c.divider },
-  title: { fontFamily: fonts.bold, fontSize: 20, color: c.onSurface },
+  title: { fontFamily: fonts.display, fontSize: 22, color: c.onSurface },
   profile: { flexDirection: "row", alignItems: "center", gap: 14, padding: 20 },
   avatar: { width: 56, height: 56, borderRadius: 999, overflow: "hidden", backgroundColor: c.surfaceTertiary, alignItems: "center", justifyContent: "center" },
   avatarImg: { width: "100%", height: "100%" },
@@ -57,10 +59,12 @@ export default function SettingsScreen() {
   const { colors } = useTheme();
   const { lang, setLang, t } = useI18n();
   const { user, logout, refresh } = useAuth();
+  const { activeTree } = useTree();
+  const router = useRouter();
   const insets = useSafeAreaInsets();
   const qc = useQueryClient();
 
-  const isAdmin = user?.role === "admin";
+  const isAdmin = (activeTree?.role ?? user?.role) === "admin";
   const { data } = useQuery({ queryKey: ["tree"], queryFn: getTree });
   const { data: invites } = useQuery({ queryKey: ["invites"], queryFn: listInvites, enabled: isAdmin });
 
@@ -169,13 +173,13 @@ export default function SettingsScreen() {
     }
   };
 
-  const roleLabel = user?.role === "admin" ? t("admin") : user?.role === "editor" ? t("editor") : t("viewer");
+  const roleLabel = (activeTree?.role ?? user?.role) === "admin" ? t("admin") : (activeTree?.role ?? user?.role) === "editor" ? t("editor") : t("viewer");
   const avatar = fileUrl(user?.picture);
 
   return (
     <View style={styles.root}>
       <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
-        <Text style={styles.title}>{t("settings")}</Text>
+        <Text style={styles.title}>{t("profile")}</Text>
       </View>
       <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom + 40 }}>
         <View style={styles.profile}>
@@ -188,6 +192,43 @@ export default function SettingsScreen() {
             <View style={styles.roleBadge}>
               <Text style={styles.roleText}>{roleLabel}</Text>
             </View>
+          </View>
+        </View>
+
+        {/* Tree & Subscription */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>{t("my_trees")}</Text>
+          <View style={styles.card}>
+            <Pressable style={styles.rowItem} onPress={() => router.push("/trees")} testID="switch-tree-row">
+              <Feather name="git-merge" size={20} color={colors.onSurfaceSecondary} />
+              <View style={styles.rowTextWrap}>
+                <Text style={styles.rowLabel}>{t("switch_tree")}</Text>
+                <Text style={styles.rowDesc}>{activeTree?.name ?? "—"}</Text>
+              </View>
+              <Feather name="chevron-right" size={20} color={colors.muted} />
+            </Pressable>
+            <View style={styles.divider} />
+            <Pressable style={styles.rowItem} onPress={() => router.push("/subscription")} testID="subscription-row">
+              <Feather name="award" size={20} color={colors.onSurfaceSecondary} />
+              <View style={styles.rowTextWrap}>
+                <Text style={styles.rowLabel}>{t("subscription")}</Text>
+                <Text style={styles.rowDesc}>{activeTree?.plan === "pro" ? t("plan_pro") : t("plan_free")}</Text>
+              </View>
+              <Feather name="chevron-right" size={20} color={colors.muted} />
+            </Pressable>
+            {isAdmin ? (
+              <>
+                <View style={styles.divider} />
+                <Pressable style={styles.rowItem} onPress={() => router.push("/members")} testID="members-row">
+                  <Feather name="users" size={20} color={colors.onSurfaceSecondary} />
+                  <View style={styles.rowTextWrap}>
+                    <Text style={styles.rowLabel}>{t("manage_members")}</Text>
+                    <Text style={styles.rowDesc}>{activeTree?.member_count ?? 1} {t("members_count")}</Text>
+                  </View>
+                  <Feather name="chevron-right" size={20} color={colors.muted} />
+                </Pressable>
+              </>
+            ) : null}
           </View>
         </View>
 

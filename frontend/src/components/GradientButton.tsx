@@ -35,7 +35,7 @@ const useStyles = makeStyles((c) => ({
     backgroundColor: c.surfaceTertiary,
     borderRadius: 999,
   },
-  text: { fontFamily: fonts.semibold, fontSize: 16, color: c.onBrandPrimary },
+  text: { fontFamily: fonts.semibold, fontSize: 16, color: "#FFFFFF" },
   textSecondary: { fontFamily: fonts.semibold, fontSize: 16, color: c.onSurface },
   disabled: { opacity: 0.5 },
 }));
@@ -67,12 +67,12 @@ export function GradientButton({ title, onPress, loading, disabled, icon, varian
 
   return (
     <Pressable testID={testID} onPress={onPress} disabled={isDisabled} style={[styles.wrap, isDisabled && styles.disabled, style]}>
-      <LinearGradient colors={brandGradient} start={{ x: 0, y: 0 }} end={{ x: 0, y: 1 }} style={styles.grad}>
+      <LinearGradient colors={brandGradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.grad}>
         {loading ? (
-          <ActivityIndicator color={colors.onBrandPrimary} />
+          <ActivityIndicator color="#FFFFFF" />
         ) : (
           <>
-            {icon ? <Feather name={icon as any} size={18} color={colors.onBrandPrimary} /> : null}
+            {icon ? <Feather name={icon as any} size={18} color="#FFFFFF" /> : null}
             <Text style={styles.text}>{title}</Text>
           </>
         )}

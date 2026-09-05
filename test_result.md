@@ -101,3 +101,65 @@
 #====================================================================================================
 # Testing Data - Main Agent and testing sub agent both should log testing data below this section
 #====================================================================================================
+## user_problem_statement: "Migrate Keturunanku to multi-tenant Tree SaaS: trees & tree_members collections, tree_id everywhere, Free plan 50-person limit + Pro upgrade, tree switcher, subscription & member management screens, Modern Heritage theme."
+
+## backend:
+##   - task: "Multi-tenant migration (trees, tree_members, tree_id on all data)"
+##     implemented: true
+##     working: "NA"
+##     file: "backend/server.py"
+##     priority: "high"
+##     needs_retesting: true
+##     status_history:
+##         -working: "NA"
+##         -agent: "main"
+##         -comment: "Refactored all people/relations/chat/notes/backup endpoints to be tree-scoped via resolve_tree(user, tree_id). Added startup migration (idempotent, non-destructive). Local test_flow.py passes 10/10 incl cross-tenant isolation."
+##   - task: "Subscription limit (Free 50) + upgrade + trees/members endpoints"
+##     implemented: true
+##     working: "NA"
+##     file: "backend/server.py"
+##     priority: "high"
+##     needs_retesting: true
+##     status_history:
+##         -working: "NA"
+##         -agent: "main"
+##         -comment: "POST /people/add-relative returns 402 LIMIT_REACHED at 50 for free plan. POST /trees/{id}/upgrade sets plan=pro. GET/POST /trees, GET /trees/{id}/members, PUT role, DELETE member implemented."
+
+## frontend:
+##   - task: "Modern Heritage theme + Playfair Display + lucide icons"
+##     implemented: true
+##     working: true
+##     file: "frontend/src/theme.ts"
+##     priority: "high"
+##     needs_retesting: false
+##     status_history:
+##         -working: true
+##         -agent: "main"
+##         -comment: "Login screen verified via screenshot: cream bg, gold gradient, Playfair title."
+##   - task: "Tree switcher, subscription & member screens, upgrade modal, limit gate"
+##     implemented: true
+##     working: "NA"
+##     file: "frontend/app/trees.tsx, subscription.tsx, members.tsx"
+##     priority: "high"
+##     needs_retesting: true
+##     status_history:
+##         -working: "NA"
+##         -agent: "main"
+##         -comment: "Cannot auto-test behind Google OAuth. Needs backend verification + user manual test."
+
+## metadata:
+##   created_by: "main_agent"
+##   version: "2.0"
+##   test_sequence: 1
+
+## test_plan:
+##   current_focus:
+##     - "Multi-tenant migration (trees, tree_members, tree_id on all data)"
+##     - "Subscription limit (Free 50) + upgrade + trees/members endpoints"
+##   stuck_tasks: []
+##   test_all: false
+##   test_priority: "high_first"
+
+## agent_communication:
+##     -agent: "main"
+##     -message: "Phase 1 (P0) complete: multi-tenant backend + Modern Heritage theme + subscription limits + tree/subscription/member screens. Please test backend endpoints by seeding a session (see test_credentials.md). Focus: tree isolation, 50-person limit (402 LIMIT_REACHED), upgrade to pro unlocks add, members role/remove, backup/chat/notes tree-scoped. Do NOT wipe real data; clean up only synthetic docs you insert."
