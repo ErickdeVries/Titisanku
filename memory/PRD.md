@@ -163,3 +163,20 @@ JSON backup, and email collaboration invites. Google login; first user = admin +
   Export modal now exports the CURRENT filtered view (activeFocus + filterUp/filterDown) with a summary,
   no separate gen steppers.
 - Tested by testing_agent: 13/13 backend PASS + frontend flows verified. No functional bugs.
+
+## Iteration 8b — Parent-centered (tidy) tree layout rewrite (2026-06)
+- User feedback: tree still "semrawut" — lines connected everywhere within a generation because
+  children were laid out in a flat centered row (NOT under their parents), so the parent→child
+  "bus" and spouse lines sprawled across the whole generation.
+- Rewrote src/tree-layout.ts buildLayout into a proper tidy/org-chart layout:
+  - Couples merged into "units"; whole visible set descends from top-most visible ancestors as one
+    downward tree (ancestors top, focus middle, descendants bottom).
+  - Recursive measure/place packs subtrees left→right and centers each parent-unit over its children.
+  - Connectors are now clean axis-aligned segments per family: stem down from couple midpoint →
+    horizontal bus spanning only that family's children → vertical drop to each child. Spouse/divorce
+    = short horizontal segment between the adjacent couple. Non-primary parent = individual elbow.
+  - COL_W 128, ROW_H 168. All edges rendered as react-native-svg <Line> (removed diagonal/Path).
+- export-pdf unaffected (still consumes buildLayout nodes/edges); caption reworded.
+- Verified via seeded 3-gen family screenshot: couple links short, children hang from localized bus,
+  no cross-generation spiderweb.
+

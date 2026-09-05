@@ -120,7 +120,7 @@ export async function exportTreePdf(
     <body>
       ${watermark ? '<div class="wm"></div><div class="wmtxt">Dibuat dengan KETURUNANKU · Paket Gratis</div>' : ""}
       <h1>${esc(appName)}</h1>
-      <div class="sub">Pohon Keluarga · Generasi -${genUp} sampai +${genDown} · ${nodes.length} anggota</div>
+      <div class="sub">Pohon Keluarga · ${genUp > 20 ? "Semua leluhur" : `${genUp} generasi ke atas`} · ${genDown > 20 ? "semua keturunan" : `${genDown} generasi ke bawah`} · ${nodes.length} anggota</div>
       <div class="tree"><svg width="100%" viewBox="0 0 ${w} ${h}" xmlns="http://www.w3.org/2000/svg">${svgEdges}${svgNodes}</svg></div>
       <h3>Data Anggota</h3>
       <table>

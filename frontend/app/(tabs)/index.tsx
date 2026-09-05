@@ -6,7 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, { useSharedValue, useAnimatedStyle, withTiming, runOnJS } from "react-native-reanimated";
-import Svg, { Line, Path } from "react-native-svg";
+import Svg, { Line } from "react-native-svg";
 import Feather from "@react-native-vector-icons/feather";
 import { fonts, makeStyles, useTheme } from "@/src/theme";
 import { getTree } from "@/src/api";
@@ -366,24 +366,6 @@ export default function TreeScreen() {
                           : e.kind === "divorce"
                             ? colors.nodeDivorceLine
                             : colors.nodeRelationLine;
-                      const dash = e.kind === "adopted" ? "7,6" : undefined;
-                      if (e.orient === "v") {
-                        // orthogonal elbow routing: down → across → down (declutters diagonals)
-                        const midY = (e.y1 + e.y2) / 2;
-                        const d = `M${e.x1} ${e.y1} L${e.x1} ${midY} L${e.x2} ${midY} L${e.x2} ${e.y2}`;
-                        return (
-                          <Path
-                            key={e.key}
-                            d={d}
-                            stroke={stroke}
-                            strokeWidth={2}
-                            strokeDasharray={dash}
-                            fill="none"
-                            strokeLinejoin="round"
-                            strokeLinecap="round"
-                          />
-                        );
-                      }
                       return (
                         <Line
                           key={e.key}
@@ -392,8 +374,9 @@ export default function TreeScreen() {
                           x2={e.x2}
                           y2={e.y2}
                           stroke={stroke}
-                          strokeWidth={2.5}
-                          strokeDasharray={dash}
+                          strokeWidth={2}
+                          strokeLinecap="round"
+                          strokeDasharray={e.kind === "adopted" ? "7,6" : undefined}
                         />
                       );
                     })}
