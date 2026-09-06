@@ -688,8 +688,9 @@ async def add_relative(body: AddRelativeInput, tree_id: Optional[str] = Query(No
 # Upload / Files
 # ---------------------------------------------------------------------------
 @api_router.post("/upload")
-async def upload_file(file: UploadFile = File(...), user=Depends(get_current_user)):
-    require_role(user, ["admin", "editor"])
+async def upload_file(file: UploadFile = File(...), tree_id: Optional[str] = Query(None), user=Depends(get_current_user)):
+    tree, role = await resolve_tree(user, tree_id)
+    require_role_t(role, ["admin", "editor"])
     content = await file.read()
     ext = (file.filename or "photo.jpg").split(".")[-1].lower()
     path = f"{APP_NAME}/uploads/{user['user_id']}/{uuid.uuid4().hex}.{ext}"

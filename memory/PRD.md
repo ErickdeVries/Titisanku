@@ -363,3 +363,13 @@ JSON backup, and email collaboration invites. Google login; first user = admin +
   hourly mongodump (gzip) to /app/backups (persistent PVC), keeps last 24; registered in root crontab
   (0 * * * *); baseline snapshot taken. RULE for future: NEVER allow testing_agent/tests to run delete_many({})
   on shared collections; always scope deletes to synthetic docs.
+
+## Iteration 15b — FIX: foto data diri gagal (upload & kamera) (2026-06, fork)
+- ROOT CAUSE: POST /upload used deprecated GLOBAL require_role(user,["admin","editor"]) but multitenant roles
+  live in tree_members. New Google users get GLOBAL users.role="viewer" (e.g. emmusic) -> every photo upload
+  returned 403 for them, so photo never appeared (frontend swallowed the error silently).
+- FIX (backend): /upload now takes tree_id query + resolve_tree(user,tree_id) + require_role_t(role,["admin",
+  "editor"]) — same per-tree pattern as /people/{id}/files.
+- FIX (frontend): uploadPhoto() appends ?tree_id=<activeTreeId> and now throws the server detail; PersonForm
+  shows uploadErr text under the photo buttons instead of failing silently.
+- Verified e2e: user with GLOBAL role=viewer but tree role=admin -> upload 200 + /files fetch 200 (image/png).

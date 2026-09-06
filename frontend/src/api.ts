@@ -294,12 +294,20 @@ export async function uploadPhoto(uri: string): Promise<string> {
   } else {
     form.append("file", { uri, name, type } as any);
   }
-  const res = await fetch(`${API}/upload`, {
+  const qs = activeTreeId ? `?tree_id=${encodeURIComponent(activeTreeId)}` : "";
+  const res = await fetch(`${API}/upload${qs}`, {
     method: "POST",
     headers: { ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}) },
     body: form,
   });
-  if (!res.ok) throw new Error("Upload failed");
+  if (!res.ok) {
+    let detail = "Upload failed";
+    try {
+      const body = await res.json();
+      detail = body.detail || detail;
+    } catch {}
+    throw new Error(detail);
+  }
   const data = await res.json();
   return data.path as string;
 }

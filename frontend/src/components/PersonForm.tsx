@@ -114,16 +114,19 @@ export function PersonForm({ initial, lockedGender, showAdopted, showMarriageTab
   const [divorceDate, setDivorceDate] = useState(initial?.divorce_date ?? null);
   const [isDivorced, setIsDivorced] = useState(initial?.is_divorced ?? false);
   const [uploading, setUploading] = useState(false);
+  const [uploadErr, setUploadErr] = useState<string | null>(null);
   const [nameErr, setNameErr] = useState(false);
   const [permBlocked, setPermBlocked] = useState(false);
 
   const doUpload = async (uri: string) => {
     setUploading(true);
+    setUploadErr(null);
     try {
       const path = await uploadPhoto(uri);
       setPhotoUrl(path);
-    } catch (e) {
+    } catch (e: any) {
       console.log("upload error", e);
+      setUploadErr(e?.message || "Gagal mengunggah foto. Coba lagi.");
     } finally {
       setUploading(false);
     }
@@ -226,6 +229,7 @@ export function PersonForm({ initial, lockedGender, showAdopted, showMarriageTab
                   <Text style={styles.permNote}>{t("upload_photo")} · Settings</Text>
                 </Pressable>
               ) : null}
+              {uploadErr ? <Text style={styles.err}>{uploadErr}</Text> : null}
             </View>
 
             <View>
