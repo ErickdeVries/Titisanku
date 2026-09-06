@@ -839,9 +839,10 @@ async def resolve_room(tree, user, room_id: Optional[str]):
 
 
 async def notify_room(room, actor_id: str, ntype: str, title: str, body: str):
+    muted = {m["user_id"] for m in await db.chat_mutes.find({"room_id": room["id"]}, {"_id": 0, "user_id": 1}).to_list(2000)}
     docs = []
     for uid in room.get("member_ids", []):
-        if uid == actor_id:
+        if uid == actor_id or uid in muted:
             continue
         docs.append({
             "id": str(uuid.uuid4()), "user_id": uid, "tree_id": room["tree_id"],
@@ -945,6 +946,55 @@ async def delete_note(note_id: str, user=Depends(get_current_user)):
     return {"ok": True}
 
 
+class GroupUpdateInput(BaseModel):
+    name: Optional[str] = None
+    member_ids: Optional[List[str]] = None
+
+
+class MuteInput(BaseModel):
+    muted: bool = True
+
+
+@api_router.put("/chat/rooms/{room_id}")
+async def update_group(room_id: str, body: GroupUpdateInput, tree_id: Optional[str] = Query(None), user=Depends(get_current_user)):
+    tree, role = await resolve_tree(user, tree_id)
+    room = await db.chat_rooms.find_one({"id": room_id, "tree_id": tree["id"]}, {"_id": 0})
+    if not room or room.get("type") != "group":
+        raise HTTPException(status_code=404, detail="Grup tidak ditemukan")
+    is_manager = room.get("created_by") == user["user_id"] or role in ("admin", "editor")
+    if user["user_id"] not in room.get("member_ids", []) or not is_manager:
+        raise HTTPException(status_code=403, detail="Hanya pengelola grup yang dapat mengubah grup")
+    updates = {}
+    if body.name is not None and body.name.strip():
+        updates["name"] = body.name.strip()
+    if body.member_ids is not None:
+        valid = {r["user_id"] for r in await db.tree_members.find({"tree_id": tree["id"]}, {"_id": 0, "user_id": 1}).to_list(2000)}
+        members = {m for m in body.member_ids if m in valid}
+        members.add(room["created_by"])
+        members.add(user["user_id"])
+        updates["member_ids"] = list(members)
+    if updates:
+        await db.chat_rooms.update_one({"id": room_id}, {"$set": updates})
+    updated = await db.chat_rooms.find_one({"id": room_id}, {"_id": 0})
+    return _serialize([updated])[0]
+
+
+@api_router.post("/chat/rooms/{room_id}/mute")
+async def mute_room(room_id: str, body: MuteInput, tree_id: Optional[str] = Query(None), user=Depends(get_current_user)):
+    tree, role = await resolve_tree(user, tree_id)
+    await resolve_room(tree, user, room_id)  # validates membership
+    rid = room_id if room_id else tree["id"]
+    if body.muted:
+        await db.chat_mutes.update_one(
+            {"user_id": user["user_id"], "room_id": rid},
+            {"$set": {"user_id": user["user_id"], "room_id": rid, "created_at": now_utc()}},
+            upsert=True,
+        )
+    else:
+        await db.chat_mutes.delete_one({"user_id": user["user_id"], "room_id": rid})
+    return {"ok": True, "muted": body.muted}
+
+
 @api_router.get("/chat/rooms")
 async def list_chat_rooms(tree_id: Optional[str] = Query(None), user=Depends(get_current_user)):
     tree, role = await resolve_tree(user, tree_id)
@@ -953,6 +1003,7 @@ async def list_chat_rooms(tree_id: Optional[str] = Query(None), user=Depends(get
     tid = tree["id"]
     uid = user["user_id"]
     users = {u["user_id"]: u for u in await db.users.find({}, {"_id": 0}).to_list(3000)}
+    muted_ids = {m["room_id"] for m in await db.chat_mutes.find({"user_id": uid}, {"_id": 0, "room_id": 1}).to_list(2000)}
 
     async def enrich(room):
         last = await db.family_chat.find_one(
@@ -972,6 +1023,7 @@ async def list_chat_rooms(tree_id: Optional[str] = Query(None), user=Depends(get
             "id": room["id"], "type": room["type"], "name": room["name"],
             "picture": room.get("picture"), "member_count": len(room.get("member_ids", [])),
             "last_message": preview, "last_message_at": last_at, "unread": unread,
+            "muted": room["id"] in muted_ids,
         }
 
     rooms = []
@@ -1086,10 +1138,12 @@ async def get_chat(tree_id: Optional[str] = Query(None), room_id: Optional[str] 
             upd = upd.replace(tzinfo=timezone.utc)
         if upd and upd > cutoff:
             typing_names.append(d.get("name", "?"))
+    is_muted = await db.chat_mutes.find_one({"user_id": user["user_id"], "room_id": rid}) is not None
+    can_manage = room["type"] == "group" and (room.get("created_by") == user["user_id"] or role in ("admin", "editor"))
     return {
         "room_id": rid, "room_name": room_name, "room_type": room["type"],
         "messages": out, "members": members, "typing": typing_names,
-        "can_send": room.get("can_send", False),
+        "can_send": room.get("can_send", False), "muted": is_muted, "can_manage": can_manage,
     }
 
 
@@ -1447,6 +1501,30 @@ async def set_tree_visibility(tid: str, body: dict = Body(...), user=Depends(get
     val = bool(body.get("is_public"))
     await db.trees.update_one({"id": tid}, {"$set": {"is_public": val}})
     return {"ok": True, "is_public": val}
+
+
+@api_router.delete("/trees/{tid}")
+async def delete_tree(tid: str, user=Depends(get_current_user)):
+    """Permanently delete a tree and all its data. Only the tree OWNER may do this."""
+    tree = await db.trees.find_one({"id": tid}, {"_id": 0})
+    if not tree:
+        raise HTTPException(status_code=404, detail="Pohon tidak ditemukan")
+    if tree.get("owner_id") != user["user_id"]:
+        raise HTTPException(status_code=403, detail="Hanya pemilik yang dapat menghapus pohon")
+    room_ids = [tid] + [r["id"] for r in await db.chat_rooms.find({"tree_id": tid}, {"_id": 0, "id": 1}).to_list(2000)]
+    await db.trees.delete_one({"id": tid})
+    await db.tree_members.delete_many({"tree_id": tid})
+    await db.people.delete_many({"tree_id": tid})
+    await db.relations.delete_many({"tree_id": tid})
+    await db.person_notes.delete_many({"tree_id": tid})
+    await db.app_notifications.delete_many({"tree_id": tid})
+    await db.join_requests.delete_many({"tree_id": tid})
+    await db.tree_invites.delete_many({"tree_id": tid})
+    await db.chat_rooms.delete_many({"tree_id": tid})
+    await db.family_chat.delete_many({"room_id": {"$in": room_ids}})
+    await db.chat_typing.delete_many({"room_id": {"$in": room_ids}})
+    await db.chat_mutes.delete_many({"room_id": {"$in": room_ids}})
+    return {"ok": True}
 
 
 @api_router.post("/trees/{tid}/upgrade")

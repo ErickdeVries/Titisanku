@@ -124,6 +124,8 @@ export const getTree = (): Promise<{
 export const listTrees = (): Promise<Tree[]> => apiFetch("/trees");
 export const createTree = (name: string): Promise<Tree> =>
   apiFetch("/trees", { method: "POST", body: JSON.stringify({ name }) });
+export const deleteTree = (tid: string): Promise<{ ok: boolean }> =>
+  apiFetch(`/trees/${tid}`, { method: "DELETE" });
 export const claimBranch = (
   tid: string,
   person_id: string,
@@ -236,6 +238,10 @@ export const createGroup = (name: string, member_ids: string[]): Promise<ChatRoo
   apiFetch("/chat/group", { method: "POST", body: JSON.stringify({ name, member_ids }) });
 export const openDirect = (user_id: string): Promise<ChatRoom> =>
   apiFetch("/chat/direct", { method: "POST", body: JSON.stringify({ user_id }) });
+export const updateGroup = (roomId: string, data: { name?: string; member_ids?: string[] }): Promise<ChatRoom> =>
+  apiFetch(`/chat/rooms/${roomId}`, { method: "PUT", body: JSON.stringify(data) });
+export const muteRoom = (roomId: string, muted: boolean): Promise<{ ok: boolean; muted: boolean }> =>
+  apiFetch(`/chat/rooms/${roomId}/mute`, { method: "POST", body: JSON.stringify({ muted }) });
 
 export const getChat = (roomId?: string) =>
   apiFetch(`/chat${roomId ? `?room_id=${encodeURIComponent(roomId)}` : ""}`);

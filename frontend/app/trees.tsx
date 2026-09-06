@@ -1,19 +1,21 @@
 import { useState } from "react";
-import { View, Text, Pressable, StyleSheet, ScrollView, TextInput, ActivityIndicator, Modal } from "react-native";
+import { View, Text, Pressable, StyleSheet, ScrollView, TextInput, ActivityIndicator, Modal, Alert } from "react-native";
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useMutation } from "@tanstack/react-query";
-import { X, Plus, Check, Crown, Users, UserPlus } from "lucide-react-native";
+import { X, Plus, Check, Crown, Users, UserPlus, Trash2 } from "lucide-react-native";
 import { fonts, useTheme } from "@/src/theme";
 import { useI18n } from "@/src/i18n";
 import { useTree } from "@/src/tree-context";
-import { createTree } from "@/src/api";
+import { useAuth } from "@/src/auth";
+import { createTree, deleteTree } from "@/src/api";
 
 export default function TreesScreen() {
   const { colors } = useTheme();
   const { t } = useI18n();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { user } = useAuth();
   const { trees, activeTreeId, setActive, refreshTrees } = useTree();
   const [createOpen, setCreateOpen] = useState(false);
   const [name, setName] = useState("");
@@ -28,6 +30,29 @@ export default function TreesScreen() {
       router.back();
     },
   });
+
+  const deleteMut = useMutation({
+    mutationFn: (id: string) => deleteTree(id),
+    onSuccess: async (_r, id) => {
+      const list = await refreshTrees();
+      if (id === activeTreeId) {
+        if (list.length > 0) await setActive(list[0].id);
+        else router.replace("/welcome");
+      }
+    },
+    onError: () => Alert.alert(t("error_generic")),
+  });
+
+  const confirmDelete = (id: string, tname: string) => {
+    Alert.alert(
+      t("delete_tree"),
+      t("delete_tree_confirm").replace("{name}", tname),
+      [
+        { text: t("cancel"), style: "cancel" },
+        { text: t("delete"), style: "destructive", onPress: () => deleteMut.mutate(id) },
+      ],
+    );
+  };
 
   const pick = async (id: string) => {
     await setActive(id);
@@ -46,32 +71,43 @@ export default function TreesScreen() {
       <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
         {trees.map((tree) => {
           const active = tree.id === activeTreeId;
+          const isOwner = tree.owner_id === user?.user_id;
           return (
-            <Pressable
+            <View
               key={tree.id}
-              testID={`tree-${tree.id}`}
-              onPress={() => pick(tree.id)}
               style={[styles.card, { backgroundColor: colors.surfaceSecondary, borderColor: active ? colors.brandPrimary : colors.border }]}
             >
-              <View style={[styles.avatar, { backgroundColor: colors.brandTertiary }]}>
-                <Users size={22} color={colors.onBrandTertiary} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.cardName, { color: colors.onSurface }]} numberOfLines={1}>{tree.name}</Text>
-                <View style={styles.metaRow}>
-                  <View style={[styles.pill, { backgroundColor: tree.plan === "pro" ? colors.brandSecondary : colors.brandTertiary }]}>
-                    {tree.plan === "pro" ? <Crown size={11} color={colors.onBrandSecondary} /> : null}
-                    <Text style={[styles.pillText, { color: tree.plan === "pro" ? colors.onBrandSecondary : colors.onBrandTertiary }]}>
-                      {tree.plan === "pro" ? "PRO" : "GRATIS"}
+              <Pressable testID={`tree-${tree.id}`} onPress={() => pick(tree.id)} style={styles.cardMain}>
+                <View style={[styles.avatar, { backgroundColor: colors.brandTertiary }]}>
+                  <Users size={22} color={colors.onBrandTertiary} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.cardName, { color: colors.onSurface }]} numberOfLines={1}>{tree.name}</Text>
+                  <View style={styles.metaRow}>
+                    <View style={[styles.pill, { backgroundColor: tree.plan === "pro" ? colors.brandSecondary : colors.brandTertiary }]}>
+                      {tree.plan === "pro" ? <Crown size={11} color={colors.onBrandSecondary} /> : null}
+                      <Text style={[styles.pillText, { color: tree.plan === "pro" ? colors.onBrandSecondary : colors.onBrandTertiary }]}>
+                        {tree.plan === "pro" ? "PRO" : "GRATIS"}
+                      </Text>
+                    </View>
+                    <Text style={[styles.meta, { color: colors.muted }]}>
+                      {tree.person_count}{tree.limit ? `/${tree.limit}` : ""} · {tree.role}
                     </Text>
                   </View>
-                  <Text style={[styles.meta, { color: colors.muted }]}>
-                    {tree.person_count}{tree.limit ? `/${tree.limit}` : ""} · {tree.role}
-                  </Text>
                 </View>
-              </View>
-              {active ? <Check size={22} color={colors.brandPrimary} /> : null}
-            </Pressable>
+                {active ? <Check size={22} color={colors.brandPrimary} /> : null}
+              </Pressable>
+              {isOwner ? (
+                <Pressable
+                  testID={`delete-tree-${tree.id}`}
+                  onPress={() => confirmDelete(tree.id, tree.name)}
+                  hitSlop={8}
+                  style={styles.trashBtn}
+                >
+                  <Trash2 size={18} color={colors.error} />
+                </Pressable>
+              ) : null}
+            </View>
           );
         })}
 
@@ -129,7 +165,9 @@ const styles = StyleSheet.create({
   root: { flex: 1 },
   header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 20, paddingBottom: 12 },
   title: { fontFamily: fonts.display, fontSize: 24 },
-  card: { flexDirection: "row", alignItems: "center", gap: 14, borderRadius: 18, borderWidth: 1.5, padding: 14 },
+  card: { flexDirection: "row", alignItems: "center", gap: 6, borderRadius: 18, borderWidth: 1.5, paddingRight: 8 },
+  cardMain: { flex: 1, flexDirection: "row", alignItems: "center", gap: 14, padding: 14 },
+  trashBtn: { width: 40, height: 40, borderRadius: 999, alignItems: "center", justifyContent: "center" },
   avatar: { width: 46, height: 46, borderRadius: 999, alignItems: "center", justifyContent: "center" },
   cardName: { fontFamily: fonts.semibold, fontSize: 16 },
   metaRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 4 },

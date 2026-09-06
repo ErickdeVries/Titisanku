@@ -76,8 +76,9 @@ export default function ChatListScreen() {
         </View>
         <View style={styles.rowTop}>
           <Text style={styles.preview} numberOfLines={1}>{item.last_message || t("tap_to_chat")}</Text>
+          {item.muted ? <Feather name="bell-off" size={14} color={colors.muted} style={{ marginLeft: 6 }} /> : null}
           {item.unread > 0 ? (
-            <View style={styles.badge} testID={`unread-${item.id}`}>
+            <View style={[styles.badge, item.muted && { backgroundColor: colors.muted }]} testID={`unread-${item.id}`}>
               <Text style={styles.badgeText}>{item.unread > 99 ? "99+" : item.unread}</Text>
             </View>
           ) : null}

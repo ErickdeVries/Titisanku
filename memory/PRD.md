@@ -312,3 +312,16 @@ JSON backup, and email collaboration invites. Google login; first user = admin +
   - Backend verified by testing_agent: 26/26 PASS. Fixed delete_chat to resolve by tree_id (group/DM delete).
 - CANVAS: double-tap a node -> jump into that person direct-line POV (setFocusId + hideSiblings=true).
   Single tap still selects (add buttons); deliberate 2nd tap (>320ms) still opens detail. Nothing removed.
+
+## Iteration 13 — Delete tree + Manage group + Mute chat + auth note (2026-06)
+- DELETE /trees/{tid} owner-only, cascades 12 collections. Frontend trees.tsx: trash icon on OWNED tree rows
+  (owner_id==user) -> confirm Alert -> deleteTree; if active deleted, switch to first remaining or /welcome.
+- PUT /chat/rooms/{room_id} (group rename + replace members; creator/admin/editor only). Frontend
+  app/chat/manage/[roomId].tsx (name input + contacts checkboxes). Reached via chat settings sheet -> Kelola Grup.
+- POST /chat/rooms/{room_id}/mute + chat_mutes collection. notify_room skips muted users. list_chat_rooms &
+  get_chat return muted flag + can_manage. Frontend: settings sheet (more-vertical) in [roomId] with Mute Switch;
+  chat list shows bell-off icon when muted. Backend verified 16/16 PASS.
+- AUTH: Invalid state parameter on logout->login is PROVIDER-SIDE (auth.emergentagent.com validating its own
+  OAuth transaction cookie). integration_expert + support confirmed not reliably fixable in app JS. Earlier fix
+  (window.location.replace for outbound auth) kept. User advised to clear auth.emergentagent.com cookies / test
+  deployed build, and contact support@emergent.sh if it persists.

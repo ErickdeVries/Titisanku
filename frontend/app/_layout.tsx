@@ -80,6 +80,7 @@ function RootNav() {
       <Stack.Screen name="claim-branch" />
       <Stack.Screen name="chat/[roomId]" />
       <Stack.Screen name="chat/new" />
+      <Stack.Screen name="chat/manage/[roomId]" />
       <Stack.Screen name="explorer/[id]" />
       <Stack.Screen name="invite/[token]" />
     </Stack>

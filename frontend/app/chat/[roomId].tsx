@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { View, Text, Pressable, TextInput, FlatList, Modal } from "react-native";
+import { View, Text, Pressable, TextInput, FlatList, Modal, Switch } from "react-native";
 import { Image } from "expo-image";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import * as ImagePicker from "expo-image-picker";
@@ -8,7 +8,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Feather from "@react-native-vector-icons/feather";
 import { fonts, makeStyles, useTheme } from "@/src/theme";
-import { getChat, sendChat, deleteChat, setTyping, uploadPhoto, fileUrl, markNotificationsRead } from "@/src/api";
+import { getChat, sendChat, deleteChat, setTyping, uploadPhoto, fileUrl, markNotificationsRead, muteRoom } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { useI18n } from "@/src/i18n";
 
@@ -94,6 +94,7 @@ export default function ChatRoomScreen() {
   const [mentionOpen, setMentionOpen] = useState(false);
   const [mentions, setMentions] = useState<string[]>([]);
   const [actionMsg, setActionMsg] = useState<any>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const lastTyped = useRef(0);
 
   const messages = data?.messages ?? [];
@@ -102,7 +103,19 @@ export default function ChatRoomScreen() {
   const canChat = data?.can_send ?? false;
   const roomType = data?.room_type ?? "family";
   const roomName = data?.room_name ?? t("family_group");
+  const canManage = data?.can_manage ?? false;
+  const muted = data?.muted ?? false;
   const isAdmin = user?.role === "admin";
+
+  const toggleMute = async (val: boolean) => {
+    try {
+      await muteRoom(roomId, val);
+      await qc.invalidateQueries({ queryKey: ["chat", roomId] });
+      qc.invalidateQueries({ queryKey: ["chatRooms"] });
+    } catch (e) {
+      console.log("mute error", e);
+    }
+  };
 
   const onType = (v: string) => {
     setText(v);
@@ -241,9 +254,13 @@ export default function ChatRoomScreen() {
         <View style={{ flex: 1 }}>
           <Text style={styles.roomName} numberOfLines={1}>{roomName}</Text>
           <Text style={styles.roomSub}>
+            {muted ? `${t("muted_label")} · ` : ""}
             {roomType === "direct" ? t("direct_chat") : `${data?.members?.length ?? 0} ${t("members_count")}`}
           </Text>
         </View>
+        <Pressable style={styles.backBtn} onPress={() => setSettingsOpen(true)} hitSlop={8} testID="chat-settings">
+          <Feather name="more-vertical" size={22} color={colors.onSurface} />
+        </Pressable>
       </View>
 
       <KeyboardAvoidingView style={{ flex: 1 }} behavior="translate-with-padding" keyboardVerticalOffset={0}>
@@ -352,6 +369,35 @@ export default function ChatRoomScreen() {
               <Pressable style={styles.pickRow} onPress={() => removeMessage(actionMsg.id)} testID="action-delete">
                 <Feather name="trash-2" size={18} color={colors.error} />
                 <Text style={[styles.pickText, { color: colors.error }]}>{t("delete")}</Text>
+              </Pressable>
+            ) : null}
+          </Pressable>
+        </Pressable>
+      </Modal>
+      {/* Chat settings sheet (mute + manage group) */}
+      <Modal visible={settingsOpen} transparent animationType="slide" onRequestClose={() => setSettingsOpen(false)}>
+        <Pressable style={styles.modalBg} onPress={() => setSettingsOpen(false)}>
+          <Pressable style={styles.sheet} onPress={() => {}}>
+            <Text style={styles.sheetTitle}>{t("chat_settings")}</Text>
+            <View style={styles.pickRow}>
+              <Feather name={muted ? "bell-off" : "bell"} size={18} color={colors.brandSecondary} />
+              <Text style={[styles.pickText, { flex: 1 }]}>{t("mute_chat")}</Text>
+              <Switch
+                testID="mute-toggle"
+                value={muted}
+                onValueChange={toggleMute}
+                trackColor={{ true: colors.brandPrimary, false: colors.border }}
+                thumbColor="#FFFFFF"
+              />
+            </View>
+            {canManage ? (
+              <Pressable
+                style={styles.pickRow}
+                testID="manage-group-btn"
+                onPress={() => { setSettingsOpen(false); router.push(`/chat/manage/${roomId}`); }}
+              >
+                <Feather name="settings" size={18} color={colors.brandSecondary} />
+                <Text style={styles.pickText}>{t("manage_group")}</Text>
               </Pressable>
             ) : null}
           </Pressable>
