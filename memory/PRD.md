@@ -197,4 +197,18 @@ JSON backup, and email collaboration invites. Google login; first user = admin +
 - Verified against the user's real tree (temp read session, then removed): renders as a clean org-chart —
   Iqbal+Deliana → Erick(+Mahdiana)/Antony/Veronica → grandchildren; in-laws hidden.
 
+## Iteration 8d — Revert tree layout to ORIGINAL scheme (per user request) (2026-06)
+- User asked to restore the tree diagram model to the ORIGINAL (as built when siblings kakak/adik were
+  added), WITHOUT removing any current features.
+- Reverted src/tree-layout.ts to the original flat generational layout: BFS in all directions (shows
+  in-laws & their families again), each generation centered in its own row, spouses reordered adjacent,
+  straight-line edges (parent diagonal, spouse/sibling horizontal). Removed the tidy/org-chart engine,
+  couple-merge, in-law hiding, and sibling brackets.
+- KEPT all newer features: DD/MM/YYYY DateField, marriage/divorce edit modal + PUT /relations,
+  add-relative child auto-link to single spouse, "Jadikan Pusat Pohon", filter panel copy, export from
+  current filtered view, and the fit-to-screen initial camera (so the whole original tree is visible).
+- Verified on the user's real tree via temp read session (removed after): all 16 members / 3 gens render
+  in the original scheme with straight connectors.
+
+
 
