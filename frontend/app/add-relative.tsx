@@ -1,11 +1,11 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { View, Text, Pressable } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Feather from "@react-native-vector-icons/feather";
 import { fonts, makeStyles, useTheme } from "@/src/theme";
-import { addRelative } from "@/src/api";
+import { addRelative, getTree } from "@/src/api";
 import { useI18n } from "@/src/i18n";
 import { PersonForm, PersonFormValue } from "@/src/components/PersonForm";
 
@@ -15,6 +15,13 @@ const useStyles = makeStyles((c) => ({
   closeBtn: { width: 36, height: 36, borderRadius: 999, backgroundColor: c.surfaceTertiary, alignItems: "center", justifyContent: "center" },
   title: { fontFamily: fonts.bold, fontSize: 17, color: c.onSurface },
   sub: { fontFamily: fonts.regular, fontSize: 12, color: c.muted },
+  pickerWrap: { paddingHorizontal: 16, paddingTop: 14, paddingBottom: 4 },
+  pickerLabel: { fontFamily: fonts.semibold, fontSize: 13, color: c.onSurface, marginBottom: 8 },
+  chips: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  chip: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 999, backgroundColor: c.surfaceTertiary, borderWidth: 1, borderColor: c.divider },
+  chipActive: { backgroundColor: c.brandPrimary, borderColor: c.brandPrimary },
+  chipText: { fontFamily: fonts.medium, fontSize: 13, color: c.onSurfaceSecondary },
+  chipTextActive: { color: c.onBrandPrimary },
 }));
 
 export default function AddRelative() {
@@ -27,6 +34,21 @@ export default function AddRelative() {
   const { focus_id, direction, focus_name, sib } = useLocalSearchParams<{ focus_id: string; direction: string; focus_name: string; sib?: string }>();
 
   const [submitting, setSubmitting] = useState(false);
+  const [otherParent, setOtherParent] = useState<string | null>(null);
+
+  const isChild = direction === "child";
+  const { data: tree } = useQuery({ queryKey: ["tree"], queryFn: getTree, enabled: isChild });
+  const spouses = useMemo(() => {
+    if (!isChild || !tree) return [] as { id: string; name: string }[];
+    const rels = tree.relations.filter(
+      (r) => (r.relation_type === "spouse" || r.relation_type === "divorced") && (r.person_id === focus_id || r.related_person_id === focus_id),
+    );
+    const ids = rels.map((r) => (r.person_id === focus_id ? r.related_person_id : r.person_id));
+    return ids
+      .map((id) => tree.people.find((p) => p.id === id))
+      .filter((p): p is NonNullable<typeof p> => !!p)
+      .map((p) => ({ id: p.id, name: p.name }));
+  }, [isChild, tree, focus_id]);
 
   const dirLabel =
     direction === "father"
@@ -63,6 +85,7 @@ export default function AddRelative() {
         marriage_date: v.marriage_date,
         divorce_date: v.divorce_date,
         is_divorced: v.is_divorced,
+        other_parent_id: isChild && spouses.length >= 2 ? otherParent : undefined,
       });
       await qc.invalidateQueries({ queryKey: ["tree"] });
       router.back();
@@ -87,6 +110,30 @@ export default function AddRelative() {
           </Text>
         </View>
       </View>
+      {isChild && spouses.length >= 2 ? (
+        <View style={styles.pickerWrap}>
+          <Text style={styles.pickerLabel}>{t("choose_other_parent")}</Text>
+          <View style={styles.chips}>
+            {spouses.map((s) => (
+              <Pressable
+                key={s.id}
+                onPress={() => setOtherParent(s.id)}
+                style={[styles.chip, otherParent === s.id && styles.chipActive]}
+                testID={`other-parent-${s.id}`}
+              >
+                <Text style={[styles.chipText, otherParent === s.id && styles.chipTextActive]}>{s.name}</Text>
+              </Pressable>
+            ))}
+            <Pressable
+              onPress={() => setOtherParent(null)}
+              style={[styles.chip, otherParent === null && styles.chipActive]}
+              testID="other-parent-none"
+            >
+              <Text style={[styles.chipText, otherParent === null && styles.chipTextActive]}>{t("unknown_parent")}</Text>
+            </Pressable>
+          </View>
+        </View>
+      ) : null}
       <PersonForm
         lockedGender={direction === "father" ? "male" : direction === "mother" ? "female" : undefined}
         showAdopted={direction === "child"}

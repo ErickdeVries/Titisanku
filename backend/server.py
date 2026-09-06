@@ -120,6 +120,7 @@ class AddRelativeInput(BaseModel):
     marriage_date: Optional[str] = None
     divorce_date: Optional[str] = None
     is_divorced: bool = False
+    other_parent_id: Optional[str] = None  # child direction: explicit second parent (spouse of focus)
 
 
 class InviteInput(BaseModel):
@@ -582,9 +583,14 @@ async def add_relative(body: AddRelativeInput, tree_id: Optional[str] = Query(No
             (r["related_person_id"] if r["person_id"] == body.focus_id else r["person_id"])
             for r in spouse_rels
         }
-        # Only auto-link when there is exactly one spouse (unambiguous other parent).
-        if len(spouse_ids) == 1:
+        # Determine the "other parent": an explicit choice (when the focus has multiple spouses),
+        # otherwise auto-link only when there is exactly one spouse (unambiguous).
+        other_parent = None
+        if body.other_parent_id and body.other_parent_id in spouse_ids:
+            other_parent = body.other_parent_id
+        elif len(spouse_ids) == 1:
             other_parent = next(iter(spouse_ids))
+        if other_parent:
             extra_rels.append({
                 "id": str(uuid.uuid4()),
                 "person_id": other_parent,

@@ -240,4 +240,17 @@ JSON backup, and email collaboration invites. Google login; first user = admin +
   verified both Erick & Mahdiana now connect to the 5 kids. Data fixed; POV now consistent for everyone.
 - Future children already auto-link to both parents via the earlier add-relative fix (single-spouse case).
 
+## Iteration 9c — Multiple-spouse: choose the child's other parent (2026-06)
+- User request: support a person with >1 spouse — when adding a child, pick which spouse is the child's
+  other parent (e.g., child A belongs to Erick's 2nd wife). Apply to every individual.
+- Backend: AddRelativeInput gained optional `other_parent_id`. In the child branch, the other parent is:
+  (a) the explicit other_parent_id if it is a valid spouse of the focus, else (b) auto-link when the focus
+  has exactly one spouse, else (c) none. Verified 4 cases via localhost API test (explicit w1/w2 link both
+  parents; ambiguous/invalid safely link only the focus).
+- Frontend add-relative.tsx: for direction=child, loads the focus's spouses; when there are ≥2 spouses it
+  shows a chip picker "Anak ini dari pasangan yang mana?" (testIDs other-parent-<id>, other-parent-none)
+  and passes other_parent_id. A 2nd+ spouse can be added via the always-additive +Pasangan / add-spouse
+  buttons. i18n choose_other_parent / unknown_parent (ID+EN).
+
+
 
