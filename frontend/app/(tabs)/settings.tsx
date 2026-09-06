@@ -227,6 +227,15 @@ export default function SettingsScreen() {
               </View>
               <Feather name="chevron-right" size={20} color={colors.muted} />
             </Pressable>
+            <View style={styles.divider} />
+            <Pressable style={styles.rowItem} onPress={() => router.push("/claim-branch")} testID="claim-branch-row">
+              <Feather name="git-branch" size={20} color={colors.onSurfaceSecondary} />
+              <View style={styles.rowTextWrap}>
+                <Text style={styles.rowLabel}>{t("claim_branch")}</Text>
+                <Text style={styles.rowDesc}>{t("claim_branch_desc")}</Text>
+              </View>
+              <Feather name="chevron-right" size={20} color={colors.muted} />
+            </Pressable>
             {isAdmin ? (
               <>
                 <View style={styles.divider} />

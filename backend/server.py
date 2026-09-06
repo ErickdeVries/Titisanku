@@ -199,6 +199,12 @@ class MemberRoleInput(BaseModel):
     role: str  # editor | viewer
 
 
+class ClaimBranchInput(BaseModel):
+    person_id: str
+    scope: str = "descendants"  # descendants | children | whole
+    name: Optional[str] = None
+
+
 async def resolve_tree(user, tree_id: Optional[str]):
     """Return (tree, role) for the given user. If tree_id is None, use the
     user's primary (first joined) tree. Raises 403 if not a member."""
@@ -791,6 +797,60 @@ class ChatInput(BaseModel):
     mentions: List[str] = []  # user_ids mentioned
 
 
+class GroupCreateInput(BaseModel):
+    name: str
+    member_ids: List[str] = []
+
+
+class DirectInput(BaseModel):
+    user_id: str
+
+
+async def is_user_deceased(tree_id: str, user) -> bool:
+    """A member whose linked person (matched by email) is deceased cannot chat."""
+    if not user.get("email"):
+        return False
+    p = await db.people.find_one({"tree_id": tree_id, "email": user["email"], "deleted_at": None}, {"_id": 0})
+    if not p:
+        return False
+    alive = p.get("is_alive")
+    if alive is None:
+        alive = not bool(p.get("death_date"))
+    return not alive
+
+
+async def resolve_room(tree, user, room_id: Optional[str]):
+    """Return a room dict {id,type,name,member_ids,tree_id,can_send} or raise."""
+    tid = tree["id"]
+    rows = await db.tree_members.find({"tree_id": tid}, {"_id": 0, "user_id": 1, "role": 1}).to_list(2000)
+    all_ids = [r["user_id"] for r in rows]
+    my_role = next((r["role"] for r in rows if r["user_id"] == user["user_id"]), None)
+    if my_role is None:
+        raise HTTPException(status_code=403, detail="Anda bukan anggota pohon ini")
+    if not room_id or room_id == tid:
+        return {"id": tid, "type": "family", "name": tree.get("name", "Keluarga"),
+                "member_ids": all_ids, "tree_id": tid, "can_send": my_role in ("admin", "editor")}
+    r = await db.chat_rooms.find_one({"id": room_id, "tree_id": tid}, {"_id": 0})
+    if not r:
+        raise HTTPException(status_code=404, detail="Ruang chat tidak ditemukan")
+    if user["user_id"] not in r.get("member_ids", []):
+        raise HTTPException(status_code=403, detail="Anda bukan peserta chat ini")
+    return {**r, "tree_id": tid, "can_send": True}
+
+
+async def notify_room(room, actor_id: str, ntype: str, title: str, body: str):
+    docs = []
+    for uid in room.get("member_ids", []):
+        if uid == actor_id:
+            continue
+        docs.append({
+            "id": str(uuid.uuid4()), "user_id": uid, "tree_id": room["tree_id"],
+            "type": ntype, "title": title, "body": body, "read": False, "created_at": now_utc(),
+        })
+    if docs:
+        await db.app_notifications.insert_many(docs)
+
+
 async def notify_tree(tree_id: str, actor_id: str, ntype: str, title: str, body: str):
     members = await db.tree_members.find(
         {"tree_id": tree_id, "role": {"$in": ["admin", "editor"]}}, {"_id": 0, "user_id": 1}
@@ -885,73 +945,161 @@ async def delete_note(note_id: str, user=Depends(get_current_user)):
     return {"ok": True}
 
 
-@api_router.get("/chat")
-async def get_chat(tree_id: Optional[str] = Query(None), user=Depends(get_current_user)):
+@api_router.get("/chat/rooms")
+async def list_chat_rooms(tree_id: Optional[str] = Query(None), user=Depends(get_current_user)):
     tree, role = await resolve_tree(user, tree_id)
     if not tree:
-        return {"room_id": None, "room_name": "Keluarga", "messages": [], "alive_count": 0, "total_count": 0, "members": [], "typing": []}
-    room = tree["id"]
-    room_name = tree.get("name", "Keluarga")
-    people = await db.people.find({"tree_id": room, "deleted_at": None}, {"_id": 0}).to_list(5000)
-    total_count = len(people)
-    alive_count = 0
-    email_person = {}
-    for p in people:
-        alive = p.get("is_alive")
-        if alive is None:
-            alive = not bool(p.get("death_date"))
-        if alive:
-            alive_count += 1
-        if p.get("email"):
-            email_person[p["email"]] = {"id": p["id"], "is_alive": alive}
-    member_rows = await db.tree_members.find({"tree_id": room}, {"_id": 0, "user_id": 1, "role": 1}).to_list(2000)
-    member_ids = [m["user_id"] for m in member_rows if m["role"] in ("admin", "editor")]
-    users_map = {u["user_id"]: u for u in await db.users.find({"user_id": {"$in": [m["user_id"] for m in member_rows]}}, {"_id": 0}).to_list(2000)}
-    members = [{"user_id": uid, "name": users_map.get(uid, {}).get("name", "?")} for uid in member_ids]
-    # read receipts: mark all others' messages as read by me
+        return {"rooms": []}
+    tid = tree["id"]
+    uid = user["user_id"]
+    users = {u["user_id"]: u for u in await db.users.find({}, {"_id": 0}).to_list(3000)}
+
+    async def enrich(room):
+        last = await db.family_chat.find_one(
+            {"room_id": room["id"], "deleted_at": None}, {"_id": 0}, sort=[("created_at", -1)],
+        )
+        unread = await db.family_chat.count_documents(
+            {"room_id": room["id"], "deleted_at": None, "sender_id": {"$ne": uid}, "read_by": {"$ne": uid}},
+        )
+        preview = ""
+        last_at = room.get("created_at")
+        if last:
+            sname = users.get(last["sender_id"], {}).get("name", "?")
+            body = last.get("message") or ("📷 Foto" if last.get("attachments") else "")
+            preview = f"{sname}: {body}" if room["type"] != "direct" else body
+            last_at = last.get("created_at")
+        return {
+            "id": room["id"], "type": room["type"], "name": room["name"],
+            "picture": room.get("picture"), "member_count": len(room.get("member_ids", [])),
+            "last_message": preview, "last_message_at": last_at, "unread": unread,
+        }
+
+    rooms = []
+    # Family room (virtual, id = tree_id)
+    fam_rows = await db.tree_members.find({"tree_id": tid}, {"_id": 0, "user_id": 1}).to_list(2000)
+    rooms.append(await enrich({
+        "id": tid, "type": "family", "name": tree.get("name", "Keluarga"),
+        "member_ids": [r["user_id"] for r in fam_rows], "created_at": tree.get("created_at"),
+    }))
+    # Custom groups + direct rooms the user belongs to
+    customs = await db.chat_rooms.find({"tree_id": tid, "member_ids": uid}, {"_id": 0}).to_list(1000)
+    for r in customs:
+        display = dict(r)
+        if r["type"] == "direct":
+            other = next((m for m in r.get("member_ids", []) if m != uid), None)
+            ou = users.get(other, {})
+            display["name"] = ou.get("name", "?")
+            display["picture"] = ou.get("picture")
+        rooms.append(await enrich(display))
+    rooms.sort(key=lambda x: (x["last_message_at"] is None, x["last_message_at"] or ""), reverse=True)
+    # keep family pinned on top
+    rooms.sort(key=lambda x: 0 if x["type"] == "family" else 1)
+    return {"rooms": _serialize(rooms)}
+
+
+@api_router.get("/chat/contacts")
+async def chat_contacts(tree_id: Optional[str] = Query(None), user=Depends(get_current_user)):
+    tree, role = await resolve_tree(user, tree_id)
+    if not tree:
+        return {"contacts": []}
+    rows = await db.tree_members.find({"tree_id": tree["id"]}, {"_id": 0, "user_id": 1, "role": 1}).to_list(2000)
+    users = {u["user_id"]: u for u in await db.users.find({"user_id": {"$in": [r["user_id"] for r in rows]}}, {"_id": 0}).to_list(2000)}
+    out = []
+    for r in rows:
+        if r["user_id"] == user["user_id"]:
+            continue
+        u = users.get(r["user_id"], {})
+        out.append({"user_id": r["user_id"], "name": u.get("name", "?"), "picture": u.get("picture"), "role": r["role"]})
+    return {"contacts": out}
+
+
+@api_router.post("/chat/group")
+async def create_group(body: GroupCreateInput, tree_id: Optional[str] = Query(None), user=Depends(get_current_user)):
+    tree, role = await resolve_tree(user, tree_id)
+    require_role_t(role, ["admin", "editor"])
+    name = (body.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Nama grup wajib diisi")
+    valid = {r["user_id"] for r in await db.tree_members.find({"tree_id": tree["id"]}, {"_id": 0, "user_id": 1}).to_list(2000)}
+    members = {user["user_id"]} | {m for m in body.member_ids if m in valid}
+    doc = {
+        "id": str(uuid.uuid4()), "tree_id": tree["id"], "type": "group", "name": name,
+        "member_ids": list(members), "created_by": user["user_id"], "created_at": now_utc(),
+    }
+    await db.chat_rooms.insert_one(doc)
+    return _serialize([{k: v for k, v in doc.items()}])[0]
+
+
+@api_router.post("/chat/direct")
+async def open_direct(body: DirectInput, tree_id: Optional[str] = Query(None), user=Depends(get_current_user)):
+    tree, role = await resolve_tree(user, tree_id)
+    other = body.user_id
+    if other == user["user_id"]:
+        raise HTTPException(status_code=400, detail="Tidak bisa chat dengan diri sendiri")
+    if not await db.tree_members.find_one({"tree_id": tree["id"], "user_id": other}):
+        raise HTTPException(status_code=404, detail="Anggota tidak ditemukan")
+    pair = sorted([user["user_id"], other])
+    dm_key = f"{tree['id']}:{pair[0]}:{pair[1]}"
+    existing = await db.chat_rooms.find_one({"dm_key": dm_key}, {"_id": 0})
+    if existing:
+        return _serialize([existing])[0]
+    doc = {
+        "id": str(uuid.uuid4()), "tree_id": tree["id"], "type": "direct", "name": "",
+        "member_ids": pair, "dm_key": dm_key, "created_by": user["user_id"], "created_at": now_utc(),
+    }
+    await db.chat_rooms.insert_one(doc)
+    return _serialize([doc])[0]
+
+
+@api_router.get("/chat")
+async def get_chat(tree_id: Optional[str] = Query(None), room_id: Optional[str] = Query(None), user=Depends(get_current_user)):
+    tree, role = await resolve_tree(user, tree_id)
+    if not tree:
+        return {"room_id": None, "room_name": "Keluarga", "room_type": "family", "messages": [], "members": [], "typing": [], "can_send": False}
+    room = await resolve_room(tree, user, room_id)
+    rid = room["id"]
+    # participant display names (for mentions)
+    users = {u["user_id"]: u for u in await db.users.find({}, {"_id": 0}).to_list(3000)}
+    members = [{"user_id": mid, "name": users.get(mid, {}).get("name", "?")} for mid in room.get("member_ids", [])]
+    room_name = room["name"]
+    if room["type"] == "direct":
+        other = next((m for m in room.get("member_ids", []) if m != user["user_id"]), None)
+        room_name = users.get(other, {}).get("name", "?")
+    # read receipts: mark others' messages read by me
     await db.family_chat.update_many(
-        {"room_id": room, "sender_id": {"$ne": user["user_id"]}, "read_by": {"$ne": user["user_id"]}, "deleted_at": None},
+        {"room_id": rid, "sender_id": {"$ne": user["user_id"]}, "read_by": {"$ne": user["user_id"]}, "deleted_at": None},
         {"$addToSet": {"read_by": user["user_id"]}},
     )
-    msgs = await db.family_chat.find({"room_id": room, "deleted_at": None}, {"_id": 0}).sort("created_at", 1).to_list(3000)
-    users = {u["user_id"]: u for u in await db.users.find({}, {"_id": 0}).to_list(2000)}
+    msgs = await db.family_chat.find({"room_id": rid, "deleted_at": None}, {"_id": 0}).sort("created_at", 1).to_list(3000)
     out = []
     for m in _serialize(msgs):
         s = users.get(m["sender_id"], {})
         m["sender_name"] = s.get("name", "?")
         m["sender_picture"] = s.get("picture")
-        match = email_person.get(s.get("email"))
-        m["sender_is_alive"] = match["is_alive"] if match else True
-        m["sender_person_id"] = match["id"] if match else None
         m["read_by"] = m.get("read_by", [])
         out.append(m)
     cutoff = now_utc() - timedelta(seconds=6)
     typing_names = []
-    async for d in db.chat_typing.find({"room_id": room, "user_id": {"$ne": user["user_id"]}}, {"_id": 0}):
+    async for d in db.chat_typing.find({"room_id": rid, "user_id": {"$ne": user["user_id"]}}, {"_id": 0}):
         upd = d.get("updated_at")
         if upd is not None and upd.tzinfo is None:
             upd = upd.replace(tzinfo=timezone.utc)
         if upd and upd > cutoff:
             typing_names.append(d.get("name", "?"))
     return {
-        "room_id": room,
-        "room_name": room_name,
-        "messages": out,
-        "alive_count": alive_count,
-        "total_count": total_count,
-        "members": members,
-        "typing": typing_names,
+        "room_id": rid, "room_name": room_name, "room_type": room["type"],
+        "messages": out, "members": members, "typing": typing_names,
+        "can_send": room.get("can_send", False),
     }
 
 
 @api_router.post("/chat/typing")
-async def chat_typing(tree_id: Optional[str] = Query(None), user=Depends(get_current_user)):
+async def chat_typing(tree_id: Optional[str] = Query(None), room_id: Optional[str] = Query(None), user=Depends(get_current_user)):
     tree, role = await resolve_tree(user, tree_id)
-    require_role_t(role, ["admin", "editor"])
-    room = tree["id"]
+    room = await resolve_room(tree, user, room_id)
     await db.chat_typing.update_one(
-        {"user_id": user["user_id"], "room_id": room},
-        {"$set": {"user_id": user["user_id"], "name": user["name"], "room_id": room, "updated_at": now_utc()}},
+        {"user_id": user["user_id"], "room_id": room["id"]},
+        {"$set": {"user_id": user["user_id"], "name": user["name"], "room_id": room["id"], "updated_at": now_utc()}},
         upsert=True,
     )
     return {"ok": True}
@@ -962,7 +1110,7 @@ async def delete_chat(msg_id: str, user=Depends(get_current_user)):
     m = await db.family_chat.find_one({"id": msg_id, "deleted_at": None}, {"_id": 0})
     if not m:
         raise HTTPException(status_code=404, detail="Message not found")
-    tree, role = await resolve_tree(user, m.get("room_id"))
+    tree, role = await resolve_tree(user, m.get("tree_id") or m.get("room_id"))
     if role != "admin" and m["sender_id"] != user["user_id"]:
         raise HTTPException(status_code=403, detail="Hanya pengirim atau admin yang bisa menghapus pesan")
     await db.family_chat.update_one({"id": msg_id}, {"$set": {"deleted_at": now_utc()}})
@@ -970,10 +1118,14 @@ async def delete_chat(msg_id: str, user=Depends(get_current_user)):
 
 
 @api_router.post("/chat")
-async def send_chat(body: ChatInput, tree_id: Optional[str] = Query(None), user=Depends(get_current_user)):
+async def send_chat(body: ChatInput, tree_id: Optional[str] = Query(None), room_id: Optional[str] = Query(None), user=Depends(get_current_user)):
     tree, role = await resolve_tree(user, tree_id)
-    require_role_t(role, ["admin", "editor"])
-    room = tree["id"]
+    room = await resolve_room(tree, user, room_id)
+    if not room.get("can_send"):
+        raise HTTPException(status_code=403, detail="Anda tidak dapat mengirim pesan di ruang ini")
+    if await is_user_deceased(tree["id"], user):
+        raise HTTPException(status_code=403, detail="Anggota yang telah meninggal tidak dapat mengirim pesan")
+    rid = room["id"]
     reply = None
     if body.reply_to:
         rmsg = await db.family_chat.find_one({"id": body.reply_to}, {"_id": 0})
@@ -989,8 +1141,8 @@ async def send_chat(body: ChatInput, tree_id: Optional[str] = Query(None), user=
         raise HTTPException(status_code=400, detail="Empty message")
     doc = {
         "id": str(uuid.uuid4()),
-        "room_id": room,
-        "tree_id": room,
+        "room_id": rid,
+        "tree_id": tree["id"],
         "sender_id": user["user_id"],
         "message": body.message or "",
         "attachments": body.attachments,
@@ -1001,7 +1153,9 @@ async def send_chat(body: ChatInput, tree_id: Optional[str] = Query(None), user=
         "deleted_at": None,
     }
     await db.family_chat.insert_one(doc)
-    await notify_tree(room, user["user_id"], "chat", "Pesan baru di Chat Keluarga", f"{user['name']}: {(body.message or 'Foto')[:60]}")
+    rname = room["name"] if room["type"] != "direct" else user["name"]
+    ntitle = "Pesan baru di Chat Keluarga" if room["type"] == "family" else f"Pesan baru: {rname}"
+    await notify_room(room, user["user_id"], "chat", ntitle, f"{user['name']}: {(body.message or 'Foto')[:60]}")
     # mention notifications
     mention_docs = []
     for uid in set(body.mentions):
@@ -1010,9 +1164,9 @@ async def send_chat(body: ChatInput, tree_id: Optional[str] = Query(None), user=
         mention_docs.append({
             "id": str(uuid.uuid4()),
             "user_id": uid,
-            "tree_id": room,
+            "tree_id": tree["id"],
             "type": "mention",
-            "title": "Anda disebut di Chat Keluarga",
+            "title": "Anda disebut di Chat",
             "body": f"{user['name']} menyebut Anda: {(body.message or '')[:60]}",
             "read": False,
             "created_at": now_utc(),
@@ -1116,6 +1270,104 @@ async def create_tree(body: TreeCreateInput, user=Depends(get_current_user)):
     tree = await create_tree_for_user(user, name)
     return {**tree, "role": "admin", "person_count": 1, "member_count": 1,
             "editor_count": 0, "photo_count": 0, "plan_limits": plan_limits("free"), "limit": 50}
+
+
+@api_router.post("/trees/{tid}/claim-branch")
+async def claim_branch(tid: str, body: ClaimBranchInput, user=Depends(get_current_user)):
+    """Copy a person (and, per scope, their family) into a NEW tree owned by the
+    caller. The source tree stays intact. New tree is always plan=free."""
+    tree, role = await resolve_tree(user, tid)  # any member may claim
+    scope = body.scope if body.scope in ("descendants", "children", "whole") else "descendants"
+
+    people = await db.people.find({"tree_id": tid, "deleted_at": None}, {"_id": 0}).to_list(5000)
+    relations = await db.relations.find({"tree_id": tid, "deleted_at": None}, {"_id": 0}).to_list(10000)
+    pset = {p["id"] for p in people}
+    if body.person_id not in pset:
+        raise HTTPException(status_code=404, detail="Orang tidak ditemukan di pohon ini")
+
+    # children map from parent relations (person_id = parent, related_person_id = child)
+    children_of: dict = {}
+    spouses_of: dict = {}
+    for r in relations:
+        if r["relation_type"] in ("parent", "adopted_child"):
+            children_of.setdefault(r["person_id"], []).append(r["related_person_id"])
+        elif r["relation_type"] in ("spouse", "divorced"):
+            spouses_of.setdefault(r["person_id"], set()).add(r["related_person_id"])
+            spouses_of.setdefault(r["related_person_id"], set()).add(r["person_id"])
+
+    selected: set = set()
+    if scope == "whole":
+        selected = set(pset)
+    else:
+        # start with the person + (all descendants OR direct children)
+        selected.add(body.person_id)
+        if scope == "descendants":
+            stack = [body.person_id]
+            while stack:
+                cur = stack.pop()
+                for ch in children_of.get(cur, []):
+                    if ch not in selected:
+                        selected.add(ch)
+                        stack.append(ch)
+        else:  # children
+            for ch in children_of.get(body.person_id, []):
+                selected.add(ch)
+        # include spouses of everyone selected so couples stay intact
+        for pid in list(selected):
+            for sp in spouses_of.get(pid, set()):
+                selected.add(sp)
+
+    # Create the new tree (free) owned by the caller, without an auto root person.
+    default_name = next((p["name"] for p in people if p["id"] == body.person_id), user["name"])
+    new_name = (body.name or "").strip() or f"Cabang {default_name}"
+    new_tree = await create_tree_for_user(user, new_name, make_root=False)
+    new_tid = new_tree["id"]
+
+    # Copy the selected people with fresh ids.
+    id_map: dict = {}
+    new_people = []
+    for p in people:
+        if p["id"] not in selected:
+            continue
+        nid = str(uuid.uuid4())
+        id_map[p["id"]] = nid
+        doc = {**p}
+        doc.pop("_id", None)
+        doc["id"] = nid
+        doc["tree_id"] = new_tid
+        doc["is_root"] = p["id"] == body.person_id
+        doc["created_by"] = user["user_id"]
+        doc["created_at"] = now_utc()
+        doc["deleted_at"] = None
+        new_people.append(doc)
+    if new_people:
+        await db.people.insert_many(new_people)
+
+    # Copy relations where BOTH endpoints are in the selected set, remapped.
+    new_rels = []
+    for r in relations:
+        if r["person_id"] in id_map and r["related_person_id"] in id_map:
+            doc = {**r}
+            doc.pop("_id", None)
+            doc["id"] = str(uuid.uuid4())
+            doc["person_id"] = id_map[r["person_id"]]
+            doc["related_person_id"] = id_map[r["related_person_id"]]
+            doc["tree_id"] = new_tid
+            doc["deleted_at"] = None
+            doc["created_at"] = now_utc()
+            new_rels.append(doc)
+    if new_rels:
+        await db.relations.insert_many(new_rels)
+
+    root_new_id = id_map.get(body.person_id)
+    await db.trees.update_one({"id": new_tid}, {"$set": {"root_person_id": root_new_id}})
+
+    count = len(new_people)
+    return {
+        **new_tree, "root_person_id": root_new_id, "role": "admin",
+        "person_count": count, "member_count": 1, "editor_count": 0, "photo_count": 0,
+        "plan_limits": plan_limits("free"), "limit": FREE_PERSON_LIMIT, "copied": count,
+    }
 
 
 @api_router.get("/trees/search")

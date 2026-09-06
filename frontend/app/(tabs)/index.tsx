@@ -1,11 +1,11 @@
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useState, useEffect, useRef } from "react";
 import { View, Text, Pressable, ActivityIndicator, useWindowDimensions, Modal } from "react-native";
 import { Image } from "expo-image";
 import { useRouter } from "expo-router";
 import { useQuery } from "@tanstack/react-query";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
-import Animated, { useSharedValue, useAnimatedStyle, withTiming, runOnJS } from "react-native-reanimated";
+import Animated, { useSharedValue, useAnimatedStyle, withTiming, withDelay } from "react-native-reanimated";
 import Svg, { Line } from "react-native-svg";
 import Feather from "@react-native-vector-icons/feather";
 import { fonts, makeStyles, useTheme } from "@/src/theme";
@@ -95,16 +95,25 @@ const useStyles = makeStyles((c) => ({
   stepVal: { fontFamily: fonts.semibold, fontSize: 16, color: c.onSurface, minWidth: 24, textAlign: "center" },
 }));
 
-function GrowNode({ x, y, children }: { x: number; y: number; children: any }) {
+function GrowNode({
+  x, y, isNew, originDX = 0, originDY = 0, children,
+}: { x: number; y: number; isNew?: boolean; originDX?: number; originDY?: number; children: any }) {
   const styles = useStyles();
-  const p = useSharedValue(0);
+  const p = useSharedValue(isNew ? 0 : 1);
   useEffect(() => {
-    p.value = withTiming(1, { duration: 340 });
+    if (isNew) {
+      p.value = 0;
+      p.value = withDelay(60, withTiming(1, { duration: 460 }));
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const aStyle = useAnimatedStyle(() => ({
-    opacity: p.value,
-    transform: [{ scale: 0.55 + 0.45 * p.value }, { translateY: (1 - p.value) * -10 }],
+    opacity: 0.25 + 0.75 * p.value,
+    transform: [
+      { translateX: originDX * (1 - p.value) },
+      { translateY: originDY * (1 - p.value) },
+      { scale: 0.35 + 0.65 * p.value },
+    ],
   }));
   return <Animated.View style={[styles.nodeWrap, { left: x, top: y }, aStyle]}>{children}</Animated.View>;
 }
@@ -171,7 +180,7 @@ export default function TreeScreen() {
   const { width: screenW } = useWindowDimensions();
 
   const { data, isLoading } = useQuery({ queryKey: ["tree"], queryFn: getTree });
-  const { activeTree, pendingFocusId, setPendingFocus } = useTree();
+  const { activeTree, activeTreeId, pendingFocusId, setPendingFocus } = useTree();
   const [selected, setSelected] = useState<string | null>(null);
   const [focusId, setFocusId] = useState<string | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
@@ -293,6 +302,42 @@ export default function TreeScreen() {
   }));
 
   const selNode = layout.nodes.find((n) => n.id === selected);
+
+  // Detect newly-added nodes (within the same tree/focus/filter context) so we can
+  // animate them "growing" from their parent's position on the canvas.
+  const animRef = useRef<{ key: string; ids: Set<string> } | null>(null);
+  const lastTapRef = useRef<{ id: string | null; time: number }>({ id: null, time: 0 });
+  const ctxKey = `${activeTreeId}|${activeFocus}|${hideSiblings}|${filterUp}|${filterDown}`;
+  const newIds = useMemo(() => {
+    const cur = new Set(layout.nodes.map((n) => n.id));
+    const prev = animRef.current;
+    let result = new Set<string>();
+    if (prev && prev.key === ctxKey) {
+      result = new Set([...cur].filter((id) => !prev.ids.has(id)));
+    }
+    animRef.current = { key: ctxKey, ids: cur };
+    return result;
+  }, [layout, ctxKey]);
+
+  const originFor = (id: string): { dx: number; dy: number } | null => {
+    if (!newIds.has(id)) return null;
+    const self = layout.nodes.find((n) => n.id === id);
+    if (!self) return null;
+    const rels = data?.relations ?? [];
+    // Prefer the parent (parent/adopted_child relation where this node is the child).
+    const ordered = [...rels].sort((a, b) => {
+      const ap = (a.relation_type === "parent" || a.relation_type === "adopted_child") && a.related_person_id === id ? 0 : 1;
+      const bp = (b.relation_type === "parent" || b.relation_type === "adopted_child") && b.related_person_id === id ? 0 : 1;
+      return ap - bp;
+    });
+    for (const r of ordered) {
+      const other = r.person_id === id ? r.related_person_id : r.related_person_id === id ? r.person_id : null;
+      if (!other || newIds.has(other)) continue;
+      const on = layout.nodes.find((n) => n.id === other);
+      if (on) return { dx: on.x - self.x, dy: on.y - self.y };
+    }
+    return null;
+  };
 
   const openAdd = (direction: string) => {
     if (!selNode) return;
@@ -475,18 +520,38 @@ export default function TreeScreen() {
                     })}
                   </Svg>
 
-                  {layout.nodes.map((n) => (
-                    <GrowNode key={n.id} x={n.x - 48} y={n.y - NODE_R - 3}>
-                      <PersonNode
-                        person={n.person}
-                        selected={selected === n.id}
-                        onPress={() => {
-                          if (selected === n.id) router.push(`/person/${n.id}`);
-                          else setSelected(n.id);
-                        }}
-                      />
-                    </GrowNode>
-                  ))}
+                  {layout.nodes.map((n) => {
+                    const origin = originFor(n.id);
+                    return (
+                      <GrowNode
+                        key={n.id}
+                        x={n.x - 48}
+                        y={n.y - NODE_R - 3}
+                        isNew={newIds.has(n.id)}
+                        originDX={origin?.dx ?? 0}
+                        originDY={origin?.dy ?? 0}
+                      >
+                        <PersonNode
+                          person={n.person}
+                          selected={selected === n.id}
+                          onPress={() => {
+                            const now = Date.now();
+                            const isDouble = lastTapRef.current.id === n.id && now - lastTapRef.current.time < 320;
+                            lastTapRef.current = { id: n.id, time: now };
+                            if (isDouble) {
+                              // Double-tap: jump into this person's direct-line (POV garis lurus).
+                              setHideSiblings(true);
+                              setFocusId(n.id);
+                              setSelected(null);
+                              return;
+                            }
+                            if (selected === n.id) router.push(`/person/${n.id}`);
+                            else setSelected(n.id);
+                          }}
+                        />
+                      </GrowNode>
+                    );
+                  })}
 
                   {selNode ? (
                     <AddButton testID="focus-node" x={selNode.x - 62} y={selNode.y - 17} bg={colors.surfaceInverse} icon="crosshair" onPress={doFocus} />

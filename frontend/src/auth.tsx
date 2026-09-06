@@ -135,7 +135,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const redirectUrl = Platform.OS === "web" ? window.location.origin + "/" : Linking.createURL("");
     const authUrl = `https://auth.emergentagent.com/?redirect=${encodeURIComponent(redirectUrl)}`;
     if (Platform.OS === "web") {
-      window.location.href = authUrl;
+      // Use replace (not href) so the auth URL is NOT kept in the browser back-history.
+      // Otherwise pressing Back returns to a consumed auth page -> "Invalid state parameter".
+      window.location.replace(authUrl);
       return;
     }
     setSigningIn(true);

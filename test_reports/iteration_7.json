@@ -1,0 +1,31 @@
+{
+  "summary": "Iteration-7 fully validated POST /api/trees/{tid}/claim-branch and re-confirmed the Free-plan 50-person regression. Authored /app/backend/tests/test_claim_branch.py — 12 tests across 5 classes: (a) scope='descendants' returns a new free-plan tree owned by caller with 7 people (G + G_sp + C1 + C1_sp + C2 + GC1 + GC2), root_person_id equals the claimed person's NEW id, is_root=True on that doc only, response fields (role='admin', plan='free', copied==person_count) all correct; (b) source tree left intact (people count 8, relations count 8 unchanged); (c) all 8 source relations remapped with fresh ids + new tree_id and no references to old ids; (d) caller inserted as admin in tree_members and the new tree appears in GET /api/trees; GET /api/tree?tree_id=<new> returns 7 people; (e) scope='children' returns exactly 5 (G, G_sp, C1, C1_sp, C2) — grandchildren EXCLUDED — with 6 relations (4 parent + 2 spouse; grandchildren parent-rels correctly dropped as one endpoint is outside the copied set); (f) scope='whole' duplicates full source (8 people incl. auto-root Z, all 8 relations copied, all new ids, claimed person is the sole is_root=True); (g) 404 for unknown person_id and 403 for a non-member of the source tree; (h) Regression: bulk-seeded a free tree to exactly 50 people, POST /api/people/add-relative returns HTTP 402 with detail starting 'LIMIT_REACHED'. Result: 12/12 PASSED (100%). Post-run cleanup verified: 0 TEST_CLAIM_* users/people/trees left; real users (Erick De vries, MST) and their 22 people / 2 trees untouched — never used delete_many({}).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": [], "react_native_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_claim_branch.py",
+    "/app/test_reports/pytest/iter7_claim_branch_results.xml"
+  ],
+  "action_items": [
+    "No functional bugs found in claim-branch or 50-person regression. Endpoint is ready for frontend wiring."
+  ],
+  "critical_code_review_comments": [
+    "server.py:1131 claim_branch uses resolve_tree(user, tid) which enforces membership — any member (admin/editor/viewer) may claim a branch. If the intent is to restrict this to admin/editor only, add require_role_t(role, ['admin','editor']). Currently a viewer could clone a tree they viewed — spec doesn't forbid this so tests don't assert against it, but flagging for product clarification.",
+    "server.py:1132 scope defaulting: `body.scope if body.scope in (...) else 'descendants'` silently coerces unknown scopes. Consider raising 400 for invalid scope for stricter API surface (breaks nothing today).",
+    "server.py:1134-1135 loads ALL people (limit=5000) and relations (limit=10000) into memory per call. Fine for MVP but for very large public trees this could OOM. Consider a projection query and streaming, or restrict to visible subgraph.",
+    "server.py:1173 default_name falls back to user['name'] when the person isn't in `people` — but a prior 404 check on line 1137 already guards this. The fallback is dead code; safe to remove for clarity.",
+    "server.py:1190 doc['is_root'] = (p['id'] == body.person_id). Confirmed correct for 'descendants'/'children'. For 'whole', the auto-root Z of the source is copied with its original is_root=True, but that value is overwritten to False (since Z != body.person_id), leaving exactly ONE root (the claimed person). Verified by test_claim_whole_duplicates_full_tree.",
+    "server.py:1215 root_new_id may be None if the claimed person somehow wasn't copied — impossible today because the 404 guard on line 1137 runs before the id_map is built. Safe as-is.",
+    "server.py:1218 return dict spreads `new_tree` (which lacks role/person_count etc.) then adds them — matches shape of POST /trees. `copied` is a new-but-redundant field (== person_count). OK, keep for frontend convenience.",
+    "server.py:522 add-relative uses `count >= lim_people` — inclusive at limit, so 50 people => 51st blocked. Verified with a real 50-person tree returning 402. Correct."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_claim_branch.py (NEW)"
+  ],
+  "success_rate": {"backend": "100% (12/12)", "frontend": "N/A — skipped per request"},
+  "seed_data_creation": "test_claim_branch.py seeds 2 synthetic users (TEST_CLAIM_A owner, TEST_CLAIM_B outsider) + sessions directly in Mongo, creates the source tree via POST /api/trees, then directly inserts 7 family people (G, G_sp, C1, C1_sp, C2, GC1, GC2) + 8 relations (6 parent + 2 spouse). The Free-plan test additionally creates a 2nd tree and bulk-inserts 49 more people. All ids tracked in a per-module CREATED registry and removed in the module-scope teardown (people/relations/tree_members/trees/user_sessions/users). Post-run mongo scan confirmed 0 leftover TEST_CLAIM_* docs and real users' data (Erick De vries, MST) is untouched.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Re-run: `cd /app/backend/tests && pytest test_claim_branch.py -n 0 -v` (requires -n 0 due to module-scope STATE + shared MongoDB connection). Uses BASE_URL from EXPO_PUBLIC_BACKEND_URL and Bearer session tokens seeded directly in user_sessions. NEVER runs delete_many({}) — only removes tracked ids. Endpoints verified: POST /api/trees, POST /api/trees/{tid}/claim-branch (all 3 scopes + 404 + 403), GET /api/trees, GET /api/tree?tree_id=, POST /api/people/add-relative (402 LIMIT_REACHED at 50). Family shape encoded in the family_tree fixture docstring.",
+  "rca_of_issue": "N/A — verification-only iteration; claim-branch endpoint and 50-person Free-plan limit both behave per spec."
+}

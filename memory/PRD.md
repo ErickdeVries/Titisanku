@@ -281,3 +281,34 @@ JSON backup, and email collaboration invites. Google login; first user = admin +
 - app.json: NSCameraUsageDescription (iOS), CAMERA (Android), expo-camera plugin.
 - Backend verified by testing_agent: 27/27 PASS. i18n keys welcome_*/join_*/tab_*/camera_* (ID+EN) added.
 - PENDING next: Tahap 5 tree limit enforcement UI (Free=50 upgrade modal + CLAIM CABANG forces free plan).
+
+## Iteration 11 — Node grow animation + Limit gate + Klaim Cabang (2026-06)
+- ANIMASI NODE: index.tsx GrowNode now animates ONLY newly-added nodes (tracked via animRef ctxKey =
+  tree|focus|hideSiblings|up|down). New node grows/translates FROM its parent node position (originFor()
+  finds parent/neighbor that is already positioned). Existing nodes stay static; no mass-animation on load,
+  tree switch, or filter toggle.
+- BATAS POHON: add-relative.tsx onSubmit now catches 402/LIMIT_REACHED -> UpgradeModal (covers canvas,
+  person-detail quick-add, and Add tab since all route through add-relative). index openAdd keeps its
+  pre-check. Verified backend still returns 402 LIMIT_REACHED at 50 people (Free).
+- KLAIM CABANG: NEW POST /api/trees/{tid}/claim-branch (any member). Copies a person into a NEW free tree
+  owned by caller; source untouched. scope=descendants|children|whole; includes spouses of selected; relations
+  remapped (both endpoints in set). Claimed person = is_root of new tree. api.ts claimBranch(). New screen
+  app/claim-branch.tsx (person picker + 3-option scope radio + optional name). Entry points: person detail
+  Klaim Cabang button + Profil/Setting row (all members). Backend verified 12/12 PASS.
+- i18n keys claim_*/scope_* (ID+EN). Frontend behind Google OAuth = user manual test.
+
+## Iteration 12 — WhatsApp-style multi-room Chat + double-tap POV (2026-06)
+- CHAT REDESIGN: single family group -> multi-conversation. New collection chat_rooms {id,tree_id,type
+  (family|group|direct),name,member_ids,dm_key?,created_by,created_at}. Family room is virtual (id==tree_id)
+  so existing family_chat messages (room_id==tree_id) keep working. Messages stay in family_chat with room_id.
+  - Endpoints: GET /chat/rooms (list convos: family pinned + groups/DMs, last msg + unread), GET /chat/contacts,
+    POST /chat/group (admin/editor only), POST /chat/direct (idempotent via dm_key). get_chat & send_chat & typing
+    now take ?room_id=. Helpers resolve_room / is_user_deceased / notify_room.
+  - RULES (user): DM+groups; only admin/editor create groups; NO alive filter -> a member whose linked person
+    (by email) is deceased CANNOT send (403). Removed the old alive-only toggle UI entirely.
+  - Frontend: app/(tabs)/chat.tsx = WhatsApp conversation LIST (avatar, last msg, time, unread badge, New Chat).
+    app/chat/[roomId].tsx = conversation screen (room-scoped, mentions only for non-direct). app/chat/new.tsx =
+    contacts list (tap -> DM) + Buat Grup (name + multi-select, admin/editor). Routes registered in _layout.
+  - Backend verified by testing_agent: 26/26 PASS. Fixed delete_chat to resolve by tree_id (group/DM delete).
+- CANVAS: double-tap a node -> jump into that person direct-line POV (setFocusId + hideSiblings=true).
+  Single tap still selects (add buttons); deliberate 2nd tap (>320ms) still opens detail. Nothing removed.

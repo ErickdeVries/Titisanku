@@ -77,6 +77,9 @@ function RootNav() {
       <Stack.Screen name="trees" options={{ presentation: "modal" }} />
       <Stack.Screen name="subscription" />
       <Stack.Screen name="members" />
+      <Stack.Screen name="claim-branch" />
+      <Stack.Screen name="chat/[roomId]" />
+      <Stack.Screen name="chat/new" />
       <Stack.Screen name="explorer/[id]" />
       <Stack.Screen name="invite/[token]" />
     </Stack>

@@ -7,7 +7,9 @@ import Feather from "@react-native-vector-icons/feather";
 import { fonts, makeStyles, useTheme } from "@/src/theme";
 import { addRelative, getTree } from "@/src/api";
 import { useI18n } from "@/src/i18n";
+import { useTree } from "@/src/tree-context";
 import { PersonForm, PersonFormValue } from "@/src/components/PersonForm";
+import { UpgradeModal } from "@/src/components/UpgradeModal";
 
 const useStyles = makeStyles((c) => ({
   root: { flex: 1, backgroundColor: c.surface },
@@ -35,6 +37,8 @@ export default function AddRelative() {
 
   const [submitting, setSubmitting] = useState(false);
   const [otherParent, setOtherParent] = useState<string | null>(null);
+  const [upgradeOpen, setUpgradeOpen] = useState(false);
+  const { activeTree } = useTree();
 
   const isChild = direction === "child";
   const { data: tree } = useQuery({ queryKey: ["tree"], queryFn: getTree, enabled: isChild });
@@ -89,9 +93,12 @@ export default function AddRelative() {
       });
       await qc.invalidateQueries({ queryKey: ["tree"] });
       router.back();
-    } catch (e) {
+    } catch (e: any) {
       console.log("add relative error", e);
       setSubmitting(false);
+      if (e?.status === 402 || (typeof e?.message === "string" && e.message.startsWith("LIMIT_REACHED"))) {
+        setUpgradeOpen(true);
+      }
     }
   };
 
@@ -141,6 +148,11 @@ export default function AddRelative() {
         submitLabel={t("save")}
         submitting={submitting}
         onSubmit={onSubmit}
+      />
+      <UpgradeModal
+        visible={upgradeOpen}
+        onClose={() => { setUpgradeOpen(false); router.back(); }}
+        limit={activeTree?.limit}
       />
     </View>
   );

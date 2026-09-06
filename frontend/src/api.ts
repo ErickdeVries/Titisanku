@@ -124,6 +124,16 @@ export const getTree = (): Promise<{
 export const listTrees = (): Promise<Tree[]> => apiFetch("/trees");
 export const createTree = (name: string): Promise<Tree> =>
   apiFetch("/trees", { method: "POST", body: JSON.stringify({ name }) });
+export const claimBranch = (
+  tid: string,
+  person_id: string,
+  scope: "descendants" | "children" | "whole",
+  name?: string,
+): Promise<Tree & { copied: number }> =>
+  apiFetch(`/trees/${tid}/claim-branch?tree_id=${tid}`, {
+    method: "POST",
+    body: JSON.stringify({ person_id, scope, name }),
+  });
 export const upgradeTree = (tid: string, plan: "pro" | "family" = "pro") =>
   apiFetch(`/trees/${tid}/upgrade?tree_id=${tid}`, { method: "POST", body: JSON.stringify({ plan }) });
 export const getMembers = (tid: string): Promise<{ members: TreeMember[]; role: string; owner_id: string }> =>
@@ -208,11 +218,34 @@ export async function addPersonFile(personId: string, uri: string): Promise<any>
 }
 
 // ---- Family chat ----
-export const getChat = () => apiFetch("/chat");
-export const sendChat = (payload: { message?: string; attachments?: string[]; reply_to?: string | null; mentions?: string[] }) =>
-  apiFetch("/chat", { method: "POST", body: JSON.stringify(payload) });
+export type ChatRoom = {
+  id: string;
+  type: "family" | "group" | "direct";
+  name: string;
+  picture?: string | null;
+  member_count: number;
+  last_message: string;
+  last_message_at?: string | null;
+  unread: number;
+};
+export type ChatContact = { user_id: string; name: string; picture?: string | null; role: string };
+
+export const listChatRooms = (): Promise<{ rooms: ChatRoom[] }> => apiFetch("/chat/rooms");
+export const chatContacts = (): Promise<{ contacts: ChatContact[] }> => apiFetch("/chat/contacts");
+export const createGroup = (name: string, member_ids: string[]): Promise<ChatRoom> =>
+  apiFetch("/chat/group", { method: "POST", body: JSON.stringify({ name, member_ids }) });
+export const openDirect = (user_id: string): Promise<ChatRoom> =>
+  apiFetch("/chat/direct", { method: "POST", body: JSON.stringify({ user_id }) });
+
+export const getChat = (roomId?: string) =>
+  apiFetch(`/chat${roomId ? `?room_id=${encodeURIComponent(roomId)}` : ""}`);
+export const sendChat = (
+  payload: { message?: string; attachments?: string[]; reply_to?: string | null; mentions?: string[] },
+  roomId?: string,
+) => apiFetch(`/chat${roomId ? `?room_id=${encodeURIComponent(roomId)}` : ""}`, { method: "POST", body: JSON.stringify(payload) });
 export const deleteChat = (msgId: string) => apiFetch(`/chat/${msgId}`, { method: "DELETE" });
-export const setTyping = () => apiFetch("/chat/typing", { method: "POST" });
+export const setTyping = (roomId?: string) =>
+  apiFetch(`/chat/typing${roomId ? `?room_id=${encodeURIComponent(roomId)}` : ""}`, { method: "POST" });
 
 // ---- Notifications ----
 export const getNotifications = () => apiFetch("/notifications");

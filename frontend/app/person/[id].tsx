@@ -33,6 +33,8 @@ const useStyles = makeStyles((c) => ({
   quickRow: { flexDirection: "row", justifyContent: "center", gap: 10, paddingHorizontal: 20, marginBottom: 8, flexWrap: "wrap" },
   centerBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, alignSelf: "center", backgroundColor: c.brandSecondary, paddingHorizontal: 18, paddingVertical: 10, borderRadius: 999, marginBottom: 16 },
   centerBtnText: { fontFamily: fonts.semibold, fontSize: 14, color: c.onBrandSecondary },
+  claimBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, alignSelf: "center", borderWidth: 1.5, borderColor: c.brandSecondary, paddingHorizontal: 18, paddingVertical: 9, borderRadius: 999, marginTop: -6, marginBottom: 16 },
+  claimBtnText: { fontFamily: fonts.semibold, fontSize: 13, color: c.brandSecondary },
   quickBtn: { alignItems: "center", gap: 6, width: 72 },
   quickIcon: { width: 48, height: 48, borderRadius: 999, alignItems: "center", justifyContent: "center" },
   quickCheck: { position: "absolute", bottom: -2, right: -2, width: 18, height: 18, borderRadius: 999, backgroundColor: "#2E9E6B", borderWidth: 2, borderColor: "#FFFBF0", alignItems: "center", justifyContent: "center" },
@@ -442,6 +444,15 @@ export default function PersonDetail() {
           <Pressable style={styles.centerBtn} onPress={makeCenter} testID="set-as-root">
             <Feather name="git-merge" size={16} color={colors.onBrandSecondary} />
             <Text style={styles.centerBtnText}>{t("set_as_root")}</Text>
+          </Pressable>
+
+          <Pressable
+            style={styles.claimBtn}
+            onPress={() => router.push(`/claim-branch?person_id=${id}&person_name=${encodeURIComponent(person.name)}`)}
+            testID="claim-branch-btn"
+          >
+            <Feather name="git-branch" size={15} color={colors.brandSecondary} />
+            <Text style={styles.claimBtnText}>{t("claim_branch")}</Text>
           </Pressable>
 
           {canEdit ? (
