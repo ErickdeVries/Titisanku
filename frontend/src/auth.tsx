@@ -76,7 +76,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const res = await authSession(sessionId);
       await storeToken(res.session_token);
       setToken(res.session_token);
-      setUser(res.user);
+      // Fetch the full profile (includes is_superadmin) rather than the raw
+      // session user, so superadmin-only UI shows right after first login.
+      try {
+        const me = await getMe();
+        setUser(me);
+      } catch {
+        setUser(res.user);
+      }
     } catch (e) {
       console.log("auth exchange error", e);
     } finally {

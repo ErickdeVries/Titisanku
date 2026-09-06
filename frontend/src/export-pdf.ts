@@ -52,8 +52,6 @@ function buildTreeSvg(
   const maxY = Math.max(...nodes.map((n) => n.y)) + 60;
   const w = Math.max(maxX - minX, 200);
   const h = Math.max(maxY - minY, 200);
-  const dispW = 760;
-  const dispH = Math.max(Math.round((dispW * h) / w), 160);
   const svgEdges = full.edges
     .map((e) => {
       const inV = e.y1 >= minY && e.y2 <= maxY;
@@ -73,7 +71,8 @@ function buildTreeSvg(
         <text x="${cx}" y="${cy + NODE_R / 2 + 16}" font-size="11" fill="#0F172A" text-anchor="middle">${esc(n.person.name)}</text>`;
     })
     .join("");
-  const tag = `<svg width="${dispW}" height="${dispH}" viewBox="0 0 ${w} ${h}" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">${svgEdges}${svgNodes}</svg>`;
+  // Responsive SVG: scales to fit its container (sized in mm via CSS) while keeping aspect ratio.
+  const tag = `<svg class="treesvg" viewBox="0 0 ${w} ${h}" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">${svgEdges}${svgNodes}</svg>`;
   return { tag, nodes };
 }
 
@@ -124,29 +123,37 @@ export async function exportTreePdf(
     )
     .join("");
 
-  const html = `<html><head><meta name="viewport" content="width=device-width"/>
+  const html = `<html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width"/>
     <style>
-      body{font-family:-apple-system,Helvetica,Arial;padding:24px;color:#0F172A}
+      @page{size:A4 portrait;margin:14mm}
+      *{box-sizing:border-box}
+      body{font-family:-apple-system,Helvetica,Arial;color:#0F172A;margin:0}
       h1{font-size:22px;margin:0 0 4px}
-      .sub{color:#64748B;font-size:13px;margin-bottom:20px}
-      .tree{border:1px solid #E2E8F0;border-radius:12px;padding:12px;margin-bottom:24px;overflow:hidden}
+      h3{font-size:16px;margin:0 0 8px}
+      .sub{color:#64748B;font-size:13px;margin-bottom:16px}
+      .tree{border:1px solid #E2E8F0;border-radius:12px;padding:10px;margin-bottom:20px;text-align:center;page-break-inside:avoid}
+      .treesvg{width:100%;height:150mm;display:block}
+      .datasec{page-break-inside:avoid}
       table{width:100%;border-collapse:collapse;font-size:12px}
       th,td{border:1px solid #E2E8F0;padding:6px 8px;text-align:left}
       th{background:#F8FAFC}
+      tr{page-break-inside:avoid}
       .wm{position:fixed;top:0;left:0;width:100%;height:100%;z-index:-1;
           background:repeating-linear-gradient(-45deg,transparent,transparent 120px,rgba(212,175,55,0.10) 120px,rgba(212,175,55,0.10) 240px);}
-      .wmtxt{position:fixed;bottom:16px;right:16px;color:#D4AF37;font-size:11px;opacity:0.8}
+      .wmtxt{position:fixed;bottom:6mm;right:8mm;color:#D4AF37;font-size:10px;opacity:0.8}
     </style></head>
     <body>
       ${watermark ? '<div class="wm"></div><div class="wmtxt">Dibuat dengan KETURUNANKU · Paket Gratis</div>' : ""}
       <h1>${esc(appName)}</h1>
       <div class="sub">Pohon Keluarga · ${genUp > 20 ? "Semua leluhur" : `${genUp} generasi ke atas`} · ${genDown > 20 ? "semua keturunan" : `${genDown} generasi ke bawah`} · ${nodes.length} anggota</div>
       <div class="tree">${svgTag}</div>
-      <h3>Data Anggota</h3>
-      <table>
-        <tr><th>Nama</th><th>JK</th><th>Lahir</th><th>Tempat</th><th>Pekerjaan</th><th>Wafat</th><th>Gen</th></tr>
-        ${rows}
-      </table>
+      <div class="datasec">
+        <h3>Data Anggota</h3>
+        <table>
+          <tr><th>Nama</th><th>JK</th><th>Lahir</th><th>Tempat</th><th>Pekerjaan</th><th>Wafat</th><th>Gen</th></tr>
+          ${rows}
+        </table>
+      </div>
     </body></html>`;
 
   return outputPdf(html, "Export PDF");
@@ -196,20 +203,23 @@ export async function exportTreeBook(
     })
     .join("");
 
-  const html = `<html><head><meta name="viewport" content="width=device-width"/>
+  const html = `<html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width"/>
     <style>
+      @page{size:A4 portrait;margin:14mm}
       *{box-sizing:border-box}
       body{font-family:Georgia,'Times New Roman',serif;color:#1F2A44;margin:0}
-      .page{page-break-after:always;padding:48px 40px;min-height:92vh}
+      .page{page-break-after:always}
       .cover{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;
-             background:linear-gradient(160deg,#FFFBF0,#F3EAD6);}
+             min-height:250mm;background:linear-gradient(160deg,#FFFBF0,#F3EAD6);}
       .cover .crest{font-size:64px;margin-bottom:12px}
       .cover h1{font-size:40px;margin:0 0 8px;letter-spacing:1px}
       .cover .tname{font-size:24px;color:#8A6D2F;margin:0 0 24px}
       .cover .meta{color:#64748B;font-size:14px}
       .cover .rule{width:120px;height:3px;background:#D4AF37;margin:20px 0;border-radius:2px}
       .treepage h2{font-size:22px;text-align:center;margin:0 0 16px}
-      .tree{border:1px solid #E2E8F0;border-radius:12px;padding:12px;overflow:hidden;text-align:center}
+      .tree{border:1px solid #E2E8F0;border-radius:12px;padding:12px;text-align:center;page-break-inside:avoid}
+      .treesvg{width:100%;height:210mm;display:block}
+      .profile{page-break-inside:avoid}
       .profile .pcard{border:1px solid #EADFC5;border-radius:16px;padding:28px;max-width:620px;margin:0 auto}
       .ava{width:130px;height:130px;border-radius:999px;object-fit:cover;display:block;margin:0 auto 16px;border:4px solid #D4AF37}
       .avatxt{display:flex;align-items:center;justify-content:center;font-size:44px;font-weight:bold;background:#FFF;border-width:4px;border-style:solid}

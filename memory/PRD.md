@@ -389,3 +389,21 @@ JSON backup, and email collaboration invites. Google login; first user = admin +
   Verified backend e2e (add x2 / get / delete). api: addGalleryPhoto, removeGalleryPhoto; Person.gallery.
 - Animation grow node: confirmed already implemented (GrowNode + originFor grows new node from parent). Offered
   to make more pronounced; user moved on to photo features.
+
+## Iteration 16b — FIX: ekspor PDF berantakan / tumpah banyak halaman (2026-06, fork)
+- ROOT CAUSE: buildTreeSvg emitted SVG with fixed dispW=760 + dispH scaled by aspect ratio -> tall/narrow trees
+  produced a very tall SVG that overflowed across pages (blank page 1, nodes split across pages 3-4). No @page
+  size/margins so nothing fit A4.
+- FIX (export-pdf.ts): SVG now responsive `<svg class="treesvg" viewBox=... preserveAspectRatio="xMidYMid meet">`
+  (no fixed px). exportTreePdf + exportTreeBook CSS now set @page{size:A4 portrait;margin:14mm},
+  .treesvg{width:100%;height:150mm}(book 210mm), page-break-inside:avoid on tree/rows/datasec/profile, removed
+  unreliable min-height:92vh (book), added <meta charset=utf-8>. Watermark moved into 6mm/8mm safe area.
+- Verified: rendered representative HTML at A4 (794x1123) print media -> title + full tree (all nodes visible,
+  none cropped) + full Data Anggota table all fit within ONE A4 page (scrollHeight==1123).
+
+## Iteration 16c — FIX: dashboard superadmin tidak muncul setelah login (2026-06, fork)
+- ROOT CAUSE: auth.tsx exchange() set user from authSession() response (raw db user, NO is_superadmin).
+  Only getMe()/refresh() include is_superadmin. So after a fresh login the settings "Admin Dashboard" row
+  (gated on user?.is_superadmin) stayed hidden until app reopen.
+- FIX: exchange() now calls getMe() after storing token and sets that (fallback to res.user on error).
+- Verified backend /auth/me returns is_superadmin=true for emmusic.indonesia@gmail.com.
