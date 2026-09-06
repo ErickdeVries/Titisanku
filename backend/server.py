@@ -209,6 +209,16 @@ async def photo_count(tree_id: str) -> int:
     return await db.person_notes.count_documents({"tree_id": tree_id, "attachments": {"$ne": []}, "deleted_at": None})
 
 
+async def gallery_count(tree_id: str) -> int:
+    pipeline = [
+        {"$match": {"tree_id": tree_id, "deleted_at": None}},
+        {"$project": {"n": {"$size": {"$ifNull": ["$gallery", []]}}}},
+        {"$group": {"_id": None, "total": {"$sum": "$n"}}},
+    ]
+    rows = await db.people.aggregate(pipeline).to_list(1)
+    return rows[0]["total"] if rows else 0
+
+
 class TreeCreateInput(BaseModel):
     name: str
 
@@ -237,12 +247,19 @@ async def resolve_tree(user, tree_id: Optional[str]):
     member = await db.tree_members.find_one(q, {"_id": 0}, sort=[("joined_at", 1)])
     if not member:
         if tree_id:
+            # Superadmin has full permanent access to every tree.
+            if is_superadmin(user):
+                tree = await db.trees.find_one({"id": tree_id}, {"_id": 0})
+                if not tree:
+                    raise HTTPException(status_code=404, detail="Pohon tidak ditemukan")
+                return tree, "admin"
             raise HTTPException(status_code=403, detail="Anda bukan anggota pohon ini")
         return None, None
     tree = await db.trees.find_one({"id": member["tree_id"]}, {"_id": 0})
     if not tree:
         raise HTTPException(status_code=404, detail="Pohon tidak ditemukan")
-    return tree, member["role"]
+    role = "admin" if is_superadmin(user) else member["role"]
+    return tree, role
 
 
 def require_role_t(role, roles):
@@ -423,6 +440,34 @@ async def get_person(person_id: str, tree_id: Optional[str] = Query(None), user=
     if not p:
         raise HTTPException(status_code=404, detail="Person not found")
     return p
+
+
+class GalleryInput(BaseModel):
+    path: str
+
+
+@api_router.post("/people/{person_id}/gallery")
+async def add_gallery_photo(person_id: str, body: GalleryInput, tree_id: Optional[str] = Query(None), user=Depends(get_current_user)):
+    tree, role = await resolve_tree(user, tree_id)
+    require_role_t(role, ["admin", "editor"])
+    person = await db.people.find_one({"id": person_id, "tree_id": tree["id"], "deleted_at": None}, {"_id": 0})
+    if not person:
+        raise HTTPException(status_code=404, detail="Person not found")
+    lim_photos = plan_limits(tree.get("plan")).get("photos")
+    if lim_photos is not None and (await photo_count(tree["id"]) + await gallery_count(tree["id"])) >= lim_photos:
+        raise HTTPException(status_code=402, detail=f"PHOTO_LIMIT:Batas {lim_photos} foto untuk paket gratis sudah tercapai. Upgrade untuk galeri tak terbatas.")
+    await db.people.update_one({"id": person_id, "tree_id": tree["id"]}, {"$push": {"gallery": body.path}})
+    p = await db.people.find_one({"id": person_id}, {"_id": 0})
+    return {"gallery": p.get("gallery", [])}
+
+
+@api_router.delete("/people/{person_id}/gallery")
+async def remove_gallery_photo(person_id: str, body: GalleryInput, tree_id: Optional[str] = Query(None), user=Depends(get_current_user)):
+    tree, role = await resolve_tree(user, tree_id)
+    require_role_t(role, ["admin", "editor"])
+    await db.people.update_one({"id": person_id, "tree_id": tree["id"]}, {"$pull": {"gallery": body.path}})
+    p = await db.people.find_one({"id": person_id}, {"_id": 0})
+    return {"gallery": (p or {}).get("gallery", [])}
 
 
 @api_router.put("/people/{person_id}")

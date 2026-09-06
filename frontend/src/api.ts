@@ -59,6 +59,7 @@ export type Person = {
   notes?: string | null;
   is_root?: boolean;
   note_count?: number;
+  gallery?: string[];
 };
 
 export type Relation = {
@@ -171,6 +172,10 @@ export const linkCoparents = (): Promise<{ linked: number }> =>
 export const listPeople = (q?: string): Promise<Person[]> =>
   apiFetch(`/people${q ? `?q=${encodeURIComponent(q)}` : ""}`);
 export const getPerson = (id: string): Promise<Person> => apiFetch(`/people/${id}`);
+export const addGalleryPhoto = (id: string, path: string): Promise<{ gallery: string[] }> =>
+  apiFetch(`/people/${id}/gallery`, { method: "POST", body: JSON.stringify({ path }) });
+export const removeGalleryPhoto = (id: string, path: string): Promise<{ gallery: string[] }> =>
+  apiFetch(`/people/${id}/gallery`, { method: "DELETE", body: JSON.stringify({ path }) });
 export const addRelative = (payload: any) =>
   apiFetch("/people/add-relative", { method: "POST", body: JSON.stringify(payload) });
 export const updatePerson = (id: string, data: any) =>

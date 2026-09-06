@@ -373,3 +373,19 @@ JSON backup, and email collaboration invites. Google login; first user = admin +
 - FIX (frontend): uploadPhoto() appends ?tree_id=<activeTreeId> and now throws the server detail; PersonForm
   shows uploadErr text under the photo buttons instead of failing silently.
 - Verified e2e: user with GLOBAL role=viewer but tree role=admin -> upload 200 + /files fetch 200 (image/png).
+
+## Iteration 16 — Foto: kompres, ganti/hapus, Galeri Anggota + superadmin full access (2026-06, fork)
+- SUPERADMIN FULL ACCESS: resolve_tree() now returns role="admin" for any superadmin (email in
+  SUPERADMIN_EMAILS) on any tree they belong to, and grants access even to trees they aren't a member of.
+  Permanent full access via env email (emmusic.indonesia@gmail.com).
+- KOMPRES FOTO: added expo-image-manipulator + src/utils/image.ts compressImage(uri,maxDim=1080,compress=0.6)
+  -> resize+JPEG. Used in PersonForm.doUpload and person gallery add. Falls back to original on error.
+- GANTI/HAPUS FOTO: PersonForm now shows remove (X) badge on avatar + "Ganti Foto"/"Hapus Foto" buttons when
+  a photo exists. Removing sets photo_url=null.
+- GALERI ANGGOTA (memory gallery): person.gallery = string[] of storage paths.
+  Backend: POST/DELETE /people/{id}/gallery {path} ($push/$pull), gated admin/editor, plan photos limit uses
+  photo_count+gallery_count. get_person returns gallery. Frontend: horizontal gallery in person detail "Data"
+  tab with add (pick->compress->upload->addGalleryPhoto) + per-photo delete + tap to view in existing viewer.
+  Verified backend e2e (add x2 / get / delete). api: addGalleryPhoto, removeGalleryPhoto; Person.gallery.
+- Animation grow node: confirmed already implemented (GrowNode + originFor grows new node from parent). Offered
+  to make more pronounced; user moved on to photo features.

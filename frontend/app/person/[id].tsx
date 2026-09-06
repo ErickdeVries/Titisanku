@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { View, Text, Pressable, ActivityIndicator, TextInput, Modal, Alert } from "react-native";
+import { View, Text, Pressable, ActivityIndicator, TextInput, Modal, Alert, ScrollView } from "react-native";
 import { Image } from "expo-image";
 import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
@@ -10,12 +10,13 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Feather from "@react-native-vector-icons/feather";
 import { fonts, makeStyles, useTheme } from "@/src/theme";
-import { getPerson, updatePerson, deletePerson, fileUrl, getTree, listPersonNotes, addPersonNote, addPersonFile, deleteNote, deleteRelation, updateRelation } from "@/src/api";
+import { getPerson, updatePerson, deletePerson, fileUrl, getTree, listPersonNotes, addPersonNote, addPersonFile, deleteNote, deleteRelation, updateRelation, uploadPhoto, addGalleryPhoto, removeGalleryPhoto } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { useI18n } from "@/src/i18n";
 import { useTree } from "@/src/tree-context";
 import { nodeColor } from "@/src/components/PersonNode";
 import { PersonForm, PersonFormValue } from "@/src/components/PersonForm";
+import { compressImage } from "@/src/utils/image";
 import { DateField, isoToDisplay } from "@/src/components/DateField";
 import { GradientButton } from "@/src/components/GradientButton";
 
@@ -46,6 +47,14 @@ const useStyles = makeStyles((c) => ({
   divider: { height: 1, backgroundColor: c.divider, marginLeft: 14 },
   marriageTitle: { fontFamily: fonts.semibold, fontSize: 13, color: c.muted, textTransform: "uppercase", letterSpacing: 0.5, marginHorizontal: 20, marginTop: 20, marginBottom: 8 },
   spouseSub: { fontFamily: fonts.regular, fontSize: 12, color: c.muted, marginTop: 2 },
+  galleryHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginRight: 20 },
+  galleryAddBtn: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 12 },
+  galleryAddText: { fontFamily: fonts.medium, fontSize: 13, color: c.brandSecondary },
+  galleryRow: { paddingHorizontal: 20, gap: 10, paddingVertical: 4 },
+  galleryItem: { width: 110, height: 110, borderRadius: 14, overflow: "hidden", backgroundColor: c.surfaceTertiary },
+  galleryImg: { width: "100%", height: "100%" },
+  galleryDel: { position: "absolute", top: 4, right: 4, width: 22, height: 22, borderRadius: 999, backgroundColor: c.error, alignItems: "center", justifyContent: "center" },
+  galleryEmpty: { fontFamily: fonts.regular, fontSize: 13, color: c.muted, marginHorizontal: 20 },
   divorceBadge: { backgroundColor: c.error, paddingHorizontal: 10, paddingVertical: 3, borderRadius: 999 },
   divorceBadgeText: { fontFamily: fonts.semibold, fontSize: 11, color: c.onError },
   actions: { padding: 20, gap: 12 },
@@ -111,6 +120,7 @@ export default function PersonDetail() {
   const [noteText, setNoteText] = useState("");
   const [noteBusy, setNoteBusy] = useState(false);
   const [fileBusy, setFileBusy] = useState(false);
+  const [galleryBusy, setGalleryBusy] = useState(false);
   const [viewerUri, setViewerUri] = useState<string | null>(null);
   const [deathConfirm, setDeathConfirm] = useState(false);
   const [lastSaved, setLastSaved] = useState<any>(null);
@@ -163,6 +173,33 @@ export default function PersonDetail() {
       return new Date(iso).toLocaleDateString();
     } catch {
       return iso;
+    }
+  };
+
+  const addGallery = async () => {
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) return;
+    const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images"], quality: 0.7 });
+    if (res.canceled || !res.assets?.length) return;
+    setGalleryBusy(true);
+    try {
+      const compressed = await compressImage(res.assets[0].uri);
+      const path = await uploadPhoto(compressed);
+      await addGalleryPhoto(id, path);
+      await qc.invalidateQueries({ queryKey: ["person", id] });
+    } catch (e) {
+      console.log("gallery add error", e);
+    } finally {
+      setGalleryBusy(false);
+    }
+  };
+
+  const delGallery = async (path: string) => {
+    try {
+      await removeGalleryPhoto(id, path);
+      await qc.invalidateQueries({ queryKey: ["person", id] });
+    } catch (e) {
+      console.log("gallery del error", e);
     }
   };
 
@@ -513,6 +550,44 @@ export default function PersonDetail() {
                   </>
                 ) : null}
               </View>
+
+              {/* Memory gallery */}
+              <View style={styles.galleryHead}>
+                <Text style={styles.marriageTitle}>{t("member_gallery")}</Text>
+                {canEdit ? (
+                  <Pressable style={styles.galleryAddBtn} onPress={addGallery} disabled={galleryBusy} testID="gallery-add">
+                    {galleryBusy ? (
+                      <ActivityIndicator size="small" color={colors.brandSecondary} />
+                    ) : (
+                      <>
+                        <Feather name="plus" size={14} color={colors.brandSecondary} />
+                        <Text style={styles.galleryAddText}>{t("add_photo")}</Text>
+                      </>
+                    )}
+                  </Pressable>
+                ) : null}
+              </View>
+              {person.gallery && person.gallery.length ? (
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.galleryRow}>
+                  {person.gallery.map((g) => {
+                    const uri = fileUrl(g);
+                    return (
+                      <View key={g} style={styles.galleryItem}>
+                        <Pressable onPress={() => uri && setViewerUri(uri)} testID={`gallery-item-${g}`}>
+                          <Image source={{ uri }} style={styles.galleryImg} contentFit="cover" />
+                        </Pressable>
+                        {canEdit ? (
+                          <Pressable style={styles.galleryDel} onPress={() => delGallery(g)} hitSlop={6} testID={`gallery-del-${g}`}>
+                            <Feather name="x" size={13} color={colors.onError} />
+                          </Pressable>
+                        ) : null}
+                      </View>
+                    );
+                  })}
+                </ScrollView>
+              ) : (
+                <Text style={styles.galleryEmpty}>{t("gallery_empty")}</Text>
+              )}
 
               {spouses.length ? (
                 <>

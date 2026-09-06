@@ -6,6 +6,7 @@ import * as ImagePicker from "expo-image-picker";
 import Feather from "@react-native-vector-icons/feather";
 import { fonts, makeStyles, useTheme } from "@/src/theme";
 import { fileUrl, uploadPhoto } from "@/src/api";
+import { compressImage } from "@/src/utils/image";
 import { useI18n } from "@/src/i18n";
 import { GradientButton } from "./GradientButton";
 import { DateField } from "./DateField";
@@ -69,6 +70,7 @@ const useStyles = makeStyles((c) => ({
   photoBtnRow: { flexDirection: "row", alignItems: "center", gap: 20 },
   photo: { width: 100, height: 100, borderRadius: 999, backgroundColor: c.surfaceTertiary, alignItems: "center", justifyContent: "center", overflow: "hidden" },
   photoImg: { width: "100%", height: "100%" },
+  removeBadge: { position: "absolute", top: 2, right: 2, width: 24, height: 24, borderRadius: 999, backgroundColor: c.error, alignItems: "center", justifyContent: "center" },
   uploadBtn: { flexDirection: "row", alignItems: "center", gap: 6 },
   uploadText: { fontFamily: fonts.medium, fontSize: 13, color: c.brandSecondary },
   checkRow: { flexDirection: "row", alignItems: "center", gap: 12 },
@@ -122,7 +124,8 @@ export function PersonForm({ initial, lockedGender, showAdopted, showMarriageTab
     setUploading(true);
     setUploadErr(null);
     try {
-      const path = await uploadPhoto(uri);
+      const compressed = await compressImage(uri);
+      const path = await uploadPhoto(compressed);
       setPhotoUrl(path);
     } catch (e: any) {
       console.log("upload error", e);
@@ -213,16 +216,27 @@ export function PersonForm({ initial, lockedGender, showAdopted, showMarriageTab
                 ) : (
                   <Feather name="camera" size={28} color={colors.muted} />
                 )}
+                {preview && !uploading ? (
+                  <Pressable style={styles.removeBadge} onPress={() => { setPhotoUrl(null); setUploadErr(null); }} hitSlop={8} testID="photo-remove">
+                    <Feather name="x" size={14} color={colors.onError} />
+                  </Pressable>
+                ) : null}
               </Pressable>
               <View style={styles.photoBtnRow}>
                 <Pressable style={styles.uploadBtn} onPress={pickPhoto}>
                   <Feather name="upload" size={14} color={colors.brandSecondary} />
-                  <Text style={styles.uploadText}>{uploading ? "..." : t("upload_photo")}</Text>
+                  <Text style={styles.uploadText}>{uploading ? "..." : preview ? t("change_photo") : t("upload_photo")}</Text>
                 </Pressable>
                 <Pressable style={styles.uploadBtn} onPress={takePhoto} testID="photo-camera">
                   <Feather name="camera" size={14} color={colors.brandSecondary} />
                   <Text style={styles.uploadText}>{t("take_photo")}</Text>
                 </Pressable>
+                {preview ? (
+                  <Pressable style={styles.uploadBtn} onPress={() => { setPhotoUrl(null); setUploadErr(null); }} testID="photo-remove-btn">
+                    <Feather name="trash-2" size={14} color={colors.error} />
+                    <Text style={[styles.uploadText, { color: colors.error }]}>{t("remove_photo")}</Text>
+                  </Pressable>
+                ) : null}
               </View>
               {permBlocked ? (
                 <Pressable onPress={() => Linking.openSettings()}>
