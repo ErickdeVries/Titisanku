@@ -214,7 +214,7 @@ export default function ChatRoomScreen() {
         {!mine ? (
           <View style={styles.avatar}>
             {item.sender_picture ? (
-              <Image source={{ uri: item.sender_picture }} style={styles.avatarImg} contentFit="cover" />
+              <Image source={{ uri: fileUrl(item.sender_picture) }} style={styles.avatarImg} contentFit="cover" />
             ) : (
               <Feather name="user" size={16} color={colors.muted} />
             )}

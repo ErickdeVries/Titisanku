@@ -2,6 +2,23 @@ import { Person, Relation } from "@/src/api";
 
 export const NODE_D = 64; // node diameter
 export const NODE_R = NODE_D / 2;
+
+// Distinct, readable colors used to tell apart each direct lineage (branch)
+// on the canvas. These are categorical data-viz colors and intentionally stay
+// constant across themes.
+export const LINEAGE_COLORS = [
+  "#1E3A8A", // blue
+  "#0F7B5F", // green
+  "#B03A6E", // rose
+  "#C4622D", // terracotta
+  "#6D28D9", // purple
+  "#0E7490", // teal
+  "#B45309", // amber
+  "#BE123C", // crimson
+  "#4338CA", // indigo
+  "#15803D", // emerald
+];
+export const lineageColor = (i: number) => LINEAGE_COLORS[((i % LINEAGE_COLORS.length) + LINEAGE_COLORS.length) % LINEAGE_COLORS.length];
 const COL_W = 120;
 const ROW_H = 160;
 const PAD = 60;
@@ -12,6 +29,7 @@ export type LayoutNode = {
   x: number; // center x
   y: number; // center y
   gen: number;
+  lineage: number; // branch index for distinct coloring
 };
 
 export type LayoutEdge = {
@@ -21,6 +39,7 @@ export type LayoutEdge = {
   x2: number;
   y2: number;
   kind: "relation" | "adopted" | "spouse" | "divorce";
+  lineage?: number; // for parent->child edges, the child's lineage
 };
 
 export type TreeLayout = {
@@ -110,6 +129,36 @@ export function buildLayout(
 
   const gens = Array.from(byGen.keys()).sort((a, b) => a - b);
   const minGen = gens[0];
+
+  // --- Assign a lineage (branch) index for distinct coloring ---
+  // Root couple(s) at the top get their own branch; each child of a top
+  // ancestor starts a new branch; deeper descendants inherit their parent's
+  // branch. Married-in spouses inherit their partner's branch.
+  const lineage = new Map<string, number>();
+  let branch = 0;
+  const visibleParents = (id: string) => parentsOf(id).filter((p) => gen.has(p));
+  for (const g of gens) {
+    for (const id of byGen.get(g)!) {
+      if (lineage.has(id)) continue;
+      const ps = visibleParents(id);
+      const primary = ps.find((p) => lineage.has(p)) ?? ps[0];
+      if (primary == null) {
+        const sp = spousesOf(id).find((s) => lineage.has(s));
+        lineage.set(id, sp != null ? lineage.get(sp)! : branch++);
+      } else if (gen.get(primary) === minGen) {
+        lineage.set(id, branch++);
+      } else {
+        lineage.set(id, lineage.get(primary)!);
+      }
+      // propagate to married-in spouses (those without their own visible parents)
+      for (const s of spousesOf(id)) {
+        if (gen.has(s) && !lineage.has(s) && visibleParents(s).length === 0) {
+          lineage.set(s, lineage.get(id)!);
+        }
+      }
+    }
+  }
+
   const maxCount = Math.max(...gens.map((g) => byGen.get(g)!.length));
   const width = maxCount * COL_W + PAD * 2;
 
@@ -123,7 +172,7 @@ export function buildLayout(
     ids.forEach((id, i) => {
       const x = startX + i * COL_W;
       posById.set(id, { x, y });
-      nodes.push({ id, person: byId.get(id)!, x, y, gen: g });
+      nodes.push({ id, person: byId.get(id)!, x, y, gen: g, lineage: lineage.get(id) ?? 0 });
     });
   }
   const height = PAD * 2 + (gens.length - 1) * ROW_H + NODE_D;
@@ -142,6 +191,7 @@ export function buildLayout(
         x2: b.x,
         y2: b.y - NODE_R,
         kind: r.relation_type === "adopted_child" ? "adopted" : "relation",
+        lineage: lineage.get(r.related_person_id),
       });
     } else if (SPOUSE_TYPES.includes(r.relation_type)) {
       edges.push({

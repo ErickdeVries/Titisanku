@@ -6,9 +6,11 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as FileSystem from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
 import * as DocumentPicker from "expo-document-picker";
+import * as ImagePicker from "expo-image-picker";
 import Feather from "@react-native-vector-icons/feather";
 import { fonts, makeStyles, useTheme } from "@/src/theme";
-import { getTree, getBackup, restoreBackup, createInvite, acceptInvite, listInvites, linkCoparents, deleteAccount } from "@/src/api";
+import { getTree, getBackup, restoreBackup, createInvite, acceptInvite, listInvites, linkCoparents, deleteAccount, fileUrl, uploadPhoto, updateProfile } from "@/src/api";
+import { compressImage } from "@/src/utils/image";
 import { useAuth } from "@/src/auth";
 import { useTree } from "@/src/tree-context";
 import { useRouter } from "expo-router";
@@ -23,7 +25,9 @@ const useStyles = makeStyles((c) => ({
   title: { fontFamily: fonts.display, fontSize: 22, color: c.onSurface },
   profile: { flexDirection: "row", alignItems: "center", gap: 14, padding: 20 },
   avatar: { width: 56, height: 56, borderRadius: 999, overflow: "hidden", backgroundColor: c.surfaceTertiary, alignItems: "center", justifyContent: "center" },
+  avatarWrap: { width: 56, height: 56 },
   avatarImg: { width: "100%", height: "100%" },
+  avatarCam: { position: "absolute", right: -2, bottom: -2, width: 22, height: 22, borderRadius: 999, backgroundColor: c.brandSecondary, alignItems: "center", justifyContent: "center", borderWidth: 2, borderColor: c.surface },
   name: { fontFamily: fonts.semibold, fontSize: 17, color: c.onSurface },
   email: { fontFamily: fonts.regular, fontSize: 13, color: c.muted },
   roleBadge: { alignSelf: "flex-start", marginTop: 4, backgroundColor: c.brandTertiary, paddingHorizontal: 10, paddingVertical: 3, borderRadius: 999 },
@@ -78,6 +82,27 @@ export default function SettingsScreen() {
   const isPro = activeTree?.plan === "pro" || activeTree?.plan === "family";
   const [deleteAccOpen, setDeleteAccOpen] = useState(false);
   const [deletingAcc, setDeletingAcc] = useState(false);
+  const [photoBusy, setPhotoBusy] = useState(false);
+
+  const changePhoto = async () => {
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) return;
+    const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images"], quality: 0.7, allowsEditing: true, aspect: [1, 1] });
+    if (res.canceled || !res.assets?.length) return;
+    setPhotoBusy(true);
+    try {
+      const compressed = await compressImage(res.assets[0].uri, 512);
+      const path = await uploadPhoto(compressed);
+      await updateProfile({ picture: path });
+      await refresh();
+      qc.invalidateQueries({ queryKey: ["chatContacts"] });
+      qc.invalidateQueries({ queryKey: ["chat"] });
+    } catch (e) {
+      console.log("profile photo error", e);
+    } finally {
+      setPhotoBusy(false);
+    }
+  };
   const doDeleteAccount = async () => {
     setDeletingAcc(true);
     try {
@@ -223,9 +248,20 @@ export default function SettingsScreen() {
       </View>
       <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom + 40 }}>
         <View style={styles.profile}>
-          <View style={styles.avatar}>
-            {user?.picture ? <Image source={{ uri: user.picture }} style={styles.avatarImg} contentFit="cover" /> : <Feather name="user" size={26} color={colors.muted} />}
-          </View>
+          <Pressable style={styles.avatarWrap} onPress={changePhoto} disabled={photoBusy} testID="change-profile-photo">
+            <View style={styles.avatar}>
+              {photoBusy ? (
+                <ActivityIndicator size="small" color={colors.brandPrimary} />
+              ) : fileUrl(user?.picture) ? (
+                <Image source={{ uri: fileUrl(user?.picture) }} style={styles.avatarImg} contentFit="cover" />
+              ) : (
+                <Feather name="user" size={26} color={colors.muted} />
+              )}
+            </View>
+            <View style={styles.avatarCam}>
+              <Feather name="camera" size={12} color="#FFFFFF" />
+            </View>
+          </Pressable>
           <View style={{ flex: 1 }}>
             <Text style={styles.name}>{user?.name}</Text>
             <Text style={styles.email}>{user?.email}</Text>

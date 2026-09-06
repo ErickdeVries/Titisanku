@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { View, Text, Pressable, ActivityIndicator, TextInput, Modal, Alert, ScrollView } from "react-native";
+import { View, Text, Pressable, ActivityIndicator, TextInput, Modal, Alert } from "react-native";
 import { Image } from "expo-image";
 import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
@@ -10,7 +10,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Feather from "@react-native-vector-icons/feather";
 import { fonts, makeStyles, useTheme } from "@/src/theme";
-import { getPerson, updatePerson, deletePerson, fileUrl, getTree, listPersonNotes, addPersonNote, addPersonFile, deleteNote, deleteRelation, updateRelation, uploadPhoto, addGalleryPhoto, removeGalleryPhoto } from "@/src/api";
+import { getPerson, updatePerson, deletePerson, fileUrl, getTree, listPersonNotes, addPersonNote, addPersonFile, deleteNote, deleteRelation, updateRelation, uploadPhoto, addGalleryPhoto, editGalleryPhoto, removeGalleryPhoto, GalleryPhoto } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { useI18n } from "@/src/i18n";
 import { useTree } from "@/src/tree-context";
@@ -25,7 +25,12 @@ const useStyles = makeStyles((c) => ({
   header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: c.divider },
   iconBtn: { width: 36, height: 36, borderRadius: 999, backgroundColor: c.surfaceTertiary, alignItems: "center", justifyContent: "center" },
   headerTitle: { fontFamily: fonts.semibold, fontSize: 16, color: c.onSurface },
-  hero: { alignItems: "center", paddingVertical: 24, gap: 8 },
+  hero: { alignItems: "center", paddingBottom: 16, gap: 8 },
+  coverWrap: { width: "100%", height: 150, backgroundColor: c.surfaceTertiary },
+  cover: { width: "100%", height: "100%" },
+  coverPlaceholder: { backgroundColor: c.brandTertiary },
+  coverBtn: { position: "absolute", right: 12, bottom: 12, width: 36, height: 36, borderRadius: 999, backgroundColor: "rgba(15,23,42,0.55)", alignItems: "center", justifyContent: "center" },
+  avatarOnCover: { marginTop: -60, borderColor: c.surface, backgroundColor: c.surface },
   avatar: { width: 120, height: 120, borderRadius: 999, borderWidth: 4, overflow: "hidden", alignItems: "center", justifyContent: "center", backgroundColor: c.surfaceTertiary },
   avatarImg: { width: "100%", height: "100%" },
   name: { fontFamily: fonts.bold, fontSize: 22, color: c.onSurface },
@@ -41,7 +46,7 @@ const useStyles = makeStyles((c) => ({
   quickCheck: { position: "absolute", bottom: -2, right: -2, width: 18, height: 18, borderRadius: 999, backgroundColor: "#2E9E6B", borderWidth: 2, borderColor: "#FFFBF0", alignItems: "center", justifyContent: "center" },
   quickLabel: { fontFamily: fonts.medium, fontSize: 12, color: c.onSurfaceSecondary },
   infoCard: { marginHorizontal: 20, marginTop: 12, backgroundColor: c.surfaceSecondary, borderRadius: 16, overflow: "hidden" },
-  infoRow: { flexDirection: "row", alignItems: "center", gap: 12, padding: 14 },
+  infoRow: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 9, paddingHorizontal: 14 },
   infoLabel: { fontFamily: fonts.regular, fontSize: 12, color: c.muted },
   infoValue: { fontFamily: fonts.medium, fontSize: 15, color: c.onSurface },
   divider: { height: 1, backgroundColor: c.divider, marginLeft: 14 },
@@ -51,10 +56,22 @@ const useStyles = makeStyles((c) => ({
   galleryAddBtn: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 12 },
   galleryAddText: { fontFamily: fonts.medium, fontSize: 13, color: c.brandSecondary },
   galleryRow: { paddingHorizontal: 20, gap: 10, paddingVertical: 4 },
-  galleryItem: { width: 110, height: 110, borderRadius: 14, overflow: "hidden", backgroundColor: c.surfaceTertiary },
-  galleryImg: { width: "100%", height: "100%" },
-  galleryDel: { position: "absolute", top: 4, right: 4, width: 22, height: 22, borderRadius: 999, backgroundColor: c.error, alignItems: "center", justifyContent: "center" },
   galleryEmpty: { fontFamily: fonts.regular, fontSize: 13, color: c.muted, marginHorizontal: 20 },
+  galleryList: { marginHorizontal: 20, gap: 16 },
+  igCard: { backgroundColor: c.surfaceSecondary, borderRadius: 16, overflow: "hidden", borderWidth: 1, borderColor: c.border },
+  igImg: { width: "100%", aspectRatio: 1, backgroundColor: c.surfaceTertiary },
+  igMeta: { flexDirection: "row", alignItems: "flex-start", gap: 10, padding: 12 },
+  igCaption: { fontFamily: fonts.medium, fontSize: 14, color: c.onSurface },
+  igCaptionMuted: { fontFamily: fonts.regular, fontSize: 13, color: c.muted, fontStyle: "italic" },
+  igDate: { fontFamily: fonts.regular, fontSize: 12, color: c.muted, marginTop: 2 },
+  igActions: { flexDirection: "row", gap: 16, paddingTop: 2 },
+  capBg: { flex: 1, backgroundColor: "rgba(15,23,42,0.4)", justifyContent: "flex-end" },
+  capSheet: { backgroundColor: c.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, gap: 12 },
+  capTitle: { fontFamily: fonts.bold, fontSize: 17, color: c.onSurface },
+  capInput: { backgroundColor: c.surfaceTertiary, borderRadius: 12, padding: 14, minHeight: 70, fontFamily: fonts.regular, fontSize: 15, color: c.onSurface, textAlignVertical: "top" },
+  capInputSingle: { backgroundColor: c.surfaceTertiary, borderRadius: 12, padding: 14, fontFamily: fonts.regular, fontSize: 15, color: c.onSurface },
+  capSave: { height: 50, borderRadius: 14, backgroundColor: c.brandPrimary, alignItems: "center", justifyContent: "center" },
+  capSaveText: { fontFamily: fonts.semibold, fontSize: 16, color: c.onBrandPrimary },
   divorceBadge: { backgroundColor: c.error, paddingHorizontal: 10, paddingVertical: 3, borderRadius: 999 },
   divorceBadgeText: { fontFamily: fonts.semibold, fontSize: 11, color: c.onError },
   actions: { padding: 20, gap: 12 },
@@ -121,6 +138,10 @@ export default function PersonDetail() {
   const [noteBusy, setNoteBusy] = useState(false);
   const [fileBusy, setFileBusy] = useState(false);
   const [galleryBusy, setGalleryBusy] = useState(false);
+  const [coverBusy, setCoverBusy] = useState(false);
+  const [capEditor, setCapEditor] = useState<GalleryPhoto | null>(null);
+  const [capText, setCapText] = useState("");
+  const [capDate, setCapDate] = useState("");
   const [viewerUri, setViewerUri] = useState<string | null>(null);
   const [deathConfirm, setDeathConfirm] = useState(false);
   const [lastSaved, setLastSaved] = useState<any>(null);
@@ -176,6 +197,19 @@ export default function PersonDetail() {
     }
   };
 
+  const toPersonData = (p: any) => ({
+    name: p.name,
+    gender: p.gender ?? null,
+    birth_date: p.birth_date ?? null,
+    birth_place: p.birth_place ?? null,
+    death_date: p.death_date ?? null,
+    photo_url: p.photo_url ?? null,
+    cover_url: p.cover_url ?? null,
+    job: p.job ?? null,
+    is_adopted: p.is_adopted ?? false,
+    notes: p.notes ?? null,
+  });
+
   const addGallery = async () => {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) return;
@@ -185,8 +219,11 @@ export default function PersonDetail() {
     try {
       const compressed = await compressImage(res.assets[0].uri);
       const path = await uploadPhoto(compressed);
-      await addGalleryPhoto(id, path);
+      const r = await addGalleryPhoto(id, path);
       await qc.invalidateQueries({ queryKey: ["person", id] });
+      // open caption editor for the newly added photo
+      const added = r.gallery[r.gallery.length - 1];
+      if (added) openCaption(added);
     } catch (e) {
       console.log("gallery add error", e);
     } finally {
@@ -194,9 +231,45 @@ export default function PersonDetail() {
     }
   };
 
-  const delGallery = async (path: string) => {
+  const openCaption = (g: GalleryPhoto) => {
+    setCapEditor(g);
+    setCapText(g.caption || "");
+    setCapDate(g.date || "");
+  };
+
+  const saveCaption = async () => {
+    if (!capEditor) return;
     try {
-      await removeGalleryPhoto(id, path);
+      await editGalleryPhoto(id, capEditor.id, capText.trim(), capDate.trim());
+      await qc.invalidateQueries({ queryKey: ["person", id] });
+    } catch (e) {
+      console.log("caption save error", e);
+    } finally {
+      setCapEditor(null);
+    }
+  };
+
+  const changeCover = async () => {
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) return;
+    const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images"], quality: 0.7, allowsEditing: true, aspect: [16, 9] });
+    if (res.canceled || !res.assets?.length) return;
+    setCoverBusy(true);
+    try {
+      const compressed = await compressImage(res.assets[0].uri, 1280);
+      const path = await uploadPhoto(compressed);
+      await updatePerson(id, { ...toPersonData(person!), cover_url: path });
+      await qc.invalidateQueries({ queryKey: ["person", id] });
+    } catch (e) {
+      console.log("cover error", e);
+    } finally {
+      setCoverBusy(false);
+    }
+  };
+
+  const delGallery = async (photoId: string) => {
+    try {
+      await removeGalleryPhoto(id, photoId);
       await qc.invalidateQueries({ queryKey: ["person", id] });
     } catch (e) {
       console.log("gallery del error", e);
@@ -465,8 +538,20 @@ export default function PersonDetail() {
         />
       ) : (
         <KeyboardAwareScrollView contentContainerStyle={{ paddingBottom: insets.bottom + 40 }} bottomOffset={20} keyboardShouldPersistTaps="handled">
+          <View style={styles.coverWrap}>
+            {person.cover_url ? (
+              <Image source={{ uri: fileUrl(person.cover_url) }} style={styles.cover} contentFit="cover" />
+            ) : (
+              <View style={[styles.cover, styles.coverPlaceholder]} />
+            )}
+            {canEdit ? (
+              <Pressable style={styles.coverBtn} onPress={changeCover} disabled={coverBusy} testID="cover-change">
+                {coverBusy ? <ActivityIndicator size="small" color="#FFFFFF" /> : <Feather name="camera" size={16} color="#FFFFFF" />}
+              </Pressable>
+            ) : null}
+          </View>
           <View style={styles.hero}>
-            <View style={[styles.avatar, { borderColor: color }]}>
+            <View style={[styles.avatar, styles.avatarOnCover, { borderColor: color }]}>
               {photo ? <Image source={{ uri: photo }} style={styles.avatarImg} contentFit="cover" /> : <Feather name="user" size={48} color={color} />}
             </View>
             <Text style={styles.name}>{person.name}</Text>
@@ -568,23 +653,35 @@ export default function PersonDetail() {
                 ) : null}
               </View>
               {person.gallery && person.gallery.length ? (
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.galleryRow}>
+                <View style={styles.galleryList}>
                   {person.gallery.map((g) => {
-                    const uri = fileUrl(g);
+                    const uri = fileUrl(g.path);
                     return (
-                      <View key={g} style={styles.galleryItem}>
-                        <Pressable onPress={() => uri && setViewerUri(uri)} testID={`gallery-item-${g}`}>
-                          <Image source={{ uri }} style={styles.galleryImg} contentFit="cover" />
+                      <View key={g.id} style={styles.igCard}>
+                        <Pressable onPress={() => uri && setViewerUri(uri)} testID={`gallery-item-${g.id}`}>
+                          <Image source={{ uri }} style={styles.igImg} contentFit="cover" />
                         </Pressable>
-                        {canEdit ? (
-                          <Pressable style={styles.galleryDel} onPress={() => delGallery(g)} hitSlop={6} testID={`gallery-del-${g}`}>
-                            <Feather name="x" size={13} color={colors.onError} />
-                          </Pressable>
-                        ) : null}
+                        <View style={styles.igMeta}>
+                          <View style={{ flex: 1 }}>
+                            {g.caption ? <Text style={styles.igCaption}>{g.caption}</Text> : null}
+                            {g.date ? <Text style={styles.igDate}>{g.date}</Text> : null}
+                            {!g.caption && !g.date ? <Text style={styles.igCaptionMuted}>{t("no_caption")}</Text> : null}
+                          </View>
+                          {canEdit ? (
+                            <View style={styles.igActions}>
+                              <Pressable onPress={() => openCaption(g)} hitSlop={8} testID={`gallery-caption-${g.id}`}>
+                                <Feather name="edit-2" size={16} color={colors.brandSecondary} />
+                              </Pressable>
+                              <Pressable onPress={() => delGallery(g.id)} hitSlop={8} testID={`gallery-del-${g.id}`}>
+                                <Feather name="trash-2" size={16} color={colors.error} />
+                              </Pressable>
+                            </View>
+                          ) : null}
+                        </View>
                       </View>
                     );
                   })}
-                </ScrollView>
+                </View>
               ) : (
                 <Text style={styles.galleryEmpty}>{t("gallery_empty")}</Text>
               )}
@@ -770,6 +867,35 @@ export default function PersonDetail() {
             <Feather name="x" size={22} color="#FFFFFF" />
           </Pressable>
         </View>
+      </Modal>
+
+      {/* Gallery caption / date editor */}
+      <Modal visible={!!capEditor} transparent animationType="slide" onRequestClose={() => setCapEditor(null)}>
+        <Pressable style={styles.capBg} onPress={() => setCapEditor(null)}>
+          <Pressable style={styles.capSheet} onPress={() => {}}>
+            <Text style={styles.capTitle}>{t("photo_caption")}</Text>
+            <TextInput
+              testID="caption-input"
+              style={styles.capInput}
+              placeholder={t("caption_placeholder")}
+              placeholderTextColor={colors.muted}
+              value={capText}
+              onChangeText={setCapText}
+              multiline
+            />
+            <TextInput
+              testID="caption-date-input"
+              style={styles.capInputSingle}
+              placeholder={t("caption_date_placeholder")}
+              placeholderTextColor={colors.muted}
+              value={capDate}
+              onChangeText={setCapDate}
+            />
+            <Pressable style={styles.capSave} onPress={saveCaption} testID="caption-save">
+              <Text style={styles.capSaveText}>{t("save")}</Text>
+            </Pressable>
+          </Pressable>
+        </Pressable>
       </Modal>
 
       <Modal visible={!!editSpouse} transparent animationType="fade" onRequestClose={() => setEditSpouse(null)}>

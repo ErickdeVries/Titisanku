@@ -55,12 +55,13 @@ export type Person = {
   birth_place?: string | null;
   death_date?: string | null;
   photo_url?: string | null;
+  cover_url?: string | null;
   job?: string | null;
   is_adopted?: boolean;
   notes?: string | null;
   is_root?: boolean;
   note_count?: number;
-  gallery?: string[];
+  gallery?: GalleryPhoto[];
 };
 
 export type Relation = {
@@ -85,6 +86,8 @@ export type User = {
 export const authSession = (session_id: string) =>
   apiFetch("/auth/session", { method: "POST", body: JSON.stringify({ session_id }) });
 export const getMe = () => apiFetch("/auth/me");
+export const updateProfile = (data: { name?: string; picture?: string }) =>
+  apiFetch("/users/me", { method: "PUT", body: JSON.stringify(data) });
 export const logoutApi = () => apiFetch("/auth/logout", { method: "POST" });
 export const leaveGroup = (roomId: string): Promise<{ ok: boolean }> =>
   apiFetch(`/chat/rooms/${roomId}/leave`, { method: "POST" });
@@ -173,10 +176,13 @@ export const linkCoparents = (): Promise<{ linked: number }> =>
 export const listPeople = (q?: string): Promise<Person[]> =>
   apiFetch(`/people${q ? `?q=${encodeURIComponent(q)}` : ""}`);
 export const getPerson = (id: string): Promise<Person> => apiFetch(`/people/${id}`);
-export const addGalleryPhoto = (id: string, path: string): Promise<{ gallery: string[] }> =>
-  apiFetch(`/people/${id}/gallery`, { method: "POST", body: JSON.stringify({ path }) });
-export const removeGalleryPhoto = (id: string, path: string): Promise<{ gallery: string[] }> =>
-  apiFetch(`/people/${id}/gallery`, { method: "DELETE", body: JSON.stringify({ path }) });
+export type GalleryPhoto = { id: string; path: string; caption?: string; date?: string };
+export const addGalleryPhoto = (id: string, path: string, caption?: string, date?: string): Promise<{ gallery: GalleryPhoto[] }> =>
+  apiFetch(`/people/${id}/gallery`, { method: "POST", body: JSON.stringify({ path, caption, date }) });
+export const editGalleryPhoto = (id: string, photoId: string, caption?: string, date?: string): Promise<{ gallery: GalleryPhoto[] }> =>
+  apiFetch(`/people/${id}/gallery/${photoId}`, { method: "PATCH", body: JSON.stringify({ caption, date }) });
+export const removeGalleryPhoto = (id: string, photoId: string): Promise<{ gallery: GalleryPhoto[] }> =>
+  apiFetch(`/people/${id}/gallery`, { method: "DELETE", body: JSON.stringify({ id: photoId }) });
 export const addRelative = (payload: any) =>
   apiFetch("/people/add-relative", { method: "POST", body: JSON.stringify(payload) });
 export const updatePerson = (id: string, data: any) =>

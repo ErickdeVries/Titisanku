@@ -427,3 +427,23 @@ JSON backup, and email collaboration invites. Google login; first user = admin +
   which `implements Blob`) instead of { uri,name,type }. Web branch unchanged (Blob). Verified File is exported
   and constructor accepts a file:// uri string in expo-file-system@57.0.6.
 - NATIVE-ONLY: can't be validated on web preview; test on Android/iOS via Expo Go. Web bundling confirmed OK.
+
+## Iteration 19 — Kanvas warna garis + animasi, Kartu Anggota (cover+galeri IG+caption), foto profil chat (2026-06)
+User choices: chat avatar = account photo (changeable) [1b]; order Fase 1->2->3 [2a].
+FASE 1 (kanvas):
+- tree-layout.ts: added LINEAGE_COLORS[10] + lineageColor(); compute per-branch lineage index (root couple=branch0,
+  each child of a top ancestor = new branch, descendants inherit, married-in spouses inherit partner). LayoutNode.lineage
+  + LayoutEdge.lineage (child's). index.tsx: parent-child lines colored by lineage (width 3.5), PersonNode ring=lineageColor
+  + small gender dot. GrowNode animation stronger (travel from parent 620ms + spring pop overshoot).
+FASE 2 (kartu anggota person/[id].tsx):
+- Backend: PersonData +cover_url; gallery items now objects {id,path,caption,date,created_at} (was string[]).
+  Endpoints: POST gallery {path,caption,date}, PATCH /gallery/{photo_id} {caption,date}, DELETE by {id}. get_person
+  returns serialized gallery. api.ts GalleryPhoto type + addGalleryPhoto(caption,date)/editGalleryPhoto/removeGalleryPhoto(id).
+- UI: Facebook-style cover header (150px) with change button (editor), avatar overlaps cover (marginTop -60),
+  tighter InfoRow (paddingVertical 9), Instagram-style gallery (square img + caption + date + edit/delete),
+  caption editor modal (caption + free-text date). Person.cover_url + gallery:GalleryPhoto[].
+FASE 3 (chat avatar = account photo, changeable):
+- Backend PUT /users/me {name?,picture?}. api.ts updateProfile. settings.tsx profile avatar now tappable ->
+  pick+compress(512)+upload+updateProfile+refresh, camera badge overlay, uses fileUrl(user.picture).
+  chat/[roomId].tsx sender avatar now fileUrl(sender_picture) so uploaded (relative) avatars resolve.
+- Verified backend e2e (gallery add/edit/delete caption+date, cover set, profile pic). Auth-gated UI needs device test.

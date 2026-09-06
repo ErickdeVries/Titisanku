@@ -136,6 +136,7 @@ class PersonData(BaseModel):
     birth_place: Optional[str] = None
     death_date: Optional[str] = None
     photo_url: Optional[str] = None
+    cover_url: Optional[str] = None
     job: Optional[str] = None
     is_adopted: bool = False
     notes: Optional[str] = None
@@ -380,6 +381,24 @@ async def auth_me(user=Depends(get_current_user)):
     return {**user, "is_superadmin": is_superadmin(user)}
 
 
+class ProfileUpdate(BaseModel):
+    name: Optional[str] = None
+    picture: Optional[str] = None
+
+
+@api_router.put("/users/me")
+async def update_me(body: ProfileUpdate, user=Depends(get_current_user)):
+    upd = {}
+    if body.name is not None and body.name.strip():
+        upd["name"] = body.name.strip()
+    if body.picture is not None:
+        upd["picture"] = body.picture
+    if upd:
+        await db.users.update_one({"user_id": user["user_id"]}, {"$set": upd})
+    u = await db.users.find_one({"user_id": user["user_id"]}, {"_id": 0})
+    return {**u, "is_superadmin": is_superadmin(u)}
+
+
 @api_router.post("/auth/logout")
 async def auth_logout(authorization: Optional[str] = Header(None)):
     if authorization and authorization.startswith("Bearer "):
@@ -449,7 +468,15 @@ async def get_person(person_id: str, tree_id: Optional[str] = Query(None), user=
 
 
 class GalleryInput(BaseModel):
-    path: str
+    path: Optional[str] = None
+    caption: Optional[str] = None
+    date: Optional[str] = None
+    id: Optional[str] = None
+
+
+class GalleryEdit(BaseModel):
+    caption: Optional[str] = None
+    date: Optional[str] = None
 
 
 @api_router.post("/people/{person_id}/gallery")
@@ -462,18 +489,36 @@ async def add_gallery_photo(person_id: str, body: GalleryInput, tree_id: Optiona
     lim_photos = plan_limits(tree.get("plan")).get("photos")
     if lim_photos is not None and (await photo_count(tree["id"]) + await gallery_count(tree["id"])) >= lim_photos:
         raise HTTPException(status_code=402, detail=f"PHOTO_LIMIT:Batas {lim_photos} foto untuk paket gratis sudah tercapai. Upgrade untuk galeri tak terbatas.")
-    await db.people.update_one({"id": person_id, "tree_id": tree["id"]}, {"$push": {"gallery": body.path}})
+    if not body.path:
+        raise HTTPException(status_code=400, detail="path wajib diisi")
+    item = {"id": str(uuid.uuid4()), "path": body.path, "caption": body.caption or "", "date": body.date or "", "created_at": now_utc()}
+    await db.people.update_one({"id": person_id, "tree_id": tree["id"]}, {"$push": {"gallery": item}})
     p = await db.people.find_one({"id": person_id}, {"_id": 0})
-    return {"gallery": p.get("gallery", [])}
+    return {"gallery": _serialize(p.get("gallery", []))}
+
+
+@api_router.patch("/people/{person_id}/gallery/{photo_id}")
+async def edit_gallery_photo(person_id: str, photo_id: str, body: GalleryEdit, tree_id: Optional[str] = Query(None), user=Depends(get_current_user)):
+    tree, role = await resolve_tree(user, tree_id)
+    require_role_t(role, ["admin", "editor"])
+    await db.people.update_one(
+        {"id": person_id, "tree_id": tree["id"], "gallery.id": photo_id},
+        {"$set": {"gallery.$.caption": body.caption or "", "gallery.$.date": body.date or ""}},
+    )
+    p = await db.people.find_one({"id": person_id}, {"_id": 0})
+    return {"gallery": _serialize((p or {}).get("gallery", []))}
 
 
 @api_router.delete("/people/{person_id}/gallery")
 async def remove_gallery_photo(person_id: str, body: GalleryInput, tree_id: Optional[str] = Query(None), user=Depends(get_current_user)):
     tree, role = await resolve_tree(user, tree_id)
     require_role_t(role, ["admin", "editor"])
-    await db.people.update_one({"id": person_id, "tree_id": tree["id"]}, {"$pull": {"gallery": body.path}})
+    if body.id:
+        await db.people.update_one({"id": person_id, "tree_id": tree["id"]}, {"$pull": {"gallery": {"id": body.id}}})
+    elif body.path:
+        await db.people.update_one({"id": person_id, "tree_id": tree["id"]}, {"$pull": {"gallery": {"path": body.path}}})
     p = await db.people.find_one({"id": person_id}, {"_id": 0})
-    return {"gallery": (p or {}).get("gallery", [])}
+    return {"gallery": _serialize((p or {}).get("gallery", []))}
 
 
 @api_router.put("/people/{person_id}")

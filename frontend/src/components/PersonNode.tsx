@@ -11,6 +11,7 @@ type Props = {
   onPress?: () => void;
   selected?: boolean;
   size?: number;
+  ringColor?: string;
 };
 
 export function nodeColor(person: Person, colors: any): string {
@@ -58,12 +59,23 @@ const useStyles = makeStyles((c) => ({
     borderWidth: 2,
     borderColor: c.surface,
   },
+  genderDot: {
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    borderRadius: 999,
+    width: 14,
+    height: 14,
+    borderWidth: 2,
+    borderColor: c.surface,
+  },
 }));
 
-export function PersonNode({ person, onPress, selected, size = NODE_D }: Props) {
+export function PersonNode({ person, onPress, selected, size = NODE_D, ringColor }: Props) {
   const styles = useStyles();
   const { colors } = useTheme();
-  const color = nodeColor(person, colors);
+  const genderColor = nodeColor(person, colors);
+  const color = ringColor ?? genderColor;
   const photo = fileUrl(person.photo_url);
 
   return (
@@ -76,6 +88,10 @@ export function PersonNode({ person, onPress, selected, size = NODE_D }: Props) 
             <Feather name="user" size={size * 0.5} color={color} />
           )}
         </View>
+        {/* small gender dot so gender is still readable when ring shows lineage */}
+        {ringColor && person.gender ? (
+          <View style={[styles.genderDot, { backgroundColor: genderColor }]} />
+        ) : null}
         {person.death_date ? (
           <View style={styles.deceased}>
             <Feather name="star" size={11} color={colors.onSurfaceInverse} />

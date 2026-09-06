@@ -5,7 +5,7 @@ import { useRouter } from "expo-router";
 import { useQuery } from "@tanstack/react-query";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
-import Animated, { useSharedValue, useAnimatedStyle, withTiming, withDelay } from "react-native-reanimated";
+import Animated, { useSharedValue, useAnimatedStyle, withTiming, withDelay, withSpring, withSequence } from "react-native-reanimated";
 import Svg, { Line } from "react-native-svg";
 import Feather from "@react-native-vector-icons/feather";
 import { fonts, makeStyles, useTheme } from "@/src/theme";
@@ -14,7 +14,7 @@ import { useAuth } from "@/src/auth";
 import { useTree } from "@/src/tree-context";
 import { useI18n } from "@/src/i18n";
 import { PersonNode } from "@/src/components/PersonNode";
-import { buildLayout, NODE_R } from "@/src/tree-layout";
+import { buildLayout, NODE_R, lineageColor } from "@/src/tree-layout";
 import { exportTreePdf, exportTreeBook } from "@/src/export-pdf";
 import { GradientButton } from "@/src/components/GradientButton";
 import { UpgradeModal } from "@/src/components/UpgradeModal";
@@ -102,19 +102,23 @@ function GrowNode({
 }: { x: number; y: number; isNew?: boolean; originDX?: number; originDY?: number; children: any }) {
   const styles = useStyles();
   const p = useSharedValue(isNew ? 0 : 1);
+  const pop = useSharedValue(isNew ? 0 : 1);
   useEffect(() => {
     if (isNew) {
       p.value = 0;
-      p.value = withDelay(60, withTiming(1, { duration: 460 }));
+      pop.value = 0;
+      // Travel from the parent's position, then settle with a springy pop.
+      p.value = withDelay(80, withTiming(1, { duration: 620 }));
+      pop.value = withDelay(560, withSequence(withSpring(1.12, { damping: 6, stiffness: 180 }), withSpring(1, { damping: 12, stiffness: 160 })));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const aStyle = useAnimatedStyle(() => ({
-    opacity: 0.25 + 0.75 * p.value,
+    opacity: 0.15 + 0.85 * p.value,
     transform: [
       { translateX: originDX * (1 - p.value) },
       { translateY: originDY * (1 - p.value) },
-      { scale: 0.35 + 0.65 * p.value },
+      { scale: (0.2 + 0.8 * p.value) * pop.value },
     ],
   }));
   return <Animated.View style={[styles.nodeWrap, { left: x, top: y }, aStyle]}>{children}</Animated.View>;
@@ -513,12 +517,15 @@ export default function TreeScreen() {
                 <Animated.View style={[{ width: layout.width, height: layout.height }, canvasStyle]}>
                   <Svg width={layout.width} height={layout.height} style={{ position: "absolute", top: 0, left: 0 }}>
                     {layout.edges.map((e) => {
+                      const isLineage = e.kind === "relation" && e.lineage != null;
                       const stroke =
                         e.kind === "adopted"
                           ? colors.nodeAdoptedLine
                           : e.kind === "divorce"
                             ? colors.nodeDivorceLine
-                            : colors.nodeRelationLine;
+                            : isLineage
+                              ? lineageColor(e.lineage!)
+                              : colors.nodeRelationLine;
                       return (
                         <Line
                           key={e.key}
@@ -527,7 +534,7 @@ export default function TreeScreen() {
                           x2={e.x2}
                           y2={e.y2}
                           stroke={stroke}
-                          strokeWidth={2}
+                          strokeWidth={isLineage ? 3.5 : 2}
                           strokeLinecap="round"
                           strokeDasharray={e.kind === "adopted" ? "7,6" : undefined}
                         />
@@ -549,6 +556,7 @@ export default function TreeScreen() {
                         <PersonNode
                           person={n.person}
                           selected={selected === n.id}
+                          ringColor={lineageColor(n.lineage)}
                           onPress={() => {
                             const now = Date.now();
                             const isDouble = lastTapRef.current.id === n.id && now - lastTapRef.current.time < 320;
