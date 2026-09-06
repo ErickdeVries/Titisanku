@@ -11,7 +11,8 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.emergent.keturunanku.xhuaqr",
       "infoPlist": {
-        "NSPhotoLibraryUsageDescription": "Add family member photos to their profiles"
+        "NSPhotoLibraryUsageDescription": "Add family member photos to their profiles",
+        "NSCameraUsageDescription": "Scan invite QR codes to join family trees"
       }
     },
     "android": {
@@ -20,7 +21,7 @@
         "backgroundColor": "#000000"
       },
       "package": "com.emergent.keturunanku.xhuaqr",
-      "permissions": ["READ_MEDIA_IMAGES", "RECEIVE_BOOT_COMPLETED", "SCHEDULE_EXACT_ALARM"]
+      "permissions": ["READ_MEDIA_IMAGES", "RECEIVE_BOOT_COMPLETED", "SCHEDULE_EXACT_ALARM", "CAMERA"]
     },
     "web": {
       "bundler": "metro",
@@ -52,7 +53,13 @@
           "photosPermission": "Add family member photos to their profiles"
         }
       ],
-      "expo-notifications"
+      "expo-notifications",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Scan invite QR codes to join family trees"
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true

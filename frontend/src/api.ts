@@ -89,6 +89,7 @@ export type Tree = {
   name: string;
   owner_id: string;
   plan: "free" | "pro" | "family";
+  is_public?: boolean;
   root_person_id: string | null;
   role: "admin" | "editor" | "viewer";
   person_count: number;
@@ -166,6 +167,19 @@ export const getInviteInfo = (
   apiFetch(`/invite-info/${token}`);
 export const acceptInviteLink = (token: string): Promise<{ tree_id: string; name: string }> =>
   apiFetch(`/invite-accept/${token}`, { method: "POST" });
+
+// ---- Join requests & public search ----
+export type PublicTree = { id: string; name: string; owner_name: string; member_count: number; is_member: boolean; pending: boolean };
+export const searchTrees = (q: string): Promise<PublicTree[]> =>
+  apiFetch(`/trees/search?q=${encodeURIComponent(q)}`);
+export const requestJoin = (treeId: string): Promise<{ ok: boolean; status: string; tree_name: string }> =>
+  apiFetch(`/trees/${treeId}/join-request`, { method: "POST" });
+export const listJoinRequests = (treeId: string): Promise<any[]> =>
+  apiFetch(`/trees/${treeId}/join-requests?tree_id=${treeId}`);
+export const actJoinRequest = (reqId: string, action: "approve" | "reject") =>
+  apiFetch(`/join-requests/${reqId}/${action}`, { method: "POST" });
+export const setTreeVisibility = (treeId: string, is_public: boolean) =>
+  apiFetch(`/trees/${treeId}/visibility?tree_id=${treeId}`, { method: "PUT", body: JSON.stringify({ is_public }) });
 
 // ---- Person notes & files ----
 export const listPersonNotes = (personId: string) => apiFetch(`/people/${personId}/notes`);

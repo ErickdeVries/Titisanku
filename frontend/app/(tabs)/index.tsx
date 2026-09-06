@@ -35,6 +35,7 @@ const useStyles = makeStyles((c) => ({
     borderBottomColor: c.divider,
   },
   headerTitle: { fontFamily: fonts.display, fontSize: 22, color: c.onSurface },
+  headerTitleRow: { flexDirection: "row", alignItems: "center", gap: 6 },
   headerLeft: { flex: 1, marginRight: 12 },
   headerMeta: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 2 },
   planChip: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999 },
@@ -50,6 +51,8 @@ const useStyles = makeStyles((c) => ({
   statLabel: { fontFamily: fonts.regular, fontSize: 11, color: c.muted },
   focusChip: { flexDirection: "row", alignItems: "center", gap: 6, alignSelf: "flex-start", marginHorizontal: 16, marginTop: 10, backgroundColor: c.brandTertiary, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 999 },
   focusChipText: { fontFamily: fonts.medium, fontSize: 12, color: c.onBrandTertiary },
+  modeChip: { flexDirection: "row", alignItems: "center", gap: 6, alignSelf: "flex-start", marginHorizontal: 16, marginTop: 8, backgroundColor: c.brandPrimary, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 999 },
+  modeChipText: { fontFamily: fonts.semibold, fontSize: 12, color: c.onBrandPrimary },
   canvasArea: { flex: 1, overflow: "hidden" },
   center: { flex: 1, alignItems: "center", justifyContent: "center", padding: 32, gap: 16 },
   emptyImg: { width: 180, height: 180, borderRadius: 20 },
@@ -308,13 +311,33 @@ export default function TreeScreen() {
     setSelected(null);
   };
 
+  const toggleViewAll = () => {
+    if (hideSiblings) {
+      setHideSiblings(false);
+      setFilterUp(99);
+      setFilterDown(99);
+    } else {
+      setHideSiblings(true);
+      setFilterUp(2);
+      setFilterDown(2);
+    }
+  };
+
   const focusName = layout.nodes.find((n) => n.id === activeFocus)?.person.name;
   const isRootFocus = !data?.root_id || activeFocus === data?.root_id;
 
   const doExport = async () => {
     setExporting(true);
     try {
-      await exportTreePdf(data!.people, data!.relations, activeFocus ?? data!.root_id, filterUp, filterDown, "KETURUNANKU", plan === "free");
+      let ppl = data!.people;
+      let rels = data!.relations;
+      const root = activeFocus ?? data!.root_id;
+      if (hideSiblings && root) {
+        const direct = directLineSet(ppl, rels, root, filterUp, filterDown);
+        ppl = ppl.filter((p) => direct.has(p.id));
+        rels = rels.filter((r) => direct.has(r.person_id) && direct.has(r.related_person_id) && r.relation_type !== "sibling");
+      }
+      await exportTreePdf(ppl, rels, root, filterUp, filterDown, "KETURUNANKU", plan === "free");
       setExportOpen(false);
     } catch (e) {
       console.log("export error", e);
@@ -339,7 +362,10 @@ export default function TreeScreen() {
     <View style={styles.root}>
       <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
         <View style={styles.headerLeft}>
-          <Text style={styles.headerTitle} numberOfLines={1}>{activeTree?.name ?? t("tree")}</Text>
+          <Pressable onPress={() => router.push("/trees")} style={styles.headerTitleRow} testID="tree-switcher" hitSlop={8}>
+            <Text style={[styles.headerTitle, { flexShrink: 1 }]} numberOfLines={1}>{activeTree?.name ?? t("tree")}</Text>
+            <Feather name="chevron-down" size={18} color={colors.brandSecondary} />
+          </Pressable>
           <View style={styles.headerMeta}>
             <View style={[styles.planChip, { backgroundColor: plan === "free" ? colors.brandTertiary : colors.brandSecondary }]}>
               <Text style={[styles.planChipText, { color: plan === "free" ? colors.onBrandTertiary : colors.onBrandSecondary }]}>
@@ -406,6 +432,10 @@ export default function TreeScreen() {
               <Feather name="x" size={13} color={colors.onBrandTertiary} />
             </Pressable>
           ) : null}
+          <Pressable style={styles.modeChip} onPress={toggleViewAll} testID="canvas-view-all">
+            <Feather name={hideSiblings ? "eye" : "git-commit"} size={13} color={colors.onBrandPrimary} />
+            <Text style={styles.modeChipText}>{hideSiblings ? t("view_all") : t("direct_line_mode")}</Text>
+          </Pressable>
         </>
       ) : null}
 

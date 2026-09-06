@@ -8,7 +8,7 @@ from typing import List, Optional
 
 import httpx
 import requests
-from fastapi import FastAPI, APIRouter, HTTPException, Header, Depends, UploadFile, File, Query
+from fastapi import FastAPI, APIRouter, HTTPException, Header, Depends, UploadFile, File, Query, Body
 from fastapi.responses import Response
 from starlette.concurrency import run_in_threadpool
 from starlette.middleware.cors import CORSMiddleware
@@ -256,6 +256,7 @@ async def create_tree_for_user(user, name: str, make_root: bool = True) -> dict:
         "name": name,
         "owner_id": user["user_id"],
         "plan": "free",
+        "is_public": False,
         "root_person_id": root_person_id,
         "created_at": now_utc(),
     }
@@ -310,8 +311,7 @@ async def auth_session(body: SessionInput):
             "created_at": now_utc(),
         }
         await db.users.insert_one(user_doc)
-        # Every brand-new user gets their own tree (they are its admin/owner).
-        await create_tree_for_user(user_doc, f"Keluarga {name}")
+        # New users choose in onboarding whether to create or join a tree (no auto tree).
 
     await db.user_sessions.insert_one({
         "session_token": session_token,
@@ -1116,6 +1116,85 @@ async def create_tree(body: TreeCreateInput, user=Depends(get_current_user)):
     tree = await create_tree_for_user(user, name)
     return {**tree, "role": "admin", "person_count": 1, "member_count": 1,
             "editor_count": 0, "photo_count": 0, "plan_limits": plan_limits("free"), "limit": 50}
+
+
+@api_router.get("/trees/search")
+async def search_trees(q: str = Query(""), user=Depends(get_current_user)):
+    """Search PUBLIC trees by name so a user can request to join."""
+    q = (q or "").strip()
+    if len(q) < 2:
+        return []
+    trees = await db.trees.find(
+        {"is_public": True, "name": {"$regex": q, "$options": "i"}}, {"_id": 0}
+    ).limit(20).to_list(20)
+    my = {m["tree_id"] for m in await db.tree_members.find({"user_id": user["user_id"]}, {"_id": 0, "tree_id": 1}).to_list(500)}
+    pend = {r["tree_id"] for r in await db.join_requests.find({"user_id": user["user_id"], "status": "pending"}, {"_id": 0, "tree_id": 1}).to_list(500)}
+    out = []
+    for tr in trees:
+        owner = await db.users.find_one({"user_id": tr.get("owner_id")}, {"_id": 0, "name": 1})
+        out.append({
+            "id": tr["id"], "name": tr["name"], "owner_name": owner["name"] if owner else "?",
+            "member_count": await db.tree_members.count_documents({"tree_id": tr["id"]}),
+            "is_member": tr["id"] in my, "pending": tr["id"] in pend,
+        })
+    return out
+
+
+@api_router.post("/trees/{tid}/join-request")
+async def create_join_request(tid: str, user=Depends(get_current_user)):
+    tree = await db.trees.find_one({"id": tid}, {"_id": 0})
+    if not tree:
+        raise HTTPException(status_code=404, detail="Pohon tidak ditemukan")
+    if await db.tree_members.find_one({"tree_id": tid, "user_id": user["user_id"]}):
+        raise HTTPException(status_code=400, detail="Anda sudah menjadi anggota pohon ini")
+    if not await db.join_requests.find_one({"tree_id": tid, "user_id": user["user_id"], "status": "pending"}):
+        await db.join_requests.insert_one({
+            "id": str(uuid.uuid4()), "tree_id": tid, "user_id": user["user_id"],
+            "status": "pending", "created_at": now_utc(),
+        })
+    return {"ok": True, "status": "pending", "tree_name": tree["name"]}
+
+
+@api_router.get("/trees/{tid}/join-requests")
+async def list_join_requests(tid: str, user=Depends(get_current_user)):
+    tree, role = await resolve_tree(user, tid)
+    require_role_t(role, ["admin"])
+    reqs = await db.join_requests.find({"tree_id": tid, "status": "pending"}, {"_id": 0}).to_list(500)
+    out = []
+    for r in reqs:
+        u = await db.users.find_one({"user_id": r["user_id"]}, {"_id": 0})
+        out.append({**r, "name": u["name"] if u else "?", "email": u.get("email") if u else None, "picture": u.get("picture") if u else None})
+    return _serialize(out)
+
+
+@api_router.post("/join-requests/{req_id}/{action}")
+async def act_join_request(req_id: str, action: str, user=Depends(get_current_user)):
+    if action not in ("approve", "reject"):
+        raise HTTPException(status_code=400, detail="Aksi tidak valid")
+    req = await db.join_requests.find_one({"id": req_id}, {"_id": 0})
+    if not req:
+        raise HTTPException(status_code=404, detail="Permintaan tidak ditemukan")
+    tree, role = await resolve_tree(user, req["tree_id"])
+    require_role_t(role, ["admin"])
+    if action == "approve":
+        if not await db.tree_members.find_one({"tree_id": req["tree_id"], "user_id": req["user_id"]}):
+            await db.tree_members.insert_one({
+                "id": str(uuid.uuid4()), "tree_id": req["tree_id"], "user_id": req["user_id"],
+                "role": "editor", "joined_at": now_utc(),
+            })
+        await db.join_requests.update_one({"id": req_id}, {"$set": {"status": "approved", "resolved_at": now_utc()}})
+    else:
+        await db.join_requests.update_one({"id": req_id}, {"$set": {"status": "rejected", "resolved_at": now_utc()}})
+    return {"ok": True}
+
+
+@api_router.put("/trees/{tid}/visibility")
+async def set_tree_visibility(tid: str, body: dict = Body(...), user=Depends(get_current_user)):
+    tree, role = await resolve_tree(user, tid)
+    require_role_t(role, ["admin"])
+    val = bool(body.get("is_public"))
+    await db.trees.update_one({"id": tid}, {"$set": {"is_public": val}})
+    return {"ok": True, "is_public": val}
 
 
 @api_router.post("/trees/{tid}/upgrade")

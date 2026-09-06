@@ -12,7 +12,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { ErrorBoundary } from "@/src/components/error-boundary";
 import { queryClient } from "@/src/query-client";
 import { AuthProvider, useAuth } from "@/src/auth";
-import { TreeProvider } from "@/src/tree-context";
+import { TreeProvider, useTree } from "@/src/tree-context";
 import { LanguageProvider } from "@/src/i18n";
 import { storage } from "@/src/utils/storage";
 
@@ -21,6 +21,7 @@ SplashScreen.preventAutoHideAsync().catch(() => {});
 
 function RootNav() {
   const { user, loading } = useAuth();
+  const { trees, loading: treesLoading } = useTree();
   const segments = useSegments();
   const router = useRouter();
 
@@ -28,9 +29,21 @@ function RootNav() {
     if (loading) return;
     const inAuth = segments[0] === "login";
     const inInvite = segments[0] === "invite";
-    if (!user && !inAuth && !inInvite) router.replace("/login");
-    else if (user && inAuth) router.replace("/(tabs)");
-  }, [user, loading, segments, router]);
+    const inWelcome = segments[0] === "welcome";
+    const inJoin = segments[0] === "join";
+    if (!user && !inAuth && !inInvite) {
+      router.replace("/login");
+      return;
+    }
+    if (user && inAuth) {
+      router.replace("/(tabs)");
+      return;
+    }
+    // New user with no tree yet → onboarding. Allow welcome/join/invite to stay.
+    if (user && !treesLoading && trees.length === 0 && !inWelcome && !inJoin && !inInvite) {
+      router.replace("/welcome");
+    }
+  }, [user, loading, treesLoading, trees.length, segments, router]);
 
   // Resume a pending invite once the user is authenticated (works on web + native).
   useEffect(() => {
@@ -56,6 +69,8 @@ function RootNav() {
   return (
     <Stack screenOptions={{ headerShown: false }}>
       <Stack.Screen name="login" />
+      <Stack.Screen name="welcome" />
+      <Stack.Screen name="join" />
       <Stack.Screen name="(tabs)" />
       <Stack.Screen name="person/[id]" options={{ presentation: "modal" }} />
       <Stack.Screen name="add-relative" options={{ presentation: "modal" }} />

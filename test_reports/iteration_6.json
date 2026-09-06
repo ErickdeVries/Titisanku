@@ -1,0 +1,29 @@
+{
+  "summary": "Iteration-6 fully validated the new Onboarding + Join Tree backend flow. Authored /app/backend/tests/test_join_flow.py with 27 tests across 6 classes covering: PUT /api/trees/{tid}/visibility (admin toggles is_public true/false with persistence check; non-admin 403), GET /api/trees/search (min 2 chars enforced; public-only; enriched result carries owner_name/member_count/is_member/pending; private tree excluded; is_member reflects owner membership), POST /api/trees/{tid}/join-request (404 unknown tree; 200 first create writes pending doc; idempotent — second call keeps count==1; search then shows pending=True for the requester), GET /api/trees/{tid}/join-requests (403 for non-admin; admin sees list enriched with name/email/picture), POST /api/join-requests/{req_id}/{action} (invalid action 400; unknown req_id 404; reject flips status to 'rejected' with resolved_at and does NOT add tree_member; approve flips to 'approved', inserts tree_member with role='editor', requester appears in GET /trees/{id}/members, requester can now GET /api/tree?tree_id=..., search now shows is_member=True and pending=False, list join-requests no longer shows the approved user, and re-requesting as a member returns 400). Result: 27/27 PASSED (100%). Cleanup verified: 0 TEST_JOIN_* users/trees/join_requests left in Mongo — real family-tree data untouched.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": [], "react_native_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_join_flow.py",
+    "/app/test_reports/pytest/iter6_join_flow_results.xml"
+  ],
+  "action_items": [
+    "No functional bugs found in Join Tree backend flow. Endpoints are ready for frontend integration."
+  ],
+  "critical_code_review_comments": [
+    "server.py:1121 GET /api/trees/search: per-result queries fire two awaits (users.find_one + tree_members.count_documents) inside a Python for-loop. Fine at N<=20 but consider aggregation (`$lookup`) or batching if search grows.",
+    "server.py:1131 pending set only considers status=='pending' — correct. After approve/reject the search flag flips off as expected (verified in test_search_now_shows_is_member_true_for_b).",
+    "server.py:1143 create_join_request does not check if user is already a member before the 400 branch on line 1148 — good; but it also allows creating a request when a prior request is 'approved' or 'rejected' as long as no pending exists. That matches spec (rejected users may retry) but note: an already-approved user is blocked by the tree_members check on line 1148 (verified by test_existing_member_cannot_re_request).",
+    "server.py:1170 act_join_request accepts any action via path segment — a stray typo like `/foo` cleanly returns 400 (verified). Consider explicit Literal['approve','reject'] for openapi clarity, but behaviourally correct.",
+    "server.py:1180 approve is idempotent w.r.t. tree_members insertion (guarded by find_one). Good — no duplicate memberships if action is re-fired.",
+    "server.py:1191 PUT /trees/{tid}/visibility: body typed as `dict = Body(...)` and coerces via `bool(body.get(...))`. Missing key silently becomes False. Consider a Pydantic model to reject malformed payloads with 422 for stricter API surface. Not a bug."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_join_flow.py (NEW)"
+  ],
+  "success_rate": {"backend": "100% (27/27)", "frontend": "N/A — skipped per request (Google OAuth)"},
+  "seed_data_creation": "test_join_flow.py seeds 3 synthetic users (TEST_JOIN_A/B/C) + sessions directly in Mongo, then creates a tree via POST /trees for user A. All synthetic docs are tracked in a per-session CREATED registry and deleted in the module-scoped teardown. Verified post-run: 0 leftover TEST_JOIN_* users/trees/join_requests. Existing real family-tree data was NOT touched (no delete_many({})).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Re-run: `cd /app/backend/tests && pytest test_join_flow.py -n 0 -v` (requires -n 0 due to STATE module-level dict + shared MONGO connection). Endpoints tested: PUT /api/trees/{tid}/visibility, GET /api/trees/search?q=, POST /api/trees/{tid}/join-request, GET /api/trees/{tid}/join-requests, POST /api/join-requests/{req_id}/{action}. Full flow (search -> request -> approve -> access) verified. Frontend join/welcome screens live under /app/frontend/... behind Google OAuth and are user-tested manually.",
+  "rca_of_issue": "N/A — verification-only iteration; all new endpoints behave per spec."
+}

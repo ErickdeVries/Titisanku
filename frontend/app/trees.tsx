@@ -3,7 +3,7 @@ import { View, Text, Pressable, StyleSheet, ScrollView, TextInput, ActivityIndic
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useMutation } from "@tanstack/react-query";
-import { X, Plus, Check, Crown, Users } from "lucide-react-native";
+import { X, Plus, Check, Crown, Users, UserPlus } from "lucide-react-native";
 import { fonts, useTheme } from "@/src/theme";
 import { useI18n } from "@/src/i18n";
 import { useTree } from "@/src/tree-context";
@@ -82,6 +82,15 @@ export default function TreesScreen() {
         >
           <Plus size={20} color={colors.brandPrimary} />
           <Text style={[styles.createText, { color: colors.brandPrimary }]}>{t("create_tree")}</Text>
+        </Pressable>
+
+        <Pressable
+          testID="join-tree-button"
+          onPress={() => { router.back(); router.push("/join"); }}
+          style={[styles.createBtn, { borderColor: colors.brandSecondary }]}
+        >
+          <UserPlus size={20} color={colors.brandSecondary} />
+          <Text style={[styles.createText, { color: colors.brandSecondary }]}>{t("join_tree")}</Text>
         </Pressable>
       </ScrollView>
 

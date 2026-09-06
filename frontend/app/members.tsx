@@ -1,4 +1,4 @@
-import { View, Text, Pressable, StyleSheet, ScrollView, ActivityIndicator, Alert, Platform, Share } from "react-native";
+import { View, Text, Pressable, StyleSheet, ScrollView, ActivityIndicator, Alert, Platform, Share, Switch } from "react-native";
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Image } from "expo-image";
@@ -6,11 +6,14 @@ import * as Linking from "expo-linking";
 import * as Clipboard from "expo-clipboard";
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Shield, Trash2, Link2, Copy, Check } from "lucide-react-native";
+import { ArrowLeft, Shield, Trash2, Link2, Copy, Check, X, Globe } from "lucide-react-native";
 import { fonts, useTheme } from "@/src/theme";
 import { useI18n } from "@/src/i18n";
 import { useTree } from "@/src/tree-context";
-import { getMembers, changeMemberRole, removeMember, createInviteLink, fileUrl, TreeMember } from "@/src/api";
+import {
+  getMembers, changeMemberRole, removeMember, createInviteLink, fileUrl, TreeMember,
+  listJoinRequests, actJoinRequest, setTreeVisibility,
+} from "@/src/api";
 
 const ROLES = ["admin", "editor", "viewer"] as const;
 
@@ -19,13 +22,38 @@ export default function MembersScreen() {
   const { t } = useI18n();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { activeTreeId } = useTree();
+  const { activeTreeId, activeTree, refreshTrees } = useTree();
   const qc = useQueryClient();
 
   const { data, isLoading } = useQuery({
     queryKey: ["members", activeTreeId],
     queryFn: () => getMembers(activeTreeId!),
     enabled: !!activeTreeId,
+  });
+
+  const isAdmin = data?.role === "admin";
+
+  const { data: joinReqs } = useQuery({
+    queryKey: ["join-requests", activeTreeId],
+    queryFn: () => listJoinRequests(activeTreeId!),
+    enabled: !!activeTreeId && isAdmin,
+  });
+
+  const actReqMut = useMutation({
+    mutationFn: ({ id, action }: { id: string; action: "approve" | "reject" }) => actJoinRequest(id, action),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["join-requests", activeTreeId] });
+      qc.invalidateQueries({ queryKey: ["members", activeTreeId] });
+    },
+  });
+
+  const [isPublic, setIsPublic] = useState<boolean>(!!activeTree?.is_public);
+  const visMut = useMutation({
+    mutationFn: (val: boolean) => setTreeVisibility(activeTreeId!, val),
+    onSuccess: (_r, val) => {
+      setIsPublic(val);
+      refreshTrees();
+    },
   });
 
   const roleMut = useMutation({
@@ -37,7 +65,6 @@ export default function MembersScreen() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["members", activeTreeId] }),
   });
 
-  const isAdmin = data?.role === "admin";
   const [inviteUrl, setInviteUrl] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
@@ -93,6 +120,62 @@ export default function MembersScreen() {
         <View style={styles.center}><ActivityIndicator color={colors.brandPrimary} /></View>
       ) : (
         <ScrollView contentContainerStyle={{ padding: 16, gap: 10 }}>
+          {isAdmin ? (
+            <View style={[styles.inviteCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>
+              <View style={styles.inviteHead}>
+                <Globe size={18} color={colors.brandSecondary} />
+                <Text style={[styles.inviteTitle, { color: colors.onSurface }]}>{t("tree_public")}</Text>
+              </View>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+                <Text style={[styles.publicDesc, { color: colors.muted, flex: 1 }]}>{t("tree_public_desc")}</Text>
+                <Switch
+                  testID="public-toggle"
+                  value={isPublic}
+                  onValueChange={(v) => visMut.mutate(v)}
+                  trackColor={{ true: colors.brandPrimary, false: colors.border }}
+                  thumbColor="#FFFFFF"
+                />
+              </View>
+            </View>
+          ) : null}
+
+          {isAdmin && joinReqs && joinReqs.length > 0 ? (
+            <View style={[styles.inviteCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>
+              <Text style={[styles.inviteTitle, { color: colors.onSurface, marginBottom: 4 }]}>
+                {t("join_requests")} ({joinReqs.length})
+              </Text>
+              {joinReqs.map((r: any) => (
+                <View key={r.id} style={styles.reqRow}>
+                  <View style={[styles.avatar, { backgroundColor: colors.surfaceTertiary }]}>
+                    {r.picture ? (
+                      <Image source={{ uri: fileUrl(r.picture) }} style={styles.avatarImg} contentFit="cover" />
+                    ) : (
+                      <Text style={[styles.avatarInit, { color: colors.onSurfaceTertiary }]}>{(r.name || "?").charAt(0).toUpperCase()}</Text>
+                    )}
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.name, { color: colors.onSurface }]} numberOfLines={1}>{r.name}</Text>
+                    <Text style={[styles.email, { color: colors.muted }]} numberOfLines={1}>{r.email}</Text>
+                  </View>
+                  <Pressable
+                    testID={`approve-${r.id}`}
+                    onPress={() => actReqMut.mutate({ id: r.id, action: "approve" })}
+                    style={[styles.reqBtn, { backgroundColor: colors.success }]}
+                  >
+                    <Check size={16} color={colors.onSuccess} />
+                  </Pressable>
+                  <Pressable
+                    testID={`reject-${r.id}`}
+                    onPress={() => actReqMut.mutate({ id: r.id, action: "reject" })}
+                    style={[styles.reqBtn, { backgroundColor: colors.surfaceTertiary }]}
+                  >
+                    <X size={16} color={colors.error} />
+                  </Pressable>
+                </View>
+              ))}
+            </View>
+          ) : null}
+
           {isAdmin ? (
             <View style={[styles.inviteCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>
               <View style={styles.inviteHead}>
@@ -196,4 +279,7 @@ const styles = StyleSheet.create({
   inviteBtnText: { fontFamily: fonts.semibold, fontSize: 13 },
   inviteCreate: { borderRadius: 12, paddingVertical: 14, alignItems: "center" },
   inviteCreateText: { fontFamily: fonts.semibold, fontSize: 15 },
+  publicDesc: { fontFamily: fonts.regular, fontSize: 13, lineHeight: 18 },
+  reqRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 8 },
+  reqBtn: { width: 38, height: 38, borderRadius: 10, alignItems: "center", justifyContent: "center" },
 });

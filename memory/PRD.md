@@ -267,3 +267,17 @@ JSON backup, and email collaboration invites. Google login; first user = admin +
 
 
 
+
+## Iteration 10 — Onboarding + Join Tree flows + Tree Switcher (2026-06)
+- FLOW 1 (Onboarding): app/welcome.tsx — new users (0 trees) land here. Two cards: Buat Pohon Baru
+  (name sheet -> createTree -> setActive -> tabs) and Gabung Pohon yang Ada (-> /join). RootNav (_layout.tsx)
+  redirects authed users with trees.length===0 to /welcome (welcome/join/invite exempt). Backend no longer
+  auto-creates a tree per new Google user (they choose in onboarding).
+- FLOW 2 (Join Tree): app/join.tsx — 3 tabs: Link/Kode (paste link/code -> acceptInviteLink), Cari
+  (searchTrees public trees -> requestJoin -> pending chip), Scan QR (expo-camera qr, permission per contract,
+  parses /invite/{token} or tree_* id). CAMERA ONLY WORKS ON NATIVE BUILD (not Expo Go/preview).
+- Tree Switcher: index.tsx header title tappable (chevron-down) -> /trees modal. trees.tsx gained Gabung Pohon btn.
+- members.tsx admin: Pohon Publik Switch (setTreeVisibility) + Permintaan Gabung approve/reject (actJoinRequest).
+- app.json: NSCameraUsageDescription (iOS), CAMERA (Android), expo-camera plugin.
+- Backend verified by testing_agent: 27/27 PASS. i18n keys welcome_*/join_*/tab_*/camera_* (ID+EN) added.
+- PENDING next: Tahap 5 tree limit enforcement UI (Free=50 upgrade modal + CLAIM CABANG forces free plan).
