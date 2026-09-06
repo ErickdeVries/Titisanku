@@ -1,8 +1,10 @@
 import os
 import uuid
+import time
 import logging
 import secrets
 import hashlib
+from collections import deque
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional
@@ -46,6 +48,14 @@ MIDTRANS_IS_PRODUCTION = os.environ.get("MIDTRANS_ENV", "production").lower() ==
 MIDTRANS_SNAP_URL = ("https://app.midtrans.com" if MIDTRANS_IS_PRODUCTION else "https://app.sandbox.midtrans.com") + "/snap/v1/transactions"
 MIDTRANS_STATUS_BASE = "https://api.midtrans.com" if MIDTRANS_IS_PRODUCTION else "https://api.sandbox.midtrans.com"
 PLAN_PRICES = {"pro": 149000, "family": 199000}
+SUPERADMIN_EMAILS = [e.strip().lower() for e in os.environ.get("SUPERADMIN_EMAILS", "").split(",") if e.strip()]
+
+
+def is_superadmin(user) -> bool:
+    return (user.get("email") or "").lower() in SUPERADMIN_EMAILS
+
+
+RECENT_TIMINGS: deque = deque(maxlen=800)
 storage_key = None
 
 
@@ -107,6 +117,10 @@ async def send_email(*, to: str, subject: str, html: str) -> Optional[str]:
 # ---------------------------------------------------------------------------
 def now_utc():
     return datetime.now(timezone.utc)
+
+
+def _aware(dt):
+    return dt.replace(tzinfo=timezone.utc) if dt is not None and dt.tzinfo is None else dt
 
 
 class PersonData(BaseModel):
@@ -340,7 +354,7 @@ async def auth_session(body: SessionInput):
 
 @api_router.get("/auth/me")
 async def auth_me(user=Depends(get_current_user)):
-    return user
+    return {**user, "is_superadmin": is_superadmin(user)}
 
 
 @api_router.post("/auth/logout")
@@ -1512,14 +1526,7 @@ async def set_tree_visibility(tid: str, body: dict = Body(...), user=Depends(get
     return {"ok": True, "is_public": val}
 
 
-@api_router.delete("/trees/{tid}")
-async def delete_tree(tid: str, user=Depends(get_current_user)):
-    """Permanently delete a tree and all its data. Only the tree OWNER may do this."""
-    tree = await db.trees.find_one({"id": tid}, {"_id": 0})
-    if not tree:
-        raise HTTPException(status_code=404, detail="Pohon tidak ditemukan")
-    if tree.get("owner_id") != user["user_id"]:
-        raise HTTPException(status_code=403, detail="Hanya pemilik yang dapat menghapus pohon")
+async def _purge_tree(tid: str):
     room_ids = [tid] + [r["id"] for r in await db.chat_rooms.find({"tree_id": tid}, {"_id": 0, "id": 1}).to_list(2000)]
     await db.trees.delete_one({"id": tid})
     await db.tree_members.delete_many({"tree_id": tid})
@@ -1533,7 +1540,165 @@ async def delete_tree(tid: str, user=Depends(get_current_user)):
     await db.family_chat.delete_many({"room_id": {"$in": room_ids}})
     await db.chat_typing.delete_many({"room_id": {"$in": room_ids}})
     await db.chat_mutes.delete_many({"room_id": {"$in": room_ids}})
+
+
+@api_router.delete("/trees/{tid}")
+async def delete_tree(tid: str, user=Depends(get_current_user)):
+    """Permanently delete a tree and all its data. Only the tree OWNER may do this."""
+    tree = await db.trees.find_one({"id": tid}, {"_id": 0})
+    if not tree:
+        raise HTTPException(status_code=404, detail="Pohon tidak ditemukan")
+    if tree.get("owner_id") != user["user_id"]:
+        raise HTTPException(status_code=403, detail="Hanya pemilik yang dapat menghapus pohon")
+    await _purge_tree(tid)
     return {"ok": True}
+
+
+@api_router.post("/chat/rooms/{room_id}/leave")
+async def leave_group(room_id: str, tree_id: Optional[str] = Query(None), user=Depends(get_current_user)):
+    tree, role = await resolve_tree(user, tree_id)
+    room = await db.chat_rooms.find_one({"id": room_id, "tree_id": tree["id"]}, {"_id": 0})
+    if not room or room.get("type") != "group":
+        raise HTTPException(status_code=404, detail="Grup tidak ditemukan")
+    if user["user_id"] not in room.get("member_ids", []):
+        raise HTTPException(status_code=400, detail="Anda bukan anggota grup ini")
+    remaining = [m for m in room["member_ids"] if m != user["user_id"]]
+    if not remaining:
+        await db.chat_rooms.delete_one({"id": room_id})
+        await db.family_chat.delete_many({"room_id": room_id})
+    else:
+        await db.chat_rooms.update_one({"id": room_id}, {"$set": {"member_ids": remaining}})
+    await db.chat_mutes.delete_one({"user_id": user["user_id"], "room_id": room_id})
+    return {"ok": True}
+
+
+class FeedbackInput(BaseModel):
+    message: str
+    category: Optional[str] = "general"
+
+
+@api_router.post("/feedback")
+async def submit_feedback(body: FeedbackInput, user=Depends(get_current_user)):
+    if not (body.message or "").strip():
+        raise HTTPException(status_code=400, detail="Masukan kosong")
+    await db.feedback.insert_one({
+        "id": str(uuid.uuid4()), "user_id": user["user_id"], "name": user.get("name"),
+        "email": user.get("email"), "category": body.category or "general",
+        "message": body.message.strip(), "status": "new", "created_at": now_utc(),
+    })
+    return {"ok": True}
+
+
+@api_router.delete("/account")
+async def delete_account(user=Depends(get_current_user)):
+    uid = user["user_id"]
+    owned = await db.trees.find({"owner_id": uid}, {"_id": 0, "id": 1}).to_list(1000)
+    for tr in owned:
+        await _purge_tree(tr["id"])
+    await db.tree_members.delete_many({"user_id": uid})
+    await db.chat_rooms.update_many({"member_ids": uid}, {"$pull": {"member_ids": uid}})
+    await db.user_sessions.delete_many({"user_id": uid})
+    await db.chat_mutes.delete_many({"user_id": uid})
+    await db.app_notifications.delete_many({"user_id": uid})
+    await db.join_requests.delete_many({"user_id": uid})
+    await db.users.delete_one({"user_id": uid})
+    return {"ok": True}
+
+
+@api_router.get("/admin/overview")
+async def admin_overview(user=Depends(get_current_user)):
+    if not is_superadmin(user):
+        raise HTTPException(status_code=403, detail="Akses ditolak")
+    now = now_utc()
+    d7 = now - timedelta(days=7)
+    d30 = now - timedelta(days=30)
+    d1 = now - timedelta(days=1)
+
+    total_users = await db.users.count_documents({})
+    new_7d = await db.users.count_documents({"created_at": {"$gte": d7}})
+    new_30d = await db.users.count_documents({"created_at": {"$gte": d30}})
+    active_7d = len(await db.user_sessions.distinct("user_id", {"created_at": {"$gte": d7}}))
+
+    total_trees = await db.trees.count_documents({})
+    free_trees = await db.trees.count_documents({"plan": "free"})
+    pro_trees = await db.trees.count_documents({"plan": "pro"})
+    family_trees = await db.trees.count_documents({"plan": "family"})
+
+    paid = await db.payment_orders.find({"status": "paid"}, {"_id": 0, "amount": 1, "paid_at": 1}).to_list(5000)
+    revenue_total = sum(o.get("amount", 0) for o in paid)
+    revenue_30d = sum(o.get("amount", 0) for o in paid if o.get("paid_at") and _aware(o["paid_at"]) >= d30)
+    paid_count = len(paid)
+
+    total_people = await db.people.count_documents({"deleted_at": None})
+    total_messages = await db.family_chat.count_documents({"deleted_at": None})
+
+    # Funnel
+    owners = len(await db.trees.distinct("owner_id"))
+    payers = len(await db.payment_orders.distinct("user_id", {"status": "paid"}))
+    funnel = [
+        {"step": "Daftar", "count": total_users},
+        {"step": "Buat Pohon", "count": owners},
+        {"step": "Upgrade", "count": payers},
+    ]
+
+    # Feature usage proxies
+    features = [
+        {"key": "Anggota ditambahkan", "count": total_people},
+        {"key": "Pesan chat", "count": total_messages},
+        {"key": "Grup chat", "count": await db.chat_rooms.count_documents({"type": "group"})},
+        {"key": "Chat pribadi", "count": await db.chat_rooms.count_documents({"type": "direct"})},
+        {"key": "Permintaan gabung", "count": await db.join_requests.count_documents({})},
+        {"key": "Foto anggota", "count": await db.people.count_documents({"photo_url": {"$nin": [None, ""]}, "deleted_at": None})},
+    ]
+    features.sort(key=lambda f: f["count"], reverse=True)
+
+    # Tech
+    recent = list(RECENT_TIMINGS)
+    last_hour = [r for r in recent if r[0] >= now - timedelta(hours=1)]
+    avg_ms = round(sum(r[2] for r in last_hour) / len(last_hour), 1) if last_hour else 0
+    req_1h = len(last_hour)
+    err_24h = await db.error_logs.count_documents({"created_at": {"$gte": d1}})
+    errors = _serialize(await db.error_logs.find({}, {"_id": 0}).sort("created_at", -1).to_list(15))
+    db_counts = {
+        "users": total_users, "trees": total_trees, "people": total_people,
+        "relations": await db.relations.count_documents({"deleted_at": None}),
+        "messages": total_messages, "feedback": await db.feedback.count_documents({}),
+    }
+
+    return {
+        "business": {
+            "total_users": total_users, "new_users_7d": new_7d, "new_users_30d": new_30d,
+            "active_users_7d": active_7d, "total_trees": total_trees,
+            "plans": {"free": free_trees, "pro": pro_trees, "family": family_trees},
+            "revenue_total": revenue_total, "revenue_30d": revenue_30d, "paid_count": paid_count,
+        },
+        "funnel": funnel,
+        "features": features,
+        "tech": {
+            "avg_response_ms": avg_ms, "requests_1h": req_1h, "errors_24h": err_24h,
+            "db_counts": db_counts, "recent_errors": errors,
+        },
+    }
+
+
+@api_router.get("/admin/users")
+async def admin_users(user=Depends(get_current_user)):
+    if not is_superadmin(user):
+        raise HTTPException(status_code=403, detail="Akses ditolak")
+    users = await db.users.find({}, {"_id": 0, "password": 0}).sort("created_at", -1).to_list(100)
+    out = []
+    for u in _serialize(users):
+        u["tree_count"] = await db.tree_members.count_documents({"user_id": u["user_id"]})
+        out.append(u)
+    return {"users": out}
+
+
+@api_router.get("/admin/feedback")
+async def admin_feedback(user=Depends(get_current_user)):
+    if not is_superadmin(user):
+        raise HTTPException(status_code=403, detail="Akses ditolak")
+    items = _serialize(await db.feedback.find({}, {"_id": 0}).sort("created_at", -1).to_list(200))
+    return {"feedback": items}
 
 
 @api_router.post("/trees/{tid}/upgrade")
@@ -1633,7 +1798,20 @@ async def payment_status(order_id: str, user=Depends(get_current_user)):
     return {"status": order["status"], "plan": order["plan"]}
 
 
-@api_router.get("/trees/{tid}/members")
+@api_router.get("/payments/history")
+async def payment_history(user=Depends(get_current_user)):
+    orders = await db.payment_orders.find(
+        {"user_id": user["user_id"]}, {"_id": 0}
+    ).sort("created_at", -1).to_list(200)
+    out = []
+    for o in _serialize(orders):
+        tree = await db.trees.find_one({"id": o.get("tree_id")}, {"_id": 0, "name": 1})
+        o["tree_name"] = tree.get("name") if tree else None
+        out.append(o)
+    return {"orders": out}
+
+
+
 async def list_members(tid: str, user=Depends(get_current_user)):
     tree, role = await resolve_tree(user, tid)
     members = await db.tree_members.find({"tree_id": tid}, {"_id": 0}).to_list(2000)
@@ -1826,6 +2004,37 @@ async def root():
 
 
 app.include_router(api_router)
+
+
+@app.middleware("http")
+async def metrics_middleware(request, call_next):
+    start = time.perf_counter()
+    try:
+        response = await call_next(request)
+    except Exception as e:
+        ms = (time.perf_counter() - start) * 1000
+        RECENT_TIMINGS.append((now_utc(), request.url.path, ms, 500))
+        try:
+            await db.error_logs.insert_one({
+                "id": str(uuid.uuid4()), "path": str(request.url.path), "method": request.method,
+                "status": 500, "detail": str(e)[:400], "created_at": now_utc(),
+            })
+        except Exception:
+            pass
+        raise
+    ms = (time.perf_counter() - start) * 1000
+    path = request.url.path
+    RECENT_TIMINGS.append((now_utc(), path, ms, response.status_code))
+    if response.status_code >= 500 and path.startswith("/api"):
+        try:
+            await db.error_logs.insert_one({
+                "id": str(uuid.uuid4()), "path": str(path), "method": request.method,
+                "status": response.status_code, "detail": "", "created_at": now_utc(),
+            })
+        except Exception:
+            pass
+    return response
+
 
 app.add_middleware(
     CORSMiddleware,

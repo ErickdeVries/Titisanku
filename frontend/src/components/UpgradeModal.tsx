@@ -3,7 +3,7 @@ import { useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
 import { Crown, X, Check, ShieldQuestion } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { fonts, useTheme, brandGradient } from "@/src/theme";
+import { fonts, useTheme } from "@/src/theme";
 import { useTree } from "@/src/tree-context";
 
 const PERKS = ["Anggota tak terbatas", "PDF tanpa watermark", "Backup ke Google Drive", "10-50 Editor"];
@@ -17,7 +17,7 @@ export function UpgradeModal({
   onClose: () => void;
   limit?: number | null;
 }) {
-  const { colors } = useTheme();
+  const { colors, gradient } = useTheme();
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { activeTree } = useTree();
@@ -36,7 +36,7 @@ export function UpgradeModal({
           <Pressable style={styles.close} onPress={onClose} hitSlop={10}>
             <X size={22} color={colors.muted} />
           </Pressable>
-          <LinearGradient colors={brandGradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.badge}>
+          <LinearGradient colors={gradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.badge}>
             <Crown size={30} color="#FFFFFF" />
           </LinearGradient>
           <Text style={[styles.title, { color: colors.onSurface }]}>Buka Kunci Pohon Anda</Text>
@@ -55,7 +55,7 @@ export function UpgradeModal({
           </View>
 
           <Pressable onPress={goUpgrade} style={{ alignSelf: "stretch" }} testID="upgrade-now">
-            <LinearGradient colors={brandGradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.cta}>
+            <LinearGradient colors={gradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.cta}>
               <Text style={styles.ctaText}>Upgrade Sekarang</Text>
             </LinearGradient>
           </Pressable>

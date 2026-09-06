@@ -8,7 +8,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Feather from "@react-native-vector-icons/feather";
 import { fonts, makeStyles, useTheme } from "@/src/theme";
-import { getChat, sendChat, deleteChat, setTyping, uploadPhoto, fileUrl, markNotificationsRead, muteRoom } from "@/src/api";
+import { getChat, sendChat, deleteChat, setTyping, uploadPhoto, fileUrl, markNotificationsRead, muteRoom, leaveGroup } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { useI18n } from "@/src/i18n";
 
@@ -114,6 +114,17 @@ export default function ChatRoomScreen() {
       qc.invalidateQueries({ queryKey: ["chatRooms"] });
     } catch (e) {
       console.log("mute error", e);
+    }
+  };
+
+  const doLeaveGroup = async () => {
+    try {
+      await leaveGroup(roomId);
+      qc.invalidateQueries({ queryKey: ["chatRooms"] });
+      setSettingsOpen(false);
+      router.replace("/(tabs)/chat");
+    } catch (e) {
+      console.log("leave group error", e);
     }
   };
 
@@ -398,6 +409,12 @@ export default function ChatRoomScreen() {
               >
                 <Feather name="settings" size={18} color={colors.brandSecondary} />
                 <Text style={styles.pickText}>{t("manage_group")}</Text>
+              </Pressable>
+            ) : null}
+            {roomType === "group" ? (
+              <Pressable style={styles.pickRow} testID="leave-group-btn" onPress={doLeaveGroup}>
+                <Feather name="log-out" size={18} color={colors.error} />
+                <Text style={[styles.pickText, { color: colors.error }]}>{t("leave_group")}</Text>
               </Pressable>
             ) : null}
           </Pressable>

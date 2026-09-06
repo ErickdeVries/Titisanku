@@ -2,7 +2,7 @@ import React from "react";
 import { ActivityIndicator, Pressable, StyleProp, Text, View, ViewStyle } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import Feather from "@react-native-vector-icons/feather";
-import { brandGradient, fonts, makeStyles, useTheme } from "@/src/theme";
+import { fonts, makeStyles, useTheme } from "@/src/theme";
 
 type Props = {
   title: string;
@@ -42,7 +42,7 @@ const useStyles = makeStyles((c) => ({
 
 export function GradientButton({ title, onPress, loading, disabled, icon, variant = "primary", style, testID }: Props) {
   const styles = useStyles();
-  const { colors } = useTheme();
+  const { colors, gradient } = useTheme();
   const isDisabled = disabled || loading;
 
   if (variant === "secondary") {
@@ -67,7 +67,7 @@ export function GradientButton({ title, onPress, loading, disabled, icon, varian
 
   return (
     <Pressable testID={testID} onPress={onPress} disabled={isDisabled} style={[styles.wrap, isDisabled && styles.disabled, style]}>
-      <LinearGradient colors={brandGradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.grad}>
+      <LinearGradient colors={gradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.grad}>
         {loading ? (
           <ActivityIndicator color="#FFFFFF" />
         ) : (

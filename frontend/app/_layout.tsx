@@ -14,6 +14,7 @@ import { queryClient } from "@/src/query-client";
 import { AuthProvider, useAuth } from "@/src/auth";
 import { TreeProvider, useTree } from "@/src/tree-context";
 import { LanguageProvider } from "@/src/i18n";
+import { ThemeProvider } from "@/src/theme";
 import { storage } from "@/src/utils/storage";
 
 LogBox.ignoreAllLogs(true);
@@ -76,11 +77,15 @@ function RootNav() {
       <Stack.Screen name="add-relative" options={{ presentation: "modal" }} />
       <Stack.Screen name="trees" options={{ presentation: "modal" }} />
       <Stack.Screen name="subscription" />
+      <Stack.Screen name="payment-history" />
+      <Stack.Screen name="themes" />
       <Stack.Screen name="members" />
       <Stack.Screen name="claim-branch" />
       <Stack.Screen name="chat/[roomId]" />
       <Stack.Screen name="chat/new" />
       <Stack.Screen name="chat/manage/[roomId]" />
+      <Stack.Screen name="privacy" />
+      <Stack.Screen name="feedback" />
       <Stack.Screen name="explorer/[id]" />
       <Stack.Screen name="invite/[token]" />
     </Stack>
@@ -114,17 +119,19 @@ export default function RootLayout() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <KeyboardProvider>
         <SafeAreaProvider>
-          <ErrorBoundary>
-            <QueryClientProvider client={queryClient}>
-              <AuthProvider>
-                <TreeProvider>
-                  <LanguageProvider>
-                    <RootNav />
-                  </LanguageProvider>
-                </TreeProvider>
-              </AuthProvider>
-            </QueryClientProvider>
-          </ErrorBoundary>
+          <ThemeProvider>
+            <ErrorBoundary>
+              <QueryClientProvider client={queryClient}>
+                <AuthProvider>
+                  <TreeProvider>
+                    <LanguageProvider>
+                      <RootNav />
+                    </LanguageProvider>
+                  </TreeProvider>
+                </AuthProvider>
+              </QueryClientProvider>
+            </ErrorBoundary>
+          </ThemeProvider>
         </SafeAreaProvider>
       </KeyboardProvider>
     </GestureHandlerRootView>

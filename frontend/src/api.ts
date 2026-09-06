@@ -76,6 +76,7 @@ export type User = {
   name: string;
   picture?: string | null;
   role: "admin" | "editor" | "viewer";
+  is_superadmin?: boolean;
 };
 
 // ---- Auth ----
@@ -83,6 +84,15 @@ export const authSession = (session_id: string) =>
   apiFetch("/auth/session", { method: "POST", body: JSON.stringify({ session_id }) });
 export const getMe = () => apiFetch("/auth/me");
 export const logoutApi = () => apiFetch("/auth/logout", { method: "POST" });
+export const leaveGroup = (roomId: string): Promise<{ ok: boolean }> =>
+  apiFetch(`/chat/rooms/${roomId}/leave`, { method: "POST" });
+export const submitFeedback = (message: string, category: string): Promise<{ ok: boolean }> =>
+  apiFetch("/feedback", { method: "POST", body: JSON.stringify({ message, category }) });
+export const deleteAccount = (): Promise<{ ok: boolean }> =>
+  apiFetch("/account", { method: "DELETE" });
+export const adminOverview = () => apiFetch("/admin/overview");
+export const adminUsers = () => apiFetch("/admin/users");
+export const adminFeedback = () => apiFetch("/admin/feedback");
 
 export type Tree = {
   id: string;
@@ -142,6 +152,9 @@ export const createSnap = (plan: string, finishUrl?: string): Promise<{ order_id
   apiFetch("/payments/snap", { method: "POST", body: JSON.stringify({ plan, finish_url: finishUrl }) });
 export const paymentStatus = (orderId: string): Promise<{ status: string; plan: string }> =>
   apiFetch(`/payments/status/${orderId}`);
+export type PaymentOrder = { order_id: string; plan: string; amount: number; status: string; created_at: string; paid_at?: string; tree_name?: string };
+export const paymentHistory = (): Promise<{ orders: PaymentOrder[] }> =>
+  apiFetch("/payments/history");
 export const getMembers = (tid: string): Promise<{ members: TreeMember[]; role: string; owner_id: string }> =>
   apiFetch(`/trees/${tid}/members?tree_id=${tid}`);
 export const changeMemberRole = (tid: string, user_id: string, role: string) =>

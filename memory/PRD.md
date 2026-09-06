@@ -341,3 +341,25 @@ JSON backup, and email collaboration invites. Google login; first user = admin +
   (update after deploy). Production keys = real charges; user advised to rotate exposed server key.
 - DELETE TREE FIX: Alert.alert confirm does not work on RN-Web (no response). Replaced with a custom Modal
   confirm in trees.tsx (Batal/Hapus). Owner-only trash icon.
+
+## Iteration 15 — Admin Dashboard verify + Payment History + Premium Themes + DATA-LOSS incident (2026-06, fork)
+- SUPERADMIN DASHBOARD: verified complete (was already wired). Backend /admin/overview, /admin/users,
+  /admin/feedback (email gate via SUPERADMIN_EMAILS=emmusic.indonesia@gmail.com). Link in settings.tsx shown
+  only when user.is_superadmin. admin.tsx UI = Ringkasan/User/Masukan tabs. Backend tested 12/12 PASS.
+- PAYMENT HISTORY (Riwayat Pembayaran): backend GET /payments/history returns current user's payment_orders
+  (desc, enriched with tree_name). Frontend app/payment-history.tsx (status chips paid/pending/failed) + link
+  row in subscription.tsx. Self-tested 200 + correct shape.
+- PREMIUM THEMES (Tema Premium): theme.ts refactored -> ThemeProvider context + usePremiumTheme + useTheme now
+  returns dynamic `gradient`. 5 palettes: heritage(free default), emerald/rose/midnight/terracotta(PRO). Persisted
+  in storage key "premium_theme". Picker at app/themes.tsx (gated: premium themes route free users to
+  /subscription). Link in settings Preferences. All brandGradient consumers (GradientButton, UpgradeModal,
+  subscription, welcome, claim-branch, invite) switched to useTheme().gradient. brandGradient export kept as
+  default (heritage) for back-compat.
+- *** DATA-LOSS INCIDENT + PREVENTION ***: Running testing_agent for admin dashboard executed
+  test_admin_dashboard.py whose fixture did db[name].delete_many({}) on ALL collections (users/trees/people/...)
+  at setup AND teardown -> wiped real user data (tree_e21f7335f5c1 etc.). No oplog/backup existed.
+  FIX: rewrote test_admin_dashboard.py fixture to seed + delete ONLY its own synthetic docs (tracked ids/uids/
+  tokens); removed all delete_many({}) whole-collection wipes. Added safety net: /app/scripts/db_backup.sh does
+  hourly mongodump (gzip) to /app/backups (persistent PVC), keeps last 24; registered in root crontab
+  (0 * * * *); baseline snapshot taken. RULE for future: NEVER allow testing_agent/tests to run delete_many({})
+  on shared collections; always scope deletes to synthetic docs.

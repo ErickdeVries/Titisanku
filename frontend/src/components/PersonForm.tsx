@@ -66,6 +66,7 @@ const useStyles = makeStyles((c) => ({
   },
   genderText: { fontFamily: fonts.medium, fontSize: 14, color: c.onSurfaceSecondary },
   photoWrap: { alignItems: "center", gap: 10 },
+  photoBtnRow: { flexDirection: "row", alignItems: "center", gap: 20 },
   photo: { width: 100, height: 100, borderRadius: 999, backgroundColor: c.surfaceTertiary, alignItems: "center", justifyContent: "center", overflow: "hidden" },
   photoImg: { width: "100%", height: "100%" },
   uploadBtn: { flexDirection: "row", alignItems: "center", gap: 6 },
@@ -116,11 +117,22 @@ export function PersonForm({ initial, lockedGender, showAdopted, showMarriageTab
   const [nameErr, setNameErr] = useState(false);
   const [permBlocked, setPermBlocked] = useState(false);
 
+  const doUpload = async (uri: string) => {
+    setUploading(true);
+    try {
+      const path = await uploadPhoto(uri);
+      setPhotoUrl(path);
+    } catch (e) {
+      console.log("upload error", e);
+    } finally {
+      setUploading(false);
+    }
+  };
+
   const pickPhoto = async () => {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) {
       setPermBlocked(!perm.canAskAgain);
-      if (!perm.canAskAgain) return;
       return;
     }
     setPermBlocked(false);
@@ -131,15 +143,23 @@ export function PersonForm({ initial, lockedGender, showAdopted, showMarriageTab
       quality: 0.6,
     });
     if (res.canceled || !res.assets?.length) return;
-    setUploading(true);
-    try {
-      const path = await uploadPhoto(res.assets[0].uri);
-      setPhotoUrl(path);
-    } catch (e) {
-      console.log("upload error", e);
-    } finally {
-      setUploading(false);
+    await doUpload(res.assets[0].uri);
+  };
+
+  const takePhoto = async () => {
+    const perm = await ImagePicker.requestCameraPermissionsAsync();
+    if (!perm.granted) {
+      setPermBlocked(!perm.canAskAgain);
+      return;
     }
+    setPermBlocked(false);
+    const res = await ImagePicker.launchCameraAsync({
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.6,
+    });
+    if (res.canceled || !res.assets?.length) return;
+    await doUpload(res.assets[0].uri);
   };
 
   const submit = () => {
@@ -191,10 +211,16 @@ export function PersonForm({ initial, lockedGender, showAdopted, showMarriageTab
                   <Feather name="camera" size={28} color={colors.muted} />
                 )}
               </Pressable>
-              <Pressable style={styles.uploadBtn} onPress={pickPhoto}>
-                <Feather name="upload" size={14} color={colors.brandSecondary} />
-                <Text style={styles.uploadText}>{uploading ? "..." : t("upload_photo")}</Text>
-              </Pressable>
+              <View style={styles.photoBtnRow}>
+                <Pressable style={styles.uploadBtn} onPress={pickPhoto}>
+                  <Feather name="upload" size={14} color={colors.brandSecondary} />
+                  <Text style={styles.uploadText}>{uploading ? "..." : t("upload_photo")}</Text>
+                </Pressable>
+                <Pressable style={styles.uploadBtn} onPress={takePhoto} testID="photo-camera">
+                  <Feather name="camera" size={14} color={colors.brandSecondary} />
+                  <Text style={styles.uploadText}>{t("take_photo")}</Text>
+                </Pressable>
+              </View>
               {permBlocked ? (
                 <Pressable onPress={() => Linking.openSettings()}>
                   <Text style={styles.permNote}>{t("upload_photo")} · Settings</Text>

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { View, Text, Pressable, TextInput, ScrollView, Switch, Platform, Alert } from "react-native";
+import { View, Text, Pressable, TextInput, ScrollView, Switch, Platform, Alert, Modal, ActivityIndicator } from "react-native";
 import { Image } from "expo-image";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -8,7 +8,7 @@ import * as Sharing from "expo-sharing";
 import * as DocumentPicker from "expo-document-picker";
 import Feather from "@react-native-vector-icons/feather";
 import { fonts, makeStyles, useTheme } from "@/src/theme";
-import { getTree, getBackup, restoreBackup, createInvite, acceptInvite, listInvites, fileUrl, linkCoparents } from "@/src/api";
+import { getTree, getBackup, restoreBackup, createInvite, acceptInvite, listInvites, linkCoparents, deleteAccount } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { useTree } from "@/src/tree-context";
 import { useRouter } from "expo-router";
@@ -43,6 +43,14 @@ const useStyles = makeStyles((c) => ({
   langText: { fontFamily: fonts.semibold, fontSize: 13, color: c.muted },
   langTextActive: { color: c.onBrandPrimary },
   divider: { height: 1, backgroundColor: c.divider, marginLeft: 16 },
+  confirmBg: { flex: 1, backgroundColor: "rgba(15,23,42,0.5)", justifyContent: "center" },
+  confirmSheet: { margin: 24, borderRadius: 24, padding: 24, alignItems: "center", gap: 10, backgroundColor: c.surfaceSecondary },
+  confirmIcon: { width: 60, height: 60, borderRadius: 999, alignItems: "center", justifyContent: "center", backgroundColor: c.surfaceTertiary, marginBottom: 4 },
+  confirmTitle: { fontFamily: fonts.display, fontSize: 20, color: c.onSurface },
+  confirmMsg: { fontFamily: fonts.regular, fontSize: 14, textAlign: "center", lineHeight: 20, color: c.muted },
+  confirmRow: { flexDirection: "row", gap: 12, marginTop: 12, alignSelf: "stretch" },
+  confirmBtn: { flex: 1, height: 48, borderRadius: 14, alignItems: "center", justifyContent: "center" },
+  confirmBtnText: { fontFamily: fonts.semibold, fontSize: 15 },
   inputRow: { padding: 16, gap: 10 },
   input: { backgroundColor: c.surfaceTertiary, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, fontFamily: fonts.regular, fontSize: 15, color: c.onSurface },
   msg: { fontFamily: fonts.medium, fontSize: 13, color: c.success, marginTop: 4 },
@@ -68,6 +76,19 @@ export default function SettingsScreen() {
 
   const isAdmin = (activeTree?.role ?? user?.role) === "admin";
   const isPro = activeTree?.plan === "pro" || activeTree?.plan === "family";
+  const [deleteAccOpen, setDeleteAccOpen] = useState(false);
+  const [deletingAcc, setDeletingAcc] = useState(false);
+  const doDeleteAccount = async () => {
+    setDeletingAcc(true);
+    try {
+      await deleteAccount();
+      setDeleteAccOpen(false);
+      await logout();
+    } catch (e) {
+      console.log("delete account error", e);
+      setDeletingAcc(false);
+    }
+  };
   const { data } = useQuery({ queryKey: ["tree"], queryFn: getTree });
   const { data: invites } = useQuery({ queryKey: ["invites"], queryFn: listInvites, enabled: isAdmin });
 
@@ -194,7 +215,6 @@ export default function SettingsScreen() {
   };
 
   const roleLabel = (activeTree?.role ?? user?.role) === "admin" ? t("admin") : (activeTree?.role ?? user?.role) === "editor" ? t("editor") : t("viewer");
-  const avatar = fileUrl(user?.picture);
 
   return (
     <View style={styles.root}>
@@ -287,6 +307,15 @@ export default function SettingsScreen() {
                 </Pressable>
               </View>
             </View>
+            <View style={styles.divider} />
+            <Pressable style={styles.rowItem} onPress={() => router.push("/themes")} testID="themes-row">
+              <Feather name="droplet" size={20} color={colors.onSurfaceSecondary} />
+              <View style={styles.rowTextWrap}>
+                <Text style={styles.rowLabel}>{t("premium_themes")}</Text>
+                <Text style={styles.rowDesc}>{t("premium_themes_desc")}</Text>
+              </View>
+              <Feather name="chevron-right" size={20} color={colors.muted} />
+            </Pressable>
             <View style={styles.divider} />
             <View style={styles.rowItem}>
               <Feather name="bell" size={20} color={colors.onSurfaceSecondary} />
@@ -415,11 +444,76 @@ export default function SettingsScreen() {
           )}
         </View>
 
+        {/* Account & Privacy */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>{t("account_section")}</Text>
+          <View style={styles.card}>
+            {user?.is_superadmin ? (
+              <>
+                <Pressable style={styles.rowItem} onPress={() => router.push("/admin")} testID="admin-dashboard-row">
+                  <Feather name="shield" size={20} color={colors.brandSecondary} />
+                  <View style={styles.rowTextWrap}>
+                    <Text style={[styles.rowLabel, { color: colors.brandSecondary }]}>Admin Dashboard</Text>
+                    <Text style={styles.rowDesc}>Monitor bisnis, user & teknis</Text>
+                  </View>
+                  <Feather name="chevron-right" size={20} color={colors.muted} />
+                </Pressable>
+                <View style={styles.divider} />
+              </>
+            ) : null}
+            <Pressable style={styles.rowItem} onPress={() => router.push("/feedback")} testID="feedback-row">
+              <Feather name="message-square" size={20} color={colors.onSurfaceSecondary} />
+              <View style={styles.rowTextWrap}>
+                <Text style={styles.rowLabel}>{t("send_feedback")}</Text>
+                <Text style={styles.rowDesc}>{t("feedback_desc")}</Text>
+              </View>
+              <Feather name="chevron-right" size={20} color={colors.muted} />
+            </Pressable>
+            <View style={styles.divider} />
+            <Pressable style={styles.rowItem} onPress={() => router.push("/privacy")} testID="privacy-row">
+              <Feather name="lock" size={20} color={colors.onSurfaceSecondary} />
+              <View style={styles.rowTextWrap}>
+                <Text style={styles.rowLabel}>{t("privacy_policy")}</Text>
+              </View>
+              <Feather name="chevron-right" size={20} color={colors.muted} />
+            </Pressable>
+            <View style={styles.divider} />
+            <Pressable style={styles.rowItem} onPress={() => setDeleteAccOpen(true)} testID="delete-account-row">
+              <Feather name="trash-2" size={20} color={colors.error} />
+              <View style={styles.rowTextWrap}>
+                <Text style={[styles.rowLabel, { color: colors.error }]}>{t("delete_account")}</Text>
+                <Text style={styles.rowDesc}>{t("delete_account_desc")}</Text>
+              </View>
+              <Feather name="chevron-right" size={20} color={colors.muted} />
+            </Pressable>
+          </View>
+        </View>
+
         <Pressable style={styles.logout} onPress={logout} testID="logout-button">
           <Feather name="log-out" size={18} color={colors.error} />
           <Text style={styles.logoutText}>{t("logout")}</Text>
         </Pressable>
       </ScrollView>
+
+      <Modal visible={deleteAccOpen} transparent animationType="fade" onRequestClose={() => setDeleteAccOpen(false)}>
+        <Pressable style={styles.confirmBg} onPress={() => setDeleteAccOpen(false)}>
+          <Pressable style={styles.confirmSheet} onPress={() => {}}>
+            <View style={styles.confirmIcon}>
+              <Feather name="alert-triangle" size={26} color={colors.error} />
+            </View>
+            <Text style={styles.confirmTitle}>{t("delete_account")}</Text>
+            <Text style={styles.confirmMsg}>{t("delete_account_confirm")}</Text>
+            <View style={styles.confirmRow}>
+              <Pressable style={[styles.confirmBtn, { backgroundColor: colors.surfaceTertiary }]} onPress={() => setDeleteAccOpen(false)} testID="cancel-delete-account">
+                <Text style={[styles.confirmBtnText, { color: colors.onSurface }]}>{t("cancel")}</Text>
+              </Pressable>
+              <Pressable style={[styles.confirmBtn, { backgroundColor: colors.error, opacity: deletingAcc ? 0.6 : 1 }]} disabled={deletingAcc} onPress={doDeleteAccount} testID="confirm-delete-account">
+                {deletingAcc ? <ActivityIndicator color={colors.onError} /> : <Text style={[styles.confirmBtnText, { color: colors.onError }]}>{t("delete_account")}</Text>}
+              </Pressable>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 }

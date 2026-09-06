@@ -4,7 +4,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { useQuery } from "@tanstack/react-query";
 import { LinearGradient } from "expo-linear-gradient";
 import { Users, UserPlus, Check } from "lucide-react-native";
-import { fonts, useTheme, brandGradient } from "@/src/theme";
+import { fonts, useTheme } from "@/src/theme";
 import { useI18n } from "@/src/i18n";
 import { useAuth } from "@/src/auth";
 import { useTree } from "@/src/tree-context";
@@ -12,7 +12,7 @@ import { getInviteInfo, acceptInviteLink } from "@/src/api";
 import { storage } from "@/src/utils/storage";
 
 export default function InviteScreen() {
-  const { colors } = useTheme();
+  const { colors, gradient } = useTheme();
   const { t } = useI18n();
   const router = useRouter();
   const { token } = useLocalSearchParams<{ token: string }>();
@@ -49,7 +49,7 @@ export default function InviteScreen() {
   return (
     <View style={[styles.root, { backgroundColor: colors.surface }]}>
       <View style={styles.content}>
-        <LinearGradient colors={brandGradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.badge}>
+        <LinearGradient colors={gradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.badge}>
           <Users size={40} color="#FFFFFF" />
         </LinearGradient>
 
@@ -58,7 +58,7 @@ export default function InviteScreen() {
             <Text style={[styles.title, { color: colors.onSurface }]}>Keturunanku</Text>
             <Text style={[styles.desc, { color: colors.muted }]}>{t("login_to_continue")}</Text>
             <Pressable onPress={startLogin} disabled={signingIn} style={{ width: "100%" }} testID="invite-login">
-              <LinearGradient colors={brandGradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.cta}>
+              <LinearGradient colors={gradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.cta}>
                 {signingIn ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.ctaText}>{t("login_to_continue")}</Text>}
               </LinearGradient>
             </Pressable>
@@ -85,7 +85,7 @@ export default function InviteScreen() {
             ) : null}
 
             <Pressable onPress={join} disabled={busy} style={{ width: "100%", marginTop: 8 }} testID="invite-join">
-              <LinearGradient colors={brandGradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.cta}>
+              <LinearGradient colors={gradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.cta}>
                 {busy ? (
                   <ActivityIndicator color="#FFFFFF" />
                 ) : (

@@ -8,7 +8,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { LinearGradient } from "expo-linear-gradient";
 import { ArrowLeft, Check, GitBranch, User, Search } from "lucide-react-native";
-import { fonts, useTheme, brandGradient } from "@/src/theme";
+import { fonts, useTheme } from "@/src/theme";
 import { useI18n } from "@/src/i18n";
 import { useTree } from "@/src/tree-context";
 import { getTree, claimBranch, fileUrl } from "@/src/api";
@@ -17,7 +17,7 @@ import { nodeColor } from "@/src/components/PersonNode";
 type Scope = "descendants" | "children" | "whole";
 
 export default function ClaimBranchScreen() {
-  const { colors } = useTheme();
+  const { colors, gradient } = useTheme();
   const { t } = useI18n();
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -70,7 +70,7 @@ export default function ClaimBranchScreen() {
 
       <ScrollView contentContainerStyle={{ padding: 20, gap: 20 }} keyboardShouldPersistTaps="handled">
         <View style={styles.heroRow}>
-          <LinearGradient colors={brandGradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.heroBadge}>
+          <LinearGradient colors={gradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.heroBadge}>
             <GitBranch size={22} color="#FFFFFF" />
           </LinearGradient>
           <Text style={[styles.heroDesc, { color: colors.muted }]}>{t("claim_branch_desc")}</Text>
@@ -145,7 +145,7 @@ export default function ClaimBranchScreen() {
           disabled={!personId || claimMut.isPending}
           style={{ opacity: !personId || claimMut.isPending ? 0.6 : 1 }}
         >
-          <LinearGradient colors={brandGradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.cta}>
+          <LinearGradient colors={gradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.cta}>
             {claimMut.isPending ? (
               <ActivityIndicator color="#FFFFFF" />
             ) : (

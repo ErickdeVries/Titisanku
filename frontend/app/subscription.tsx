@@ -4,8 +4,8 @@ import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import * as WebBrowser from "expo-web-browser";
-import { ArrowLeft, Crown, Check, Users, Image as ImageIcon, GitBranch } from "lucide-react-native";
-import { fonts, useTheme, brandGradient } from "@/src/theme";
+import { ArrowLeft, Crown, Check, Users, Image as ImageIcon, GitBranch, Receipt, ChevronRight } from "lucide-react-native";
+import { fonts, useTheme } from "@/src/theme";
 import { useI18n } from "@/src/i18n";
 import { useTree } from "@/src/tree-context";
 import { createSnap, paymentStatus } from "@/src/api";
@@ -20,7 +20,7 @@ const RANK: Record<PlanId, number> = { free: 0, pro: 1, family: 2 };
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export default function SubscriptionScreen() {
-  const { colors } = useTheme();
+  const { colors, gradient } = useTheme();
   const { t } = useI18n();
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -93,7 +93,7 @@ export default function SubscriptionScreen() {
       ) : (
         <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: insets.bottom + 30, gap: 16 }}>
           {/* Current usage */}
-          <LinearGradient colors={brandGradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.usageCard}>
+          <LinearGradient colors={gradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.usageCard}>
             <View style={styles.usageTop}>
               <Crown size={22} color="#FFFFFF" />
               <Text style={styles.usagePlan}>{plan === "free" ? "Free" : plan === "pro" ? "Pro" : "Keluarga"}</Text>
@@ -138,7 +138,7 @@ export default function SubscriptionScreen() {
                 ))}
                 {canUpgrade ? (
                   <Pressable onPress={() => doUpgrade(p.id)} disabled={busy === p.id} style={{ marginTop: 10 }} testID={`upgrade-${p.id}`}>
-                    <LinearGradient colors={brandGradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.cta}>
+                    <LinearGradient colors={gradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.cta}>
                       {busy === p.id ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.ctaText}>{t("upgrade_to_pro").replace("Pro", p.name)}</Text>}
                     </LinearGradient>
                   </Pressable>
@@ -152,6 +152,19 @@ export default function SubscriptionScreen() {
           ) : (
             <Text style={[styles.note, { color: colors.muted }]}>Pembayaran aman diproses oleh Midtrans. Paket aktif otomatis setelah pembayaran berhasil.</Text>
           )}
+
+          <Pressable
+            style={[styles.historyRow, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}
+            onPress={() => router.push("/payment-history")}
+            testID="payment-history-row"
+          >
+            <Receipt size={20} color={colors.brandSecondary} />
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.historyTitle, { color: colors.onSurface }]}>{t("payment_history")}</Text>
+              <Text style={[styles.historyDesc, { color: colors.muted }]}>{t("payment_history_desc")}</Text>
+            </View>
+            <ChevronRight size={20} color={colors.muted} />
+          </Pressable>
         </ScrollView>
       )}
     </View>
@@ -182,4 +195,7 @@ const styles = StyleSheet.create({
   cta: { height: 50, borderRadius: 16, alignItems: "center", justifyContent: "center" },
   ctaText: { fontFamily: fonts.semibold, fontSize: 15, color: "#FFFFFF" },
   note: { fontFamily: fonts.regular, fontSize: 12, textAlign: "center", paddingHorizontal: 10 },
+  historyRow: { flexDirection: "row", alignItems: "center", gap: 12, padding: 16, borderRadius: 18, borderWidth: 1 },
+  historyTitle: { fontFamily: fonts.semibold, fontSize: 15 },
+  historyDesc: { fontFamily: fonts.regular, fontSize: 12, marginTop: 2 },
 });

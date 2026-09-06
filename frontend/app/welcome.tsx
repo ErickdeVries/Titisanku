@@ -5,14 +5,14 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useMutation } from "@tanstack/react-query";
 import { LinearGradient } from "expo-linear-gradient";
 import { TreePine, Plus, Users, ChevronRight, LogOut } from "lucide-react-native";
-import { fonts, useTheme, brandGradient } from "@/src/theme";
+import { fonts, useTheme } from "@/src/theme";
 import { useI18n } from "@/src/i18n";
 import { useAuth } from "@/src/auth";
 import { useTree } from "@/src/tree-context";
 import { createTree } from "@/src/api";
 
 export default function WelcomeScreen() {
-  const { colors } = useTheme();
+  const { colors, gradient } = useTheme();
   const { t } = useI18n();
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -35,7 +35,7 @@ export default function WelcomeScreen() {
   return (
     <View style={[styles.root, { backgroundColor: colors.surface, paddingTop: insets.top + 24 }]}>
       <View style={styles.hero}>
-        <LinearGradient colors={brandGradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.badge}>
+        <LinearGradient colors={gradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.badge}>
           <TreePine size={42} color="#FFFFFF" />
         </LinearGradient>
         <Text style={[styles.title, { color: colors.onSurface }]}>{t("welcome_title")}</Text>
@@ -98,7 +98,7 @@ export default function WelcomeScreen() {
               onPress={() => createMut.mutate(name.trim())}
               style={{ opacity: createMut.isPending || !name.trim() ? 0.6 : 1 }}
             >
-              <LinearGradient colors={brandGradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.submit}>
+              <LinearGradient colors={gradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.submit}>
                 {createMut.isPending ? (
                   <ActivityIndicator color="#FFFFFF" />
                 ) : (
