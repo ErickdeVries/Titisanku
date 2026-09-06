@@ -1,4 +1,5 @@
 import { Platform } from "react-native";
+import { File as FsFile } from "expo-file-system";
 
 export const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL as string;
 const API = `${BACKEND_URL}/api`;
@@ -290,14 +291,14 @@ export function fileUrl(pathOrUrl?: string | null): string | undefined {
 
 export async function uploadPhoto(uri: string): Promise<string> {
   const name = uri.split("/").pop() || `photo_${Date.now()}.jpg`;
-  const match = /\.(\w+)$/.exec(name);
-  const type = match ? `image/${match[1] === "jpg" ? "jpeg" : match[1]}` : "image/jpeg";
   const form = new FormData();
   if (Platform.OS === "web") {
     const blob = await (await fetch(uri)).blob();
     form.append("file", blob, name);
   } else {
-    form.append("file", { uri, name, type } as any);
+    // Expo SDK 54+ "winter" fetch rejects the legacy { uri, name, type } part.
+    // Use the File class (implements the Blob interface) instead.
+    form.append("file", new FsFile(uri) as unknown as Blob, name);
   }
   const qs = activeTreeId ? `?tree_id=${encodeURIComponent(activeTreeId)}` : "";
   const res = await fetch(`${API}/upload${qs}`, {

@@ -418,3 +418,12 @@ JSON backup, and email collaboration invites. Google login; first user = admin +
 - NOTE (not blockers): hardcoded Emergent auth URL demobackend.emergentagent.com/auth/v1/env/oauth/session-data
   is the standard Emergent-managed Google Auth endpoint (same across envs) — left as-is per playbook.
   Google Drive backup row is an intentional "coming soon" placeholder gated to Pro.
+
+## Iteration 18 — FIX: "Unsupported FormDataPart implementation" upload/capture foto di device (2026-06, fork)
+- ROOT CAUSE: Expo SDK 54 (expo 57.0.19) global fetch is the "winter" fetch, which rejects the legacy RN
+  FormData part { uri, name, type }. So on real devices every photo upload threw "Unsupported FormDataPart
+  implementation" (worked on web via Blob).
+- FIX (src/api.ts uploadPhoto): native branch now appends `new FsFile(uri)` (File from "expo-file-system",
+  which `implements Blob`) instead of { uri,name,type }. Web branch unchanged (Blob). Verified File is exported
+  and constructor accepts a file:// uri string in expo-file-system@57.0.6.
+- NATIVE-ONLY: can't be validated on web preview; test on Android/iOS via Expo Go. Web bundling confirmed OK.
