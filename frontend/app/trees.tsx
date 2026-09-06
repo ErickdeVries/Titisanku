@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { View, Text, Pressable, StyleSheet, ScrollView, TextInput, ActivityIndicator, Modal, Alert } from "react-native";
+import { View, Text, Pressable, StyleSheet, ScrollView, TextInput, ActivityIndicator, Modal } from "react-native";
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useMutation } from "@tanstack/react-query";
@@ -19,6 +19,7 @@ export default function TreesScreen() {
   const { trees, activeTreeId, setActive, refreshTrees } = useTree();
   const [createOpen, setCreateOpen] = useState(false);
   const [name, setName] = useState("");
+  const [pendingDelete, setPendingDelete] = useState<{ id: string; name: string } | null>(null);
 
   const createMut = useMutation({
     mutationFn: (n: string) => createTree(n),
@@ -34,25 +35,15 @@ export default function TreesScreen() {
   const deleteMut = useMutation({
     mutationFn: (id: string) => deleteTree(id),
     onSuccess: async (_r, id) => {
+      setPendingDelete(null);
       const list = await refreshTrees();
       if (id === activeTreeId) {
         if (list.length > 0) await setActive(list[0].id);
         else router.replace("/welcome");
       }
     },
-    onError: () => Alert.alert(t("error_generic")),
+    onError: () => setPendingDelete(null),
   });
-
-  const confirmDelete = (id: string, tname: string) => {
-    Alert.alert(
-      t("delete_tree"),
-      t("delete_tree_confirm").replace("{name}", tname),
-      [
-        { text: t("cancel"), style: "cancel" },
-        { text: t("delete"), style: "destructive", onPress: () => deleteMut.mutate(id) },
-      ],
-    );
-  };
 
   const pick = async (id: string) => {
     await setActive(id);
@@ -100,7 +91,7 @@ export default function TreesScreen() {
               {isOwner ? (
                 <Pressable
                   testID={`delete-tree-${tree.id}`}
-                  onPress={() => confirmDelete(tree.id, tree.name)}
+                  onPress={() => setPendingDelete({ id: tree.id, name: tree.name })}
                   hitSlop={8}
                   style={styles.trashBtn}
                 >
@@ -157,6 +148,40 @@ export default function TreesScreen() {
           </Pressable>
         </Pressable>
       </Modal>
+      <Modal visible={!!pendingDelete} transparent animationType="fade" onRequestClose={() => setPendingDelete(null)}>
+        <Pressable style={styles.modalBg} onPress={() => setPendingDelete(null)}>
+          <Pressable style={[styles.confirmSheet, { backgroundColor: colors.surfaceSecondary }]} onPress={() => {}}>
+            <View style={[styles.confirmIcon, { backgroundColor: colors.surfaceTertiary }]}>
+              <Trash2 size={26} color={colors.error} />
+            </View>
+            <Text style={[styles.confirmTitle, { color: colors.onSurface }]}>{t("delete_tree")}</Text>
+            <Text style={[styles.confirmMsg, { color: colors.muted }]}>
+              {t("delete_tree_confirm").replace("{name}", pendingDelete?.name ?? "")}
+            </Text>
+            <View style={styles.confirmRow}>
+              <Pressable
+                testID="cancel-delete-tree"
+                style={[styles.confirmBtn, { backgroundColor: colors.surfaceTertiary }]}
+                onPress={() => setPendingDelete(null)}
+              >
+                <Text style={[styles.confirmBtnText, { color: colors.onSurface }]}>{t("cancel")}</Text>
+              </Pressable>
+              <Pressable
+                testID="confirm-delete-tree"
+                style={[styles.confirmBtn, { backgroundColor: colors.error, opacity: deleteMut.isPending ? 0.6 : 1 }]}
+                disabled={deleteMut.isPending}
+                onPress={() => pendingDelete && deleteMut.mutate(pendingDelete.id)}
+              >
+                {deleteMut.isPending ? (
+                  <ActivityIndicator color={colors.onError} />
+                ) : (
+                  <Text style={[styles.confirmBtnText, { color: colors.onError }]}>{t("delete")}</Text>
+                )}
+              </Pressable>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -182,4 +207,11 @@ const styles = StyleSheet.create({
   input: { borderRadius: 14, paddingHorizontal: 16, paddingVertical: 14, fontFamily: fonts.regular, fontSize: 15 },
   submit: { height: 52, borderRadius: 16, alignItems: "center", justifyContent: "center" },
   submitText: { fontFamily: fonts.semibold, fontSize: 16 },
+  confirmSheet: { margin: 24, borderRadius: 24, padding: 24, alignItems: "center", gap: 10 },
+  confirmIcon: { width: 60, height: 60, borderRadius: 999, alignItems: "center", justifyContent: "center", marginBottom: 4 },
+  confirmTitle: { fontFamily: fonts.display, fontSize: 20 },
+  confirmMsg: { fontFamily: fonts.regular, fontSize: 14, textAlign: "center", lineHeight: 20 },
+  confirmRow: { flexDirection: "row", gap: 12, marginTop: 12, alignSelf: "stretch" },
+  confirmBtn: { flex: 1, height: 48, borderRadius: 14, alignItems: "center", justifyContent: "center" },
+  confirmBtnText: { fontFamily: fonts.semibold, fontSize: 15 },
 });

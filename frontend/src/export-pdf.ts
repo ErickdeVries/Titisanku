@@ -1,6 +1,7 @@
 import * as Print from "expo-print";
 import * as Sharing from "expo-sharing";
-import { Person, Relation } from "@/src/api";
+import { Platform } from "react-native";
+import { Person, Relation, fileUrl } from "@/src/api";
 import { buildLayout, NODE_R } from "@/src/tree-layout";
 
 const COLORS = {
@@ -33,51 +34,35 @@ function esc(s: any) {
   return String(s ?? "-").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-export async function exportTreePdf(
+// Build the tree drawing as an <svg> tag string for the given generation range.
+function buildTreeSvg(
   people: Person[],
   relations: Relation[],
   rootId: string | null,
   genUp: number,
   genDown: number,
-  appName: string,
-  watermark: boolean = false,
 ) {
   const full = buildLayout(people, relations, rootId);
   const inRange = (g: number) => g >= -genUp && g <= genDown;
   const nodes = full.nodes.filter((n) => inRange(n.gen));
-  const ids = new Set(nodes.map((n) => n.id));
-  const minGen = Math.min(...nodes.map((n) => n.gen), 0);
-
-  // shift y so filtered gens start near top
-  const yShift = minGen === -genUp ? 0 : 0;
-  const edges = full.edges.filter((e) => {
-    const inNodes = nodes.filter((n) => Math.abs(n.x - e.x1) < 1 && Math.abs(n.y - e.y1 + NODE_R) < 200);
-    return true;
-  });
-
-  // recompute width/height for range
+  if (nodes.length === 0) return { tag: "", nodes };
   const minX = Math.min(...nodes.map((n) => n.x)) - 60;
   const maxX = Math.max(...nodes.map((n) => n.x)) + 60;
   const minY = Math.min(...nodes.map((n) => n.y)) - 60;
   const maxY = Math.max(...nodes.map((n) => n.y)) + 60;
   const w = Math.max(maxX - minX, 200);
   const h = Math.max(maxY - minY, 200);
-
-  const nodeSet = new Set(nodes.map((n) => `${n.id}`));
+  const dispW = 760;
+  const dispH = Math.max(Math.round((dispW * h) / w), 160);
   const svgEdges = full.edges
     .map((e) => {
-      // only draw if both endpoints are within filtered vertical range
-      if (e.y1 < minY || e.y2 > maxY + 10) {
-        // still allow; simpler: draw all edges among included nodes by coordinate proximity
-      }
-      const stroke = e.kind === "adopted" ? COLORS.adopted : e.kind === "divorce" ? COLORS.divorce : COLORS.relation;
-      const dash = e.kind === "adopted" ? 'stroke-dasharray="6,5"' : "";
       const inV = e.y1 >= minY && e.y2 <= maxY;
       if (!inV) return "";
+      const stroke = e.kind === "adopted" ? COLORS.adopted : e.kind === "divorce" ? COLORS.divorce : COLORS.relation;
+      const dash = e.kind === "adopted" ? 'stroke-dasharray="6,5"' : "";
       return `<line x1="${e.x1 - minX}" y1="${e.y1 - minY}" x2="${e.x2 - minX}" y2="${e.y2 - minY}" stroke="${stroke}" stroke-width="2" ${dash}/>`;
     })
     .join("");
-
   const svgNodes = nodes
     .map((n) => {
       const cx = n.x - minX;
@@ -88,8 +73,43 @@ export async function exportTreePdf(
         <text x="${cx}" y="${cy + NODE_R / 2 + 16}" font-size="11" fill="#0F172A" text-anchor="middle">${esc(n.person.name)}</text>`;
     })
     .join("");
+  const tag = `<svg width="${dispW}" height="${dispH}" viewBox="0 0 ${w} ${h}" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">${svgEdges}${svgNodes}</svg>`;
+  return { tag, nodes };
+}
 
-  const rows = nodes
+// Print/share the generated HTML (web opens its own window; native prints to a PDF file).
+async function outputPdf(html: string, dialogTitle: string) {
+  if (Platform.OS === "web") {
+    const win = typeof window !== "undefined" ? window.open("", "_blank") : null;
+    if (win) {
+      win.document.open();
+      win.document.write(html);
+      win.document.close();
+      const fire = () => { try { win.focus(); win.print(); } catch { /* ignore */ } };
+      win.onload = fire;
+      setTimeout(fire, 700);
+      return "web";
+    }
+  }
+  const { uri } = await Print.printToFileAsync({ html });
+  if (await Sharing.isAvailableAsync()) {
+    await Sharing.shareAsync(uri, { mimeType: "application/pdf", dialogTitle });
+  }
+  return uri;
+}
+
+export async function exportTreePdf(
+  people: Person[],
+  relations: Relation[],
+  rootId: string | null,
+  genUp: number,
+  genDown: number,
+  appName: string,
+  watermark: boolean = false,
+) {
+  const { tag: svgTag, nodes } = buildTreeSvg(people, relations, rootId, genUp, genDown);
+
+  const rows = [...nodes]
     .sort((a, b) => a.gen - b.gen)
     .map(
       (n) => `<tr>
@@ -121,7 +141,7 @@ export async function exportTreePdf(
       ${watermark ? '<div class="wm"></div><div class="wmtxt">Dibuat dengan KETURUNANKU · Paket Gratis</div>' : ""}
       <h1>${esc(appName)}</h1>
       <div class="sub">Pohon Keluarga · ${genUp > 20 ? "Semua leluhur" : `${genUp} generasi ke atas`} · ${genDown > 20 ? "semua keturunan" : `${genDown} generasi ke bawah`} · ${nodes.length} anggota</div>
-      <div class="tree"><svg width="100%" viewBox="0 0 ${w} ${h}" xmlns="http://www.w3.org/2000/svg">${svgEdges}${svgNodes}</svg></div>
+      <div class="tree">${svgTag}</div>
       <h3>Data Anggota</h3>
       <table>
         <tr><th>Nama</th><th>JK</th><th>Lahir</th><th>Tempat</th><th>Pekerjaan</th><th>Wafat</th><th>Gen</th></tr>
@@ -129,9 +149,92 @@ export async function exportTreePdf(
       </table>
     </body></html>`;
 
-  const { uri } = await Print.printToFileAsync({ html });
-  if (await Sharing.isAvailableAsync()) {
-    await Sharing.shareAsync(uri, { mimeType: "application/pdf", dialogTitle: "Export PDF" });
-  }
-  return uri;
+  return outputPdf(html, "Export PDF");
+}
+
+// Full family "book": cover + tree page + one profile page per member.
+export async function exportTreeBook(
+  people: Person[],
+  relations: Relation[],
+  rootId: string | null,
+  appName: string,
+  treeName: string,
+) {
+  const { tag: svgTag } = buildTreeSvg(people, relations, rootId, 99, 99);
+  const today = new Date().toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" });
+
+  const ordered = [...people].sort((a, b) => {
+    if (a.is_root && !b.is_root) return -1;
+    if (b.is_root && !a.is_root) return 1;
+    return a.name.localeCompare(b.name);
+  });
+
+  const gender = (g?: string | null) => (g === "male" ? "Laki-laki" : g === "female" ? "Perempuan" : "-");
+  const lifespan = (p: Person) => `${p.birth_date || "?"}${p.death_date ? ` – ${p.death_date}` : ""}`;
+
+  const profiles = ordered
+    .map((p) => {
+      const photo = fileUrl(p.photo_url);
+      const avatar = photo
+        ? `<img class="ava" src="${photo}"/>`
+        : `<div class="ava avatxt" style="border-color:${personColor(p)};color:${personColor(p)}">${esc(initials(p.name))}</div>`;
+      return `<section class="page profile">
+        <div class="pcard">
+          ${avatar}
+          <h2>${esc(p.name)}${p.is_root ? ' <span class="badge">Pusat</span>' : ""}</h2>
+          <table class="pinfo">
+            <tr><td>Jenis Kelamin</td><td>${gender(p.gender)}</td></tr>
+            <tr><td>Tanggal Lahir</td><td>${esc(p.birth_date)}</td></tr>
+            <tr><td>Tempat Lahir</td><td>${esc(p.birth_place)}</td></tr>
+            <tr><td>Pekerjaan</td><td>${esc(p.job)}</td></tr>
+            <tr><td>Wafat</td><td>${p.death_date ? esc(p.death_date) : "-"}</td></tr>
+            <tr><td>Rentang Hidup</td><td>${esc(lifespan(p))}</td></tr>
+          </table>
+          ${p.notes ? `<div class="notes"><div class="nlabel">Catatan</div><div>${esc(p.notes)}</div></div>` : ""}
+        </div>
+      </section>`;
+    })
+    .join("");
+
+  const html = `<html><head><meta name="viewport" content="width=device-width"/>
+    <style>
+      *{box-sizing:border-box}
+      body{font-family:Georgia,'Times New Roman',serif;color:#1F2A44;margin:0}
+      .page{page-break-after:always;padding:48px 40px;min-height:92vh}
+      .cover{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;
+             background:linear-gradient(160deg,#FFFBF0,#F3EAD6);}
+      .cover .crest{font-size:64px;margin-bottom:12px}
+      .cover h1{font-size:40px;margin:0 0 8px;letter-spacing:1px}
+      .cover .tname{font-size:24px;color:#8A6D2F;margin:0 0 24px}
+      .cover .meta{color:#64748B;font-size:14px}
+      .cover .rule{width:120px;height:3px;background:#D4AF37;margin:20px 0;border-radius:2px}
+      .treepage h2{font-size:22px;text-align:center;margin:0 0 16px}
+      .tree{border:1px solid #E2E8F0;border-radius:12px;padding:12px;overflow:hidden;text-align:center}
+      .profile .pcard{border:1px solid #EADFC5;border-radius:16px;padding:28px;max-width:620px;margin:0 auto}
+      .ava{width:130px;height:130px;border-radius:999px;object-fit:cover;display:block;margin:0 auto 16px;border:4px solid #D4AF37}
+      .avatxt{display:flex;align-items:center;justify-content:center;font-size:44px;font-weight:bold;background:#FFF;border-width:4px;border-style:solid}
+      .profile h2{text-align:center;font-size:26px;margin:0 0 20px}
+      .badge{font-size:12px;background:#D4AF37;color:#fff;padding:2px 8px;border-radius:999px;vertical-align:middle}
+      table.pinfo{width:100%;border-collapse:collapse;font-family:Helvetica,Arial;font-size:14px}
+      table.pinfo td{padding:9px 6px;border-bottom:1px solid #EEE}
+      table.pinfo td:first-child{color:#8A6D2F;width:42%;font-weight:600}
+      .notes{margin-top:18px;font-family:Helvetica,Arial;font-size:14px;line-height:1.5}
+      .notes .nlabel{color:#8A6D2F;font-weight:700;margin-bottom:4px}
+    </style></head>
+    <body>
+      <section class="page cover">
+        <div class="crest">🌳</div>
+        <h1>Buku Silsilah</h1>
+        <div class="tname">${esc(treeName)}</div>
+        <div class="rule"></div>
+        <div class="meta">${people.length} anggota keluarga<br/>Dicetak ${today}<br/>${esc(appName)}</div>
+      </section>
+      <section class="page treepage">
+        <h2>Pohon Keluarga</h2>
+        <div class="tree">${svgTag}</div>
+      </section>
+      ${profiles}
+    </body></html>`;
+
+  return outputPdf(html, "Buku Silsilah");
 }

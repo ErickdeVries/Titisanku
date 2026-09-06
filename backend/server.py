@@ -2,6 +2,7 @@ import os
 import uuid
 import logging
 import secrets
+import hashlib
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional
@@ -37,6 +38,14 @@ STORAGE_BASE = (os.environ.get("INTEGRATION_PROXY_URL") or "").strip() or "https
 STORAGE_URL = STORAGE_BASE.rstrip("/") + "/objstore/api/v1/storage"
 EMERGENT_KEY = os.environ.get("EMERGENT_LLM_KEY")
 APP_NAME = "keturunanku"
+
+# Midtrans payment config
+MIDTRANS_SERVER_KEY = os.environ.get("MIDTRANS_SERVER_KEY", "")
+MIDTRANS_CLIENT_KEY = os.environ.get("MIDTRANS_CLIENT_KEY", "")
+MIDTRANS_IS_PRODUCTION = os.environ.get("MIDTRANS_ENV", "production").lower() == "production"
+MIDTRANS_SNAP_URL = ("https://app.midtrans.com" if MIDTRANS_IS_PRODUCTION else "https://app.sandbox.midtrans.com") + "/snap/v1/transactions"
+MIDTRANS_STATUS_BASE = "https://api.midtrans.com" if MIDTRANS_IS_PRODUCTION else "https://api.sandbox.midtrans.com"
+PLAN_PRICES = {"pro": 149000, "family": 199000}
 storage_key = None
 
 
@@ -1536,6 +1545,92 @@ async def upgrade_tree(tid: str, body: UpgradeInput, user=Depends(get_current_us
     plan = body.plan if body.plan in ("free", "pro", "family") else "pro"
     await db.trees.update_one({"id": tid}, {"$set": {"plan": plan, "upgraded_at": now_utc()}})
     return {"ok": True, "plan": plan}
+
+
+class PaymentInput(BaseModel):
+    plan: str
+    finish_url: Optional[str] = None
+
+
+async def _activate_order(order):
+    if order.get("status") == "paid":
+        return
+    await db.trees.update_one({"id": order["tree_id"]}, {"$set": {"plan": order["plan"], "upgraded_at": now_utc()}})
+    await db.payment_orders.update_one({"order_id": order["order_id"]}, {"$set": {"status": "paid", "paid_at": now_utc()}})
+
+
+@api_router.post("/payments/snap")
+async def create_snap(body: PaymentInput, tree_id: Optional[str] = Query(None), user=Depends(get_current_user)):
+    if not MIDTRANS_SERVER_KEY:
+        raise HTTPException(status_code=503, detail="Pembayaran belum dikonfigurasi")
+    if body.plan not in PLAN_PRICES:
+        raise HTTPException(status_code=400, detail="Paket tidak valid")
+    tree, role = await resolve_tree(user, tree_id)
+    require_role_t(role, ["admin"])
+    amount = PLAN_PRICES[body.plan]
+    order_id = f"KTR-{tree['id'][:8]}-{secrets.token_hex(5)}"
+    await db.payment_orders.insert_one({
+        "order_id": order_id, "user_id": user["user_id"], "tree_id": tree["id"],
+        "plan": body.plan, "amount": amount, "status": "pending", "created_at": now_utc(),
+    })
+    payload = {
+        "transaction_details": {"order_id": order_id, "gross_amount": amount},
+        "item_details": [{"id": body.plan, "price": amount, "quantity": 1, "name": f"KETURUNANKU {body.plan.upper()}"}],
+        "customer_details": {"first_name": user.get("name", "User"), "email": user.get("email", "")},
+    }
+    if body.finish_url:
+        payload["callbacks"] = {"finish": body.finish_url}
+    async with httpx.AsyncClient(timeout=30) as http:
+        resp = await http.post(MIDTRANS_SNAP_URL, json=payload, auth=(MIDTRANS_SERVER_KEY, ""),
+                               headers={"Accept": "application/json"})
+    if resp.status_code >= 300:
+        logger.error("Midtrans snap error %s %s", resp.status_code, resp.text)
+        raise HTTPException(status_code=502, detail="Gagal membuat transaksi pembayaran")
+    data = resp.json()
+    return {"order_id": order_id, "token": data.get("token"), "redirect_url": data.get("redirect_url"),
+            "amount": amount, "plan": body.plan}
+
+
+@api_router.post("/payments/notification")
+async def midtrans_notification(payload: dict = Body(...)):
+    order_id = payload.get("order_id", "")
+    status_code = payload.get("status_code", "")
+    gross_amount = payload.get("gross_amount", "")
+    sig = payload.get("signature_key", "")
+    expected = hashlib.sha512(f"{order_id}{status_code}{gross_amount}{MIDTRANS_SERVER_KEY}".encode()).hexdigest()
+    if sig != expected:
+        raise HTTPException(status_code=403, detail="Invalid signature")
+    order = await db.payment_orders.find_one({"order_id": order_id}, {"_id": 0})
+    if not order:
+        return {"ok": True}
+    tstatus = payload.get("transaction_status")
+    fraud = payload.get("fraud_status")
+    if tstatus in ("capture", "settlement") and fraud in (None, "accept"):
+        await _activate_order(order)
+    elif tstatus in ("cancel", "deny", "expire"):
+        await db.payment_orders.update_one({"order_id": order_id}, {"$set": {"status": "failed"}})
+    return {"ok": True}
+
+
+@api_router.get("/payments/status/{order_id}")
+async def payment_status(order_id: str, user=Depends(get_current_user)):
+    order = await db.payment_orders.find_one({"order_id": order_id}, {"_id": 0})
+    if not order or order["user_id"] != user["user_id"]:
+        raise HTTPException(status_code=404, detail="Order tidak ditemukan")
+    # Proactively confirm with Midtrans (covers cases where the webhook hasn't arrived yet).
+    if order["status"] == "pending" and MIDTRANS_SERVER_KEY:
+        try:
+            async with httpx.AsyncClient(timeout=20) as http:
+                r = await http.get(f"{MIDTRANS_STATUS_BASE}/v2/{order_id}/status",
+                                   auth=(MIDTRANS_SERVER_KEY, ""), headers={"Accept": "application/json"})
+            if r.status_code < 300:
+                d = r.json()
+                if d.get("transaction_status") in ("capture", "settlement") and d.get("fraud_status") in (None, "accept"):
+                    await _activate_order(order)
+                    order["status"] = "paid"
+        except Exception as e:
+            logger.warning("payment status check failed: %s", e)
+    return {"status": order["status"], "plan": order["plan"]}
 
 
 @api_router.get("/trees/{tid}/members")

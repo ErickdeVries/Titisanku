@@ -1,21 +1,23 @@
 import { useState } from "react";
-import { View, Text, Pressable, StyleSheet, ScrollView, ActivityIndicator, Alert } from "react-native";
+import { View, Text, Pressable, StyleSheet, ScrollView, ActivityIndicator, Alert, Platform } from "react-native";
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
+import * as WebBrowser from "expo-web-browser";
 import { ArrowLeft, Crown, Check, Users, Image as ImageIcon, GitBranch } from "lucide-react-native";
 import { fonts, useTheme, brandGradient } from "@/src/theme";
 import { useI18n } from "@/src/i18n";
 import { useTree } from "@/src/tree-context";
-import { upgradeTree } from "@/src/api";
+import { createSnap, paymentStatus } from "@/src/api";
 
 type PlanId = "free" | "pro" | "family";
 const PLANS: { id: PlanId; name: string; price: string; perks: string[] }[] = [
   { id: "free", name: "Free", price: "Gratis", perks: ["1 Pohon Keluarga", "50 Orang", "20 Foto", "3 Editor", "PDF dengan watermark"] },
-  { id: "pro", name: "Pro", price: "Rp199.000/tahun", perks: ["Pohon tak terbatas", "Orang tak terbatas", "5GB Foto", "10 Editor", "PDF tanpa watermark", "Backup Google Drive", "Tema Premium"] },
-  { id: "family", name: "Keluarga", price: "Rp399.000/tahun", perks: ["Semua fitur Pro", "50 Editor", "1x Cetak Buku Gratis"] },
+  { id: "pro", name: "Pro", price: "Rp149.000/tahun", perks: ["Pohon tak terbatas", "Orang tak terbatas", "5GB Foto", "10 Editor", "PDF tanpa watermark", "Backup Google Drive", "Tema Premium"] },
+  { id: "family", name: "Keluarga", price: "Rp199.000/tahun", perks: ["Semua fitur Pro", "50 Editor", "Cetak Buku Silsilah"] },
 ];
 const RANK: Record<PlanId, number> = { free: 0, pro: 1, family: 2 };
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export default function SubscriptionScreen() {
   const { colors } = useTheme();
@@ -34,29 +36,46 @@ export default function SubscriptionScreen() {
     { icon: <ImageIcon size={16} color={colors.brandSecondary} />, label: "Foto", used: activeTree?.photo_count ?? 0, max: limits?.photos ?? null },
   ];
 
-  const doUpgrade = (target: PlanId) => {
+  const pollUntilPaid = async (orderId: string) => {
+    for (let i = 0; i < 40; i++) {
+      await sleep(3000);
+      try {
+        const s = await paymentStatus(orderId);
+        if (s.status === "paid") {
+          await refreshTrees();
+          Alert.alert(t("payment_success_title"), t("payment_success_msg"));
+          return true;
+        }
+        if (s.status === "failed") {
+          Alert.alert(t("payment_failed_title"), t("payment_failed_msg"));
+          return false;
+        }
+      } catch {
+        /* keep polling */
+      }
+    }
+    Alert.alert(t("payment_pending_title"), t("payment_pending_msg"));
+    return false;
+  };
+
+  const doUpgrade = async (target: PlanId) => {
     if (!activeTreeId) return;
-    Alert.alert(
-      `Upgrade ke ${target === "pro" ? "Pro" : "Keluarga"}`,
-      "Mode simulasi: paket akan langsung aktif (integrasi pembayaran Midtrans menyusul).",
-      [
-        { text: t("cancel"), style: "cancel" },
-        {
-          text: "Aktifkan",
-          onPress: async () => {
-            setBusy(target);
-            try {
-              await upgradeTree(activeTreeId, target);
-              await refreshTrees();
-            } catch (e) {
-              console.log("upgrade error", e);
-            } finally {
-              setBusy(null);
-            }
-          },
-        },
-      ],
-    );
+    setBusy(target);
+    try {
+      const finishUrl = Platform.OS === "web" ? window.location.origin + "/" : undefined;
+      const res = await createSnap(target, finishUrl);
+      if (Platform.OS === "web") {
+        window.open(res.redirect_url, "_blank");
+      } else {
+        await WebBrowser.openBrowserAsync(res.redirect_url);
+      }
+      await pollUntilPaid(res.order_id);
+    } catch (e) {
+      console.log("payment error", e);
+      Alert.alert(t("payment_failed_title"), t("payment_failed_msg"));
+    } finally {
+      setBusy(null);
+    }
   };
 
   return (
@@ -131,7 +150,7 @@ export default function SubscriptionScreen() {
           {!isAdmin ? (
             <Text style={[styles.note, { color: colors.muted }]}>Hanya admin pohon yang dapat mengubah paket. Editor tetap menikmati fitur paket ini.</Text>
           ) : (
-            <Text style={[styles.note, { color: colors.muted }]}>Mode simulasi aktif — pembayaran Midtrans akan dipasang saat kunci tersedia.</Text>
+            <Text style={[styles.note, { color: colors.muted }]}>Pembayaran aman diproses oleh Midtrans. Paket aktif otomatis setelah pembayaran berhasil.</Text>
           )}
         </ScrollView>
       )}

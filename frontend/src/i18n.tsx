@@ -273,6 +273,13 @@ const dict = {
     current_members: "Anggota Saat Ini",
     group_updated: "Grup diperbarui",
     save_changes: "Simpan Perubahan",
+    print_book: "Cetak Buku Silsilah",
+    payment_success_title: "Pembayaran Berhasil",
+    payment_success_msg: "Paket Anda telah aktif. Terima kasih!",
+    payment_failed_title: "Pembayaran Gagal",
+    payment_failed_msg: "Transaksi dibatalkan atau gagal. Silakan coba lagi.",
+    payment_pending_title: "Menunggu Pembayaran",
+    payment_pending_msg: "Jika sudah membayar, paket akan aktif otomatis dalam beberapa saat.",
   },
   en: {
     appName: "KETURUNANKU",
@@ -540,6 +547,13 @@ const dict = {
     current_members: "Current Members",
     group_updated: "Group updated",
     save_changes: "Save Changes",
+    print_book: "Print Family Book",
+    payment_success_title: "Payment Successful",
+    payment_success_msg: "Your plan is now active. Thank you!",
+    payment_failed_title: "Payment Failed",
+    payment_failed_msg: "The transaction was cancelled or failed. Please try again.",
+    payment_pending_title: "Awaiting Payment",
+    payment_pending_msg: "If you have paid, your plan will activate automatically shortly.",
   },
 };
 

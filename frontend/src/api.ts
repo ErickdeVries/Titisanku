@@ -138,6 +138,10 @@ export const claimBranch = (
   });
 export const upgradeTree = (tid: string, plan: "pro" | "family" = "pro") =>
   apiFetch(`/trees/${tid}/upgrade?tree_id=${tid}`, { method: "POST", body: JSON.stringify({ plan }) });
+export const createSnap = (plan: string, finishUrl?: string): Promise<{ order_id: string; token: string; redirect_url: string; amount: number; plan: string }> =>
+  apiFetch("/payments/snap", { method: "POST", body: JSON.stringify({ plan, finish_url: finishUrl }) });
+export const paymentStatus = (orderId: string): Promise<{ status: string; plan: string }> =>
+  apiFetch(`/payments/status/${orderId}`);
 export const getMembers = (tid: string): Promise<{ members: TreeMember[]; role: string; owner_id: string }> =>
   apiFetch(`/trees/${tid}/members?tree_id=${tid}`);
 export const changeMemberRole = (tid: string, user_id: string, role: string) =>

@@ -15,7 +15,7 @@ import { useTree } from "@/src/tree-context";
 import { useI18n } from "@/src/i18n";
 import { PersonNode } from "@/src/components/PersonNode";
 import { buildLayout, NODE_R } from "@/src/tree-layout";
-import { exportTreePdf } from "@/src/export-pdf";
+import { exportTreePdf, exportTreeBook } from "@/src/export-pdf";
 import { GradientButton } from "@/src/components/GradientButton";
 import { UpgradeModal } from "@/src/components/UpgradeModal";
 
@@ -45,6 +45,8 @@ const useStyles = makeStyles((c) => ({
   iconBtn: { width: 38, height: 38, borderRadius: 999, backgroundColor: c.brandTertiary, alignItems: "center", justifyContent: "center" },
   exportBtn: { flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: c.surfaceTertiary, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 999 },
   exportText: { fontFamily: fonts.medium, fontSize: 13, color: c.onSurfaceSecondary },
+  bookBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, borderWidth: 1.5, borderRadius: 16, height: 52, marginTop: 10 },
+  bookBtnText: { fontFamily: fonts.semibold, fontSize: 15 },
   statsStrip: { flexDirection: "row", gap: 10, paddingHorizontal: 16, paddingVertical: 12, backgroundColor: c.surface, borderBottomWidth: 1, borderBottomColor: c.divider },
   statCard: { flex: 1, backgroundColor: c.surfaceSecondary, borderRadius: 14, paddingVertical: 10, paddingHorizontal: 12, gap: 2 },
   statValue: { fontFamily: fonts.bold, fontSize: 18, color: c.onSurface },
@@ -190,6 +192,7 @@ export default function TreeScreen() {
   const [filterDown, setFilterDown] = useState(2);
   const [hideSiblings, setHideSiblings] = useState(true);
   const [exporting, setExporting] = useState(false);
+  const [exportingBook, setExportingBook] = useState(false);
 
   const role = data?.role ?? user?.role;
   const canEdit = role === "admin" || role === "editor";
@@ -388,6 +391,18 @@ export default function TreeScreen() {
       console.log("export error", e);
     } finally {
       setExporting(false);
+    }
+  };
+
+  const doExportBook = async () => {
+    setExportingBook(true);
+    try {
+      await exportTreeBook(data!.people, data!.relations, data!.root_id, "KETURUNANKU", activeTree?.name ?? "Keluarga");
+      setExportOpen(false);
+    } catch (e) {
+      console.log("export book error", e);
+    } finally {
+      setExportingBook(false);
     }
   };
 
@@ -607,6 +622,23 @@ export default function TreeScreen() {
               </View>
             </View>
             <GradientButton testID="do-export-button" title={t("export")} icon="download" loading={exporting} onPress={doExport} />
+            {plan === "family" ? (
+              <Pressable
+                testID="do-export-book-button"
+                onPress={doExportBook}
+                disabled={exportingBook}
+                style={[styles.bookBtn, { borderColor: colors.brandSecondary, opacity: exportingBook ? 0.6 : 1 }]}
+              >
+                {exportingBook ? (
+                  <ActivityIndicator color={colors.brandSecondary} />
+                ) : (
+                  <>
+                    <Feather name="book-open" size={18} color={colors.brandSecondary} />
+                    <Text style={[styles.bookBtnText, { color: colors.brandSecondary }]}>{t("print_book")}</Text>
+                  </>
+                )}
+              </Pressable>
+            ) : null}
           </Pressable>
         </Pressable>
       </Modal>

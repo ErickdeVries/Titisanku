@@ -325,3 +325,19 @@ JSON backup, and email collaboration invites. Google login; first user = admin +
   OAuth transaction cookie). integration_expert + support confirmed not reliably fixable in app JS. Earlier fix
   (window.location.replace for outbound auth) kept. User advised to clear auth.emergentagent.com cookies / test
   deployed build, and contact support@emergent.sh if it persists.
+
+## Iteration 14 — PDF fix + Cetak Buku + Midtrans (production) + delete-tree fix (2026-06)
+- PDF EXPORT BUG: on web, expo-print printed the current page (export modal). Fixed: export-pdf.ts now
+  opens the generated tree HTML in its own window on web (outputPdf helper); SVG given explicit width/height.
+- CETAK BUKU SILSILAH (paket family): exportTreeBook() -> cover + full-tree page + one profile page per member
+  (photo/initials, JK, lahir, tempat, pekerjaan, wafat, catatan). Button in export modal on index.tsx, gated to
+  plan===family. Shared buildTreeSvg/outputPdf helpers.
+- MIDTRANS (PRODUCTION): backend /payments/snap (admin, per active tree), /payments/notification (sha512 sig
+  verify -> activate tree.plan), /payments/status/{order_id} (owner poll + proactive Midtrans status check).
+  payment_orders collection. Keys in backend/.env (MIDTRANS_*). Prices pro=149000, family=199000. Frontend
+  subscription.tsx: real flow via createSnap -> open redirect_url (web window.open / native WebBrowser) -> poll
+  status -> refreshTrees. Backend verified 14/14 PASS.
+  ACTION: user must set Payment Notification URL in Midtrans dashboard to <backendUrl>/api/payments/notification
+  (update after deploy). Production keys = real charges; user advised to rotate exposed server key.
+- DELETE TREE FIX: Alert.alert confirm does not work on RN-Web (no response). Replaced with a custom Modal
+  confirm in trees.tsx (Batal/Hapus). Owner-only trash icon.

@@ -1,0 +1,32 @@
+{
+  "summary": "Backend-only tests for the new Midtrans Snap payment endpoints (POST /api/payments/snap, POST /api/payments/notification, GET /api/payments/status/{order_id}). All 14 pytest cases pass (100%). Verified: admin-only access, plan validation (pro=149000, family=199000), live Snap call returns app.midtrans.com redirect_url and creates payment_orders (pending), notification signature verification (valid settlement activates tree.plan + sets order.status=paid; invalid signature=>403; cancel=>failed, plan unchanged), idempotency of _activate_order on replay (paid_at not overwritten), status endpoint 404 for other user / unknown order and returns {status:'paid',plan:...} without calling Midtrans when already paid. Config sanity: MIDTRANS_SERVER_KEY loaded. Live Midtrans /snap was called only twice total (once pro, once family) per instructions.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_payments_midtrans.py",
+    "/app/test_reports/pytest/iter10_payments_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py file is now ~1842 lines — recommend splitting into modules (auth, people/relations, chat, payments, trees) since it exceeds the 700-line guideline.",
+    "POST /payments/notification returns 403 on bad signature via HTTPException; Midtrans best-practice is to always 200 the webhook to avoid retries flooding. Current 403 is acceptable for security but be aware of retry storms on real bad-signature spam.",
+    "_activate_order is idempotent for order/plan state, but there is no DB-level unique constraint on payment_orders.order_id — a duplicate insert scenario would silently create two rows. Consider adding a unique index on order_id."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_payments_midtrans.py (new)"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "N/A (skipped per request)"},
+  "seed_data_creation": "Per-test-module seed: 4 synthetic users (TEST_admin/editor/viewer/other) + user_sessions, 1 tree (tree_TEST_...) + 3 tree_members, plus several synthetic payment_orders (KTR-TEST-... and 2 live KTR-... created via /payments/snap). All removed in module teardown using targeted delete_many({field: {$in: [...seeded ids]}}). Verified Mongo has 0 residual TEST_ docs after run.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Payment endpoints are fully covered by /app/backend/tests/test_payments_midtrans.py. Run with `pytest test_payments_midtrans.py -v` (parallel-safe via LoadScope). It computes signatures with MIDTRANS_SERVER_KEY from /app/backend/.env and calls the LIVE production /snap ONCE per plan — do not add loops or duplicate runs unnecessarily.",
+  "rca_of_issue": "N/A — no defects found."
+}
