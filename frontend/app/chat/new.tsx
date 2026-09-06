@@ -8,6 +8,7 @@ import Feather from "@react-native-vector-icons/feather";
 import { fonts, makeStyles, useTheme } from "@/src/theme";
 import { chatContacts, openDirect, createGroup, fileUrl, ChatContact } from "@/src/api";
 import { useAuth } from "@/src/auth";
+import { useTree } from "@/src/tree-context";
 import { useI18n } from "@/src/i18n";
 
 const useStyles = makeStyles((c) => ({
@@ -38,13 +39,15 @@ export default function NewChatScreen() {
   const { colors } = useTheme();
   const { t } = useI18n();
   const { user } = useAuth();
+  const { activeTree } = useTree();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const qc = useQueryClient();
 
   const { data } = useQuery({ queryKey: ["chatContacts"], queryFn: chatContacts });
   const contacts = data?.contacts ?? [];
-  const canGroup = user?.role === "admin" || user?.role === "editor";
+  const role = activeTree?.role ?? user?.role;
+  const canGroup = role === "admin" || role === "editor" || !!user?.is_superadmin;
 
   const [groupMode, setGroupMode] = useState(false);
   const [groupName, setGroupName] = useState("");

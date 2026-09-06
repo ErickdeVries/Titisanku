@@ -447,3 +447,14 @@ FASE 3 (chat avatar = account photo, changeable):
   pick+compress(512)+upload+updateProfile+refresh, camera badge overlay, uses fileUrl(user.picture).
   chat/[roomId].tsx sender avatar now fileUrl(sender_picture) so uploaded (relative) avatars resolve.
 - Verified backend e2e (gallery add/edit/delete caption+date, cover set, profile pic). Auth-gated UI needs device test.
+
+## Iteration 20 — FIX: grup chat tersembunyi, restore picker, klarifikasi "data hilang" (2026-06)
+- GRUP CHAT tersembunyi: chat/new.tsx canGroup dulu pakai GLOBAL user.role (viewer utk emmusic) -> tombol
+  "Grup Baru" tidak muncul. FIX: pakai activeTree.role (fallback user.role) + is_superadmin. Entry: tab Chat ->
+  tombol pensil (new-chat-button) -> /chat/new -> "Grup Baru".
+- RESTORE picker: DocumentPicker type "application/json" sering menampilkan galeri & file .json tak bisa dipilih
+  di Android. FIX: type ["application/json","text/plain","*/*"].
+- DATA "hilang lagi": DIVERIFIKASI via mongorestore backup 08:00 == kondisi sekarang (4 people, 2 trees, 3 rel).
+  Tidak ada kehilangan sejak backup pertama. Ada DUA akun/pohon bernama sama "Erick De Vries":
+  limajiwamandiri (1 person) & emmusic (3 person: Erick Devries, Siti Annisa, Mahdiana). Kemungkinan user
+  bingung antar akun. Kehilangan sebelumnya (pra-backup 07:33) tak terpulihkan. Backup baru dibuat.

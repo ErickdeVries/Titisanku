@@ -169,7 +169,7 @@ export default function SettingsScreen() {
 
   const doRestore = async () => {
     setRestoreMsg("");
-    const res = await DocumentPicker.getDocumentAsync({ type: "application/json", copyToCacheDirectory: true });
+    const res = await DocumentPicker.getDocumentAsync({ type: ["application/json", "text/plain", "*/*"], copyToCacheDirectory: true });
     if (res.canceled || !res.assets?.length) return;
     const uri = res.assets[0].uri;
     setRestoreBusy(true);
