@@ -176,7 +176,7 @@ export default function TreeScreen() {
   const [filterOpen, setFilterOpen] = useState(false);
   const [filterUp, setFilterUp] = useState(2);
   const [filterDown, setFilterDown] = useState(2);
-  const [hideSiblings, setHideSiblings] = useState(false);
+  const [hideSiblings, setHideSiblings] = useState(true);
   const [exporting, setExporting] = useState(false);
 
   const role = data?.role ?? user?.role;
@@ -522,23 +522,11 @@ export default function TreeScreen() {
         <Pressable style={styles.modalBg} onPress={() => setFilterOpen(false)}>
           <Pressable style={[styles.sheet, { paddingBottom: insets.bottom + 24 }]} onPress={() => {}}>
             <Text style={styles.sheetTitle}>{t("filter_tree_view")}</Text>
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: colors.brandTertiary, alignSelf: "flex-start", paddingHorizontal: 12, paddingVertical: 7, borderRadius: 999, marginBottom: 4 }}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: colors.brandTertiary, alignSelf: "flex-start", paddingHorizontal: 12, paddingVertical: 7, borderRadius: 999, marginBottom: 10 }}>
               <Feather name="target" size={14} color={colors.onBrandTertiary} />
               <Text style={{ fontFamily: fonts.medium, fontSize: 12, color: colors.onBrandTertiary }}>{t("current_center")}: {focusName ?? t("root_person")}</Text>
             </View>
-            <Pressable
-              onPress={() => setHideSiblings((v) => !v)}
-              testID="toggle-hide-siblings"
-              style={{ flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: colors.surfaceTertiary, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, marginBottom: 6 }}
-            >
-              <View style={{ width: 24, height: 24, borderRadius: 7, borderWidth: 2, borderColor: colors.brandPrimary, alignItems: "center", justifyContent: "center", backgroundColor: hideSiblings ? colors.brandPrimary : "transparent" }}>
-                {hideSiblings ? <Feather name="check" size={15} color={colors.onBrandPrimary} /> : null}
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={{ fontFamily: fonts.semibold, fontSize: 14, color: colors.onSurface }}>{t("hide_siblings")}</Text>
-                <Text style={{ fontFamily: fonts.regular, fontSize: 12, color: colors.muted }}>{t("hide_siblings_desc")}</Text>
-              </View>
-            </Pressable>
+            <Text style={{ fontFamily: fonts.regular, fontSize: 12, color: colors.muted, marginBottom: 8 }}>{t("direct_line_hint")}</Text>
             <View style={styles.stepperRow}>
               <Text style={styles.stepperLabel}>{t("gen_ancestors")}</Text>
               <View style={styles.stepper}>
@@ -565,16 +553,16 @@ export default function TreeScreen() {
             </View>
             <View style={{ flexDirection: "row", gap: 12 }}>
               <GradientButton
-                testID="filter-show-all"
+                testID="filter-view-all"
                 variant="secondary"
-                title={t("show_all")}
-                onPress={() => { setFilterUp(99); setFilterDown(99); }}
+                title={t("view_all")}
+                onPress={() => { setHideSiblings(false); setFilterUp(99); setFilterDown(99); setFilterOpen(false); }}
                 style={{ flex: 1 }}
               />
               <GradientButton
                 testID="filter-apply"
                 title={t("apply_filter")}
-                onPress={() => setFilterOpen(false)}
+                onPress={() => { setHideSiblings(true); setFilterOpen(false); }}
                 style={{ flex: 1 }}
               />
             </View>

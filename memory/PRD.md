@@ -252,5 +252,18 @@ JSON backup, and email collaboration invites. Google login; first user = admin +
   and passes other_parent_id. A 2nd+ spouse can be added via the always-additive +Pasangan / add-spouse
   buttons. i18n choose_other_parent / unknown_parent (ID+EN).
 
+## Iteration 9d — Direct-line is now the DEFAULT view + "Lihat Semua" (2026-06)
+- Per user: default tree view = direct line (hide siblings) for EVERY person; removed the hide-siblings
+  checkbox; added a "Lihat Semua" (View All) button.
+- index.tsx: hideSiblings now defaults to TRUE. Filter panel: removed the toggle, added a hint line, and
+  the two footer buttons are now "Lihat Semua" (testID filter-view-all → hideSiblings=false + gens 99/99,
+  shows the whole family/all generations) and "Terapkan" (testID filter-apply → hideSiblings=true, applies
+  the ancestor/descendant stepper depth). i18n view_all / direct_line_hint (ID+EN).
+- POV-consistent: because directLineSet is keyed on activeFocus and hideSiblings defaults true, making
+  anyone the tree center shows, by default, that person + spouse + N gens up/down (default 2/2).
+- Verified on real tree: default shows Erick+Mahdiana+parents+5 children (siblings/in-laws hidden); filter
+  panel shows the new buttons and hint.
+
+
 
 
