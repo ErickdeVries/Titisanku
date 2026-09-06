@@ -407,3 +407,14 @@ JSON backup, and email collaboration invites. Google login; first user = admin +
   (gated on user?.is_superadmin) stayed hidden until app reopen.
 - FIX: exchange() now calls getMe() after storing token and sets that (fallback to res.user on error).
 - Verified backend /auth/me returns is_superadmin=true for emmusic.indonesia@gmail.com.
+
+## Iteration 17 — FIX: deployment health check + regression (2026-06, fork)
+- DEPLOY BLOCKER: K8s health probe hits GET /health (root, no /api prefix) -> 404 (all routes under /api).
+  FIX: added root-level @app.get("/health") -> {"status":"ok"} in server.py (right after app/api_router init).
+  Verified 200 locally. The repeated 404 logs in the deploy report were stale (pre-fix).
+- REGRESSION FIX: while inserting /payments/history earlier, the @api_router.get("/trees/{tid}/members")
+  decorator was accidentally deleted, unregistering the Manage Members GET route (would 404 on client).
+  Caught by deployment_agent. Restored decorator; now returns 401 unauth (registered). 
+- NOTE (not blockers): hardcoded Emergent auth URL demobackend.emergentagent.com/auth/v1/env/oauth/session-data
+  is the standard Emergent-managed Google Auth endpoint (same across envs) — left as-is per playbook.
+  Google Drive backup row is an intentional "coming soon" placeholder gated to Pro.

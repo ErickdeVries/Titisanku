@@ -33,6 +33,12 @@ logger = logging.getLogger("keturunanku")
 app = FastAPI()
 api_router = APIRouter(prefix="/api")
 
+
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
+
 # ---------------------------------------------------------------------------
 # Object Storage
 # ---------------------------------------------------------------------------
@@ -1857,7 +1863,7 @@ async def payment_history(user=Depends(get_current_user)):
     return {"orders": out}
 
 
-
+@api_router.get("/trees/{tid}/members")
 async def list_members(tid: str, user=Depends(get_current_user)):
     tree, role = await resolve_tree(user, tid)
     members = await db.tree_members.find({"tree_id": tid}, {"_id": 0}).to_list(2000)
