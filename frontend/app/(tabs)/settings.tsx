@@ -8,7 +8,7 @@ import * as Sharing from "expo-sharing";
 import * as DocumentPicker from "expo-document-picker";
 import Feather from "@react-native-vector-icons/feather";
 import { fonts, makeStyles, useTheme } from "@/src/theme";
-import { getTree, getBackup, restoreBackup, createInvite, acceptInvite, listInvites, fileUrl } from "@/src/api";
+import { getTree, getBackup, restoreBackup, createInvite, acceptInvite, listInvites, fileUrl, linkCoparents } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { useTree } from "@/src/tree-context";
 import { useRouter } from "expo-router";
@@ -146,6 +146,23 @@ export default function SettingsScreen() {
     }
   };
 
+  const [linkBusy, setLinkBusy] = useState(false);
+  const doLinkCoparents = async () => {
+    setLinkBusy(true);
+    try {
+      const res = await linkCoparents();
+      await qc.invalidateQueries({ queryKey: ["tree"] });
+      Alert.alert(
+        t("repair_parents"),
+        res.linked > 0 ? t("repair_parents_done").replace("{n}", String(res.linked)) : t("repair_parents_none"),
+      );
+    } catch {
+      Alert.alert(t("repair_parents"), t("repair_parents_none"));
+    } finally {
+      setLinkBusy(false);
+    }
+  };
+
   const sendInvite = async () => {
     if (!inviteEmail.trim()) return;
     setInviteBusy(true);
@@ -220,6 +237,23 @@ export default function SettingsScreen() {
                     <Text style={styles.rowDesc}>{activeTree?.member_count ?? 1} {t("members_count")}</Text>
                   </View>
                   <Feather name="chevron-right" size={20} color={colors.muted} />
+                </Pressable>
+              </>
+            ) : null}
+            {isAdmin ? (
+              <>
+                <View style={styles.divider} />
+                <Pressable style={styles.rowItem} onPress={doLinkCoparents} testID="repair-parents-row">
+                  <Feather name="git-merge" size={20} color={colors.onSurfaceSecondary} />
+                  <View style={styles.rowTextWrap}>
+                    <Text style={styles.rowLabel}>{t("repair_parents")}</Text>
+                    <Text style={styles.rowDesc}>{t("repair_parents_desc")}</Text>
+                  </View>
+                  {linkBusy ? (
+                    <Feather name="loader" size={18} color={colors.muted} />
+                  ) : (
+                    <Feather name="chevron-right" size={20} color={colors.muted} />
+                  )}
                 </Pressable>
               </>
             ) : null}

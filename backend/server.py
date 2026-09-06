@@ -460,6 +460,48 @@ async def update_relation(rel_id: str, data: RelationUpdate, tree_id: Optional[s
     return await db.relations.find_one({"id": rel_id}, {"_id": 0})
 
 
+@api_router.post("/tree/link-coparents")
+async def link_coparents(tree_id: Optional[str] = Query(None), user=Depends(get_current_user)):
+    """Link every child to their OTHER parent (the linked parent's spouse) when unambiguous:
+    the child currently has exactly one parent AND that parent has exactly one spouse. Reuses the
+    existing spouse as the second parent — never creates a new person. Fixes the 'child only shows
+    under the father' problem so it is consistent from every individual's point of view."""
+    tree, role = await resolve_tree(user, tree_id)
+    require_role_t(role, ["admin", "editor"])
+    tid = tree["id"]
+    rels = await db.relations.find({"tree_id": tid, "deleted_at": None}, {"_id": 0}).to_list(100000)
+    PARENT = ("parent", "adopted_child")
+    SPOUSE = ("spouse", "divorced")
+    parents_of: dict = {}
+    spouses_of: dict = {}
+    for r in rels:
+        if r["relation_type"] in PARENT:
+            parents_of.setdefault(r["related_person_id"], []).append((r["person_id"], r["relation_type"]))
+        elif r["relation_type"] in SPOUSE:
+            spouses_of.setdefault(r["person_id"], set()).add(r["related_person_id"])
+            spouses_of.setdefault(r["related_person_id"], set()).add(r["person_id"])
+    new_rels = []
+    for child, plist in parents_of.items():
+        if len(plist) != 1:
+            continue  # already has both parents (or none)
+        parent_id, ptype = plist[0]
+        sp = spouses_of.get(parent_id, set())
+        if len(sp) != 1:
+            continue  # ambiguous (no spouse or multiple spouses)
+        other = next(iter(sp))
+        if other == parent_id or other == child:
+            continue
+        new_rels.append({
+            "id": str(uuid.uuid4()), "tree_id": tid, "person_id": other,
+            "related_person_id": child, "relation_type": ptype,
+            "created_at": now_utc(), "deleted_at": None,
+        })
+    if new_rels:
+        await db.relations.insert_many(new_rels)
+    return {"linked": len(new_rels)}
+
+
+
 
 
 @api_router.post("/people/add-relative")

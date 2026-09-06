@@ -142,10 +142,16 @@ function directLineSet(
     frontier.forEach((id) => parentsOf(id).forEach((p) => { if (!set.has(p)) { set.add(p); next.push(p); } }));
     frontier = next;
   }
-  frontier = [focus];
+  // descendants: seed from the focus couple so a shared child appears from EITHER partner's POV,
+  // even if the child is only linked to one parent. Descendants' own spouses are not displayed.
+  frontier = [focus, ...spousesOf(focus)];
   for (let i = 0; i < down && frontier.length; i++) {
     const next: string[] = [];
-    frontier.forEach((id) => childrenOf(id).forEach((c) => { if (!set.has(c)) { set.add(c); next.push(c); } }));
+    frontier.forEach((id) => {
+      const kids = new Set<string>(childrenOf(id));
+      spousesOf(id).forEach((sp) => childrenOf(sp).forEach((k) => kids.add(k)));
+      kids.forEach((c) => { if (!set.has(c)) { set.add(c); next.push(c); } });
+    });
     frontier = next;
   }
   return set;

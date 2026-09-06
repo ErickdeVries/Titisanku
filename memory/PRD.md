@@ -225,3 +225,19 @@ JSON backup, and email collaboration invites. Google login; first user = admin +
   → Ahmad + Erick + Iqbal/Deliana (2 gens up), siblings hidden.
 - i18n keys hide_siblings / hide_siblings_desc (ID+EN). State is per-session (not persisted).
 
+## Iteration 9b — Link children to BOTH parents (fix one-parent children) (2026-06)
+- Root problem: existing children were linked to only one parent (father), so from the mother's POV
+  (and downward generations generally) they looked disconnected / tempted the user to create a duplicate
+  mother.
+- Backend: NEW POST /api/tree/link-coparents (admin/editor). For the whole tree, links each child to the
+  OTHER parent (the linked parent's spouse) when unambiguous: child has exactly ONE parent AND that parent
+  has exactly ONE spouse. Reuses the existing spouse — never creates a new person. Returns {linked}.
+- Frontend: Settings → tree section → "Hubungkan Anak ke Kedua Orang Tua" (testID repair-parents-row)
+  calls it and alerts how many were linked. api.ts linkCoparents(). i18n repair_parents* (ID+EN).
+- directLineSet (hide-siblings) also seeds descendants from the focus COUPLE so shared children show from
+  either partner's POV even before repair.
+- Ran the repair on the user's real tree via temp session: linked 5 children to Mahdiana (Erick's wife);
+  verified both Erick & Mahdiana now connect to the 5 kids. Data fixed; POV now consistent for everyone.
+- Future children already auto-link to both parents via the earlier add-relative fix (single-spouse case).
+
+

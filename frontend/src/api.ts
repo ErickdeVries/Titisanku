@@ -135,6 +135,8 @@ export const deleteRelation = (relId: string) =>
   apiFetch(`/relations/${relId}`, { method: "DELETE" });
 export const updateRelation = (relId: string, data: { marriage_date: string | null; divorce_date: string | null; is_divorced: boolean }) =>
   apiFetch(`/relations/${relId}`, { method: "PUT", body: JSON.stringify(data) });
+export const linkCoparents = (): Promise<{ linked: number }> =>
+  apiFetch(`/tree/link-coparents`, { method: "POST" });
 
 export const listPeople = (q?: string): Promise<Person[]> =>
   apiFetch(`/people${q ? `?q=${encodeURIComponent(q)}` : ""}`);
