@@ -212,3 +212,16 @@ JSON backup, and email collaboration invites. Google login; first user = admin +
 
 
 
+
+## Iteration 9 — "Sembunyikan Saudara" (direct-line only) toggle (2026-06)
+- Filter panel (tree tab) gained a toggle "Sembunyikan Saudara (Kakak/Adik)" (testID toggle-hide-siblings).
+- When ON, the canvas shows ONLY the direct line relative to the current center (activeFocus): the focus
+  + spouse(s), direct ancestors up `filterUp` gens, direct descendants down `filterDown` gens. Siblings,
+  aunts/uncles, cousins and in-law extended families are excluded. Implemented via `directLineSet()` in
+  app/(tabs)/index.tsx that filters people/relations before buildLayout (sibling relations dropped too).
+- POV-consistent by design: because the set is keyed on activeFocus, making any person the tree center
+  (via "Jadikan Pusat Pohon" or the crosshair focus button) recomputes the direct line from THAT person's
+  point of view. Verified on real data: focus=Erick → Erick+Mahdiana+parents+children; focus=child(Ahmad)
+  → Ahmad + Erick + Iqbal/Deliana (2 gens up), siblings hidden.
+- i18n keys hide_siblings / hide_siblings_desc (ID+EN). State is per-session (not persisted).
+

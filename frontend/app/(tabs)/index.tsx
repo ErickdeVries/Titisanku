@@ -9,7 +9,7 @@ import Animated, { useSharedValue, useAnimatedStyle, withTiming, runOnJS } from 
 import Svg, { Line } from "react-native-svg";
 import Feather from "@react-native-vector-icons/feather";
 import { fonts, makeStyles, useTheme } from "@/src/theme";
-import { getTree } from "@/src/api";
+import { getTree, Person, Relation } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { useTree } from "@/src/tree-context";
 import { useI18n } from "@/src/i18n";
@@ -114,6 +114,44 @@ function AddButton({ x, y, bg, icon, onPress, testID }: any) {  const styles = u
   );
 }
 
+// Direct-line only (hide siblings/aunts/uncles/cousins): focus + spouse(s),
+// direct ancestors up `up` gens, direct descendants down `down` gens.
+function directLineSet(
+  people: Person[],
+  relations: Relation[],
+  focus: string,
+  up: number,
+  down: number,
+): Set<string> {
+  const PARENT = ["parent", "adopted_child"];
+  const parentsOf = (id: string) =>
+    relations.filter((r) => r.related_person_id === id && PARENT.includes(r.relation_type)).map((r) => r.person_id);
+  const childrenOf = (id: string) =>
+    relations.filter((r) => r.person_id === id && PARENT.includes(r.relation_type)).map((r) => r.related_person_id);
+  const spousesOf = (id: string) =>
+    relations
+      .filter((r) => (r.relation_type === "spouse" || r.relation_type === "divorced") && (r.person_id === id || r.related_person_id === id))
+      .map((r) => (r.person_id === id ? r.related_person_id : r.person_id));
+
+  const set = new Set<string>([focus]);
+  spousesOf(focus).forEach((s) => set.add(s));
+
+  let frontier = [focus];
+  for (let i = 0; i < up && frontier.length; i++) {
+    const next: string[] = [];
+    frontier.forEach((id) => parentsOf(id).forEach((p) => { if (!set.has(p)) { set.add(p); next.push(p); } }));
+    frontier = next;
+  }
+  frontier = [focus];
+  for (let i = 0; i < down && frontier.length; i++) {
+    const next: string[] = [];
+    frontier.forEach((id) => childrenOf(id).forEach((c) => { if (!set.has(c)) { set.add(c); next.push(c); } }));
+    frontier = next;
+  }
+  return set;
+}
+
+
 export default function TreeScreen() {
   const styles = useStyles();
   const { colors } = useTheme();
@@ -132,6 +170,7 @@ export default function TreeScreen() {
   const [filterOpen, setFilterOpen] = useState(false);
   const [filterUp, setFilterUp] = useState(2);
   const [filterDown, setFilterDown] = useState(2);
+  const [hideSiblings, setHideSiblings] = useState(false);
   const [exporting, setExporting] = useState(false);
 
   const role = data?.role ?? user?.role;
@@ -155,10 +194,18 @@ export default function TreeScreen() {
 
   const activeFocus = focusId ?? data?.root_id ?? null;
 
-  const layout = useMemo(
-    () => buildLayout(data?.people ?? [], data?.relations ?? [], activeFocus, filterUp, filterDown),
-    [data, activeFocus, filterUp, filterDown],
-  );
+  const layout = useMemo(() => {
+    let ppl = data?.people ?? [];
+    let rels = data?.relations ?? [];
+    if (hideSiblings && activeFocus) {
+      const direct = directLineSet(ppl, rels, activeFocus, filterUp, filterDown);
+      ppl = ppl.filter((p) => direct.has(p.id));
+      rels = rels.filter(
+        (r) => direct.has(r.person_id) && direct.has(r.related_person_id) && r.relation_type !== "sibling",
+      );
+    }
+    return buildLayout(ppl, rels, activeFocus, filterUp, filterDown);
+  }, [data, activeFocus, filterUp, filterDown, hideSiblings]);
 
   const stats = useMemo(() => {
     const people = data?.people ?? [];
@@ -473,6 +520,19 @@ export default function TreeScreen() {
               <Feather name="target" size={14} color={colors.onBrandTertiary} />
               <Text style={{ fontFamily: fonts.medium, fontSize: 12, color: colors.onBrandTertiary }}>{t("current_center")}: {focusName ?? t("root_person")}</Text>
             </View>
+            <Pressable
+              onPress={() => setHideSiblings((v) => !v)}
+              testID="toggle-hide-siblings"
+              style={{ flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: colors.surfaceTertiary, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, marginBottom: 6 }}
+            >
+              <View style={{ width: 24, height: 24, borderRadius: 7, borderWidth: 2, borderColor: colors.brandPrimary, alignItems: "center", justifyContent: "center", backgroundColor: hideSiblings ? colors.brandPrimary : "transparent" }}>
+                {hideSiblings ? <Feather name="check" size={15} color={colors.onBrandPrimary} /> : null}
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontFamily: fonts.semibold, fontSize: 14, color: colors.onSurface }}>{t("hide_siblings")}</Text>
+                <Text style={{ fontFamily: fonts.regular, fontSize: 12, color: colors.muted }}>{t("hide_siblings_desc")}</Text>
+              </View>
+            </Pressable>
             <View style={styles.stepperRow}>
               <Text style={styles.stepperLabel}>{t("gen_ancestors")}</Text>
               <View style={styles.stepper}>
