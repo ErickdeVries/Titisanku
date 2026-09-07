@@ -395,7 +395,7 @@ export default function TreeScreen() {
         ppl = ppl.filter((p) => direct.has(p.id));
         rels = rels.filter((r) => direct.has(r.person_id) && direct.has(r.related_person_id) && r.relation_type !== "sibling");
       }
-      await exportTreePdf(ppl, rels, root, filterUp, filterDown, "KETURUNANKU", plan === "free");
+      await exportTreePdf(ppl, rels, root, filterUp, filterDown, "Titisanku", plan === "free");
       setExportOpen(false);
     } catch (e) {
       console.log("export error", e);
@@ -407,7 +407,7 @@ export default function TreeScreen() {
   const doExportBook = async () => {
     setExportingBook(true);
     try {
-      await exportTreeBook(data!.people, data!.relations, data!.root_id, "KETURUNANKU", activeTree?.name ?? "Keluarga");
+      await exportTreeBook(data!.people, data!.relations, data!.root_id, "Titisanku", activeTree?.name ?? "Keluarga");
       setExportOpen(false);
     } catch (e) {
       console.log("export book error", e);

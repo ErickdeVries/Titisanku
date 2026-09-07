@@ -1,4 +1,4 @@
-// Design tokens for KETURUNANKU. "Modern Heritage" light theme + premium themes.
+// Design tokens for Titisanku. "Modern Heritage" light theme + premium themes.
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { StyleSheet } from "react-native";
 import { storage } from "@/src/utils/storage";

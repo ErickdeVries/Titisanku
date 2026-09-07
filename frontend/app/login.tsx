@@ -44,7 +44,7 @@ export default function Login() {
         <LinearGradient colors={["transparent", "rgba(255,255,255,0.4)", "#FFFFFF"]} style={styles.scrim} />
         <View style={styles.logoBadge}>
           <Feather name="git-merge" size={16} color="#F59E0B" />
-          <Text style={styles.logoText}>KETURUNANKU</Text>
+          <Text style={styles.logoText}>TITISANKU</Text>
         </View>
       </ImageBackground>
       <View style={styles.body}>

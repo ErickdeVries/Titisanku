@@ -143,7 +143,7 @@ export async function exportTreePdf(
       .wmtxt{position:fixed;bottom:6mm;right:8mm;color:#D4AF37;font-size:10px;opacity:0.8}
     </style></head>
     <body>
-      ${watermark ? '<div class="wm"></div><div class="wmtxt">Dibuat dengan KETURUNANKU · Paket Gratis</div>' : ""}
+      ${watermark ? '<div class="wm"></div><div class="wmtxt">Dibuat dengan Titisanku · Paket Gratis</div>' : ""}
       <h1>${esc(appName)}</h1>
       <div class="sub">Pohon Keluarga · ${genUp > 20 ? "Semua leluhur" : `${genUp} generasi ke atas`} · ${genDown > 20 ? "semua keturunan" : `${genDown} generasi ke bawah`} · ${nodes.length} anggota</div>
       <div class="tree">${svgTag}</div>

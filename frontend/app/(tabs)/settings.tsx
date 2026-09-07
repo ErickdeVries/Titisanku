@@ -149,7 +149,7 @@ export default function SettingsScreen() {
     setBackupMsg("");
     const dump = await getBackup();
     const json = JSON.stringify(dump, null, 2);
-    const filename = `keturunanku_backup_${new Date().toISOString().slice(0, 10)}.json`;
+    const filename = `titisanku_backup_${new Date().toISOString().slice(0, 10)}.json`;
     if (Platform.OS === "web") {
       const blob = new Blob([json], { type: "application/json" });
       const url = URL.createObjectURL(blob);

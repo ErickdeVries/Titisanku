@@ -5,7 +5,7 @@ type Lang = "id" | "en";
 
 const dict = {
   id: {
-    appName: "KETURUNANKU",
+    appName: "Titisanku",
     tree: "Pohon",
     search: "Cari",
     add: "Tambah",
@@ -335,7 +335,7 @@ const dict = {
     account_section: "Akun & Privasi",
   },
   en: {
-    appName: "KETURUNANKU",
+    appName: "Titisanku",
     tree: "Tree",
     search: "Search",
     add: "Add",

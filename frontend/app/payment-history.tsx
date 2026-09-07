@@ -73,7 +73,7 @@ export default function PaymentHistoryScreen() {
             return (
               <View key={o.order_id} style={styles.card}>
                 <View style={styles.rowTop}>
-                  <Text style={styles.planName}>KETURUNANKU {planLabel(o.plan)}</Text>
+                  <Text style={styles.planName}>Titisanku {planLabel(o.plan)}</Text>
                   <Text style={styles.amount}>{rupiah(o.amount)}</Text>
                 </View>
                 {o.tree_name ? <Text style={styles.meta}>{o.tree_name}</Text> : null}

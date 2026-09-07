@@ -55,7 +55,7 @@ export default function InviteScreen() {
 
         {!user ? (
           <>
-            <Text style={[styles.title, { color: colors.onSurface }]}>Keturunanku</Text>
+            <Text style={[styles.title, { color: colors.onSurface }]}>Titisanku</Text>
             <Text style={[styles.desc, { color: colors.muted }]}>{t("login_to_continue")}</Text>
             <Pressable onPress={startLogin} disabled={signingIn} style={{ width: "100%" }} testID="invite-login">
               <LinearGradient colors={gradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.cta}>

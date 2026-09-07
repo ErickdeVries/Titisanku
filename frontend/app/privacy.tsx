@@ -43,7 +43,7 @@ export default function PrivacyScreen() {
       </View>
       <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: insets.bottom + 40 }}>
         <Text style={styles.p}>
-          KETURUNANKU menghargai privasi Anda. Kebijakan ini menjelaskan bagaimana kami mengumpulkan, menggunakan, dan melindungi data Anda saat menggunakan aplikasi.
+          Titisanku menghargai privasi Anda. Kebijakan ini menjelaskan bagaimana kami mengumpulkan, menggunakan, dan melindungi data Anda saat menggunakan aplikasi.
         </Text>
         {SECTIONS.map((s) => (
           <View key={s.h}>
