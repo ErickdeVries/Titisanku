@@ -60,6 +60,8 @@ const useStyles = makeStyles((c) => ({
   emptyImg: { width: 180, height: 180, borderRadius: 20 },
   emptyTitle: { fontFamily: fonts.semibold, fontSize: 18, color: c.onSurface },
   emptyDesc: { fontFamily: fonts.regular, fontSize: 14, color: c.muted, textAlign: "center" },
+  seedBtn: { flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: c.brandPrimary, paddingHorizontal: 22, height: 50, borderRadius: 16, marginTop: 4 },
+  seedBtnText: { fontFamily: fonts.semibold, fontSize: 15, color: c.onBrandPrimary },
   nodeWrap: { position: "absolute", width: 96, alignItems: "center" },
   addBtn: {
     position: "absolute",
@@ -508,6 +510,12 @@ export default function TreeScreen() {
           <Image source={{ uri: EMPTY_IMG }} style={styles.emptyImg} contentFit="cover" />
           <Text style={styles.emptyTitle}>{t("empty_tree_title")}</Text>
           <Text style={styles.emptyDesc}>{t("empty_tree_desc")}</Text>
+          {canEdit ? (
+            <Pressable style={styles.seedBtn} onPress={() => router.push("/add-first")} testID="add-first-person">
+              <Feather name="user-plus" size={18} color={colors.onBrandPrimary} />
+              <Text style={styles.seedBtnText}>{t("first_person_title")}</Text>
+            </Pressable>
+          ) : null}
         </View>
       ) : (
         <View style={styles.canvasArea}>

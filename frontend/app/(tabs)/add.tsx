@@ -37,6 +37,12 @@ const useStyles = makeStyles((c) => ({
   searchBar: { flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: c.surfaceTertiary, borderRadius: 999, paddingHorizontal: 16, height: 46, marginTop: 12 },
   input: { flex: 1, fontFamily: fonts.regular, fontSize: 15, color: c.onSurface },
   row: { flexDirection: "row", alignItems: "center", gap: 14, paddingVertical: 12, paddingHorizontal: 20 },
+  emptyWrap: { flex: 1, alignItems: "center", justifyContent: "center", padding: 32, gap: 14 },
+  emptyIcon: { width: 72, height: 72, borderRadius: 999, backgroundColor: c.brandTertiary, alignItems: "center", justifyContent: "center" },
+  emptyTitle: { fontFamily: fonts.semibold, fontSize: 18, color: c.onSurface, textAlign: "center" },
+  emptySub: { fontFamily: fonts.regular, fontSize: 14, color: c.muted, textAlign: "center" },
+  seedBtn: { flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: c.brandPrimary, paddingHorizontal: 22, height: 50, borderRadius: 16, marginTop: 8 },
+  seedBtnText: { fontFamily: fonts.semibold, fontSize: 15, color: c.onBrandPrimary },
 }));
 
 export default function AddScreen() {
@@ -92,6 +98,27 @@ export default function AddScreen() {
           <Text style={styles.title}>{t("add")}</Text>
         </View>
         <Text style={styles.noPerm}>{t("no_permission")}</Text>
+      </View>
+    );
+  }
+
+  if (people.length === 0) {
+    return (
+      <View style={styles.root}>
+        <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
+          <Text style={styles.title}>{t("add")}</Text>
+        </View>
+        <View style={styles.emptyWrap}>
+          <View style={styles.emptyIcon}>
+            <Feather name="user-plus" size={30} color={colors.brandSecondary} />
+          </View>
+          <Text style={styles.emptyTitle}>{t("first_person_title")}</Text>
+          <Text style={styles.emptySub}>{t("first_person_sub")}</Text>
+          <Pressable style={styles.seedBtn} onPress={() => router.push("/add-first")} testID="add-first-person">
+            <Feather name="plus" size={18} color={colors.onBrandPrimary} />
+            <Text style={styles.seedBtnText}>{t("first_person_title")}</Text>
+          </Pressable>
+        </View>
       </View>
     );
   }

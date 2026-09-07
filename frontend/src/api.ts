@@ -185,6 +185,8 @@ export const removeGalleryPhoto = (id: string, photoId: string): Promise<{ galle
   apiFetch(`/people/${id}/gallery`, { method: "DELETE", body: JSON.stringify({ id: photoId }) });
 export const addRelative = (payload: any) =>
   apiFetch("/people/add-relative", { method: "POST", body: JSON.stringify(payload) });
+export const addFirstPerson = (person: any): Promise<Person> =>
+  apiFetch("/people/first", { method: "POST", body: JSON.stringify(person) });
 export const updatePerson = (id: string, data: any) =>
   apiFetch(`/people/${id}`, { method: "PUT", body: JSON.stringify(data) });
 export const deletePerson = (id: string) => apiFetch(`/people/${id}`, { method: "DELETE" });

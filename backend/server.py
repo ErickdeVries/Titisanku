@@ -630,6 +630,37 @@ async def link_coparents(tree_id: Optional[str] = Query(None), user=Depends(get_
 
 
 
+@api_router.post("/people/first")
+async def add_first_person(body: PersonData, tree_id: Optional[str] = Query(None), user=Depends(get_current_user)):
+    tree, role = await resolve_tree(user, tree_id)
+    require_role_t(role, ["admin", "editor"])
+    if await tree_person_count(tree["id"]) > 0:
+        raise HTTPException(status_code=400, detail="Pohon ini sudah memiliki anggota.")
+    pid = str(uuid.uuid4())
+    doc = {
+        "id": pid,
+        "tree_id": tree["id"],
+        "name": body.name,
+        "gender": body.gender,
+        "birth_date": body.birth_date,
+        "birth_place": body.birth_place,
+        "death_date": body.death_date,
+        "photo_url": body.photo_url,
+        "cover_url": body.cover_url,
+        "job": body.job,
+        "is_adopted": body.is_adopted,
+        "notes": body.notes,
+        "is_alive": body.is_alive if body.is_alive is not None else (body.death_date is None),
+        "is_root": True,
+        "created_by": user["user_id"],
+        "created_at": now_utc(),
+        "deleted_at": None,
+    }
+    await db.people.insert_one(doc)
+    await db.trees.update_one({"id": tree["id"]}, {"$set": {"root_person_id": pid}})
+    return _serialize([doc])[0]
+
+
 @api_router.post("/people/add-relative")
 async def add_relative(body: AddRelativeInput, tree_id: Optional[str] = Query(None), user=Depends(get_current_user)):
     tree, role = await resolve_tree(user, tree_id)

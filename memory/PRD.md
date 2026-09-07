@@ -458,3 +458,14 @@ FASE 3 (chat avatar = account photo, changeable):
   Tidak ada kehilangan sejak backup pertama. Ada DUA akun/pohon bernama sama "Erick De Vries":
   limajiwamandiri (1 person) & emmusic (3 person: Erick Devries, Siti Annisa, Mahdiana). Kemungkinan user
   bingung antar akun. Kehilangan sebelumnya (pra-backup 07:33) tak terpulihkan. Backup baru dibuat.
+
+## Iteration 21 — Seed empty tree + create new tree flow (2026-06)
+- PROBLEM: empty tree canvas had no way to add the FIRST person (Add tab needs an existing target; canvas empty
+  state was text-only). User couldn't start a new/empty tree.
+- Backend: POST /people/first {PersonData} -> creates root person if tree has 0 people (else 400), sets
+  trees.root_person_id. require_role_t admin/editor. FIX: return _serialize([doc])[0] (was passing dict).
+- Frontend: new modal route app/add-first.tsx (PersonForm -> addFirstPerson). Empty canvas state (index.tsx)
+  now shows "Tambah Orang Pertama" button (canEdit). Add tab (add.tsx) shows seed screen when people.length===0.
+  api.ts addFirstPerson. i18n first_person_title/sub. Route registered in _layout.
+- Create NEW tree: already works via header tree-switcher -> /trees -> create (dashed) button; createTree
+  auto-makes a root person + sets active. Verified seed endpoint e2e (first ok, second 400, root set).

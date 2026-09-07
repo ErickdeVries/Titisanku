@@ -76,6 +76,7 @@ function RootNav() {
       <Stack.Screen name="person/[id]" options={{ presentation: "modal" }} />
       <Stack.Screen name="add-relative" options={{ presentation: "modal" }} />
       <Stack.Screen name="trees" options={{ presentation: "modal" }} />
+      <Stack.Screen name="add-first" options={{ presentation: "modal" }} />
       <Stack.Screen name="subscription" />
       <Stack.Screen name="payment-history" />
       <Stack.Screen name="themes" />
