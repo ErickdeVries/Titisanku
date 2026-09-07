@@ -1317,7 +1317,18 @@ async def get_chat(tree_id: Optional[str] = Query(None), room_id: Optional[str] 
     rid = room["id"]
     # participant display names (for mentions)
     users = {u["user_id"]: u for u in await db.users.find({}, {"_id": 0}).to_list(3000)}
-    members = [{"user_id": mid, "name": users.get(mid, {}).get("name", "?"), "picture": users.get(mid, {}).get("picture")} for mid in room.get("member_ids", [])]
+    roles = {r["user_id"]: r["role"] for r in await db.tree_members.find({"tree_id": tree["id"]}, {"_id": 0, "user_id": 1, "role": 1}).to_list(2000)}
+    creator = room.get("created_by")
+    members = [
+        {
+            "user_id": mid,
+            "name": users.get(mid, {}).get("name", "?"),
+            "picture": users.get(mid, {}).get("picture"),
+            "role": roles.get(mid, "viewer"),
+            "is_creator": mid == creator,
+        }
+        for mid in room.get("member_ids", [])
+    ]
     room_name = room["name"]
     room_picture = room.get("picture")
     if room["type"] == "direct":
@@ -1349,6 +1360,7 @@ async def get_chat(tree_id: Optional[str] = Query(None), room_id: Optional[str] 
     can_manage = room["type"] == "group" and (room.get("created_by") == user["user_id"] or role in ("admin", "editor"))
     return {
         "room_id": rid, "room_name": room_name, "room_type": room["type"], "room_picture": room_picture,
+        "created_by": creator,
         "messages": out, "members": members, "typing": typing_names,
         "can_send": room.get("can_send", False), "muted": is_muted, "can_manage": can_manage,
     }

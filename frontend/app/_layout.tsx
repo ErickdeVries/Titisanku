@@ -165,6 +165,7 @@ function RootNav() {
       <Stack.Screen name="chat/[roomId]" />
       <Stack.Screen name="chat/new" />
       <Stack.Screen name="chat/manage/[roomId]" />
+      <Stack.Screen name="chat/info/[roomId]" />
       <Stack.Screen name="privacy" />
       <Stack.Screen name="feedback" />
       <Stack.Screen name="explorer/[id]" />

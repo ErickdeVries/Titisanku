@@ -62,6 +62,13 @@ const useStyles = makeStyles((c) => ({
   sheetTitle: { fontFamily: fonts.bold, fontSize: 17, color: c.onSurface, padding: 20, paddingBottom: 8 },
   pickRow: { flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 20, paddingVertical: 14 },
   pickText: { fontFamily: fonts.medium, fontSize: 15, color: c.onSurface },
+  readHeadRow: { flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 20, paddingTop: 8, paddingBottom: 6 },
+  readHead: { fontFamily: fonts.semibold, fontSize: 13, color: c.onSurfaceSecondary, textTransform: "uppercase", letterSpacing: 0.5 },
+  readEmpty: { fontFamily: fonts.regular, fontSize: 13, color: c.muted, paddingHorizontal: 20, paddingBottom: 4 },
+  readRow: { flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 20, paddingVertical: 8 },
+  readAvatar: { width: 34, height: 34, borderRadius: 999, backgroundColor: c.surfaceTertiary, alignItems: "center", justifyContent: "center", overflow: "hidden" },
+  readAvatarImg: { width: "100%", height: "100%" },
+  readName: { fontFamily: fonts.medium, fontSize: 15, color: c.onSurface },
 }));
 
 function timeOf(iso: string) {
@@ -169,6 +176,7 @@ export default function ChatRoomScreen() {
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const [mentions, setMentions] = useState<string[]>([]);
   const [actionMsg, setActionMsg] = useState<any>(null);
+  const [readInfoMsg, setReadInfoMsg] = useState<any>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const lastTyped = useRef(0);
 
@@ -372,20 +380,27 @@ export default function ChatRoomScreen() {
         <Pressable style={styles.backBtn} onPress={() => router.back()} hitSlop={8} testID="chat-back">
           <Feather name="chevron-left" size={24} color={colors.onSurface} />
         </Pressable>
-        <View style={styles.roomIcon}>
-          {data?.room_picture ? (
-            <Image source={{ uri: fileUrl(data.room_picture) }} style={styles.roomIconImg} contentFit="cover" />
-          ) : (
-            <Feather name={roomType === "direct" ? "user" : "users"} size={18} color={colors.brandPrimary} />
-          )}
-        </View>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.roomName} numberOfLines={1}>{roomName}</Text>
-          <Text style={styles.roomSub}>
-            {muted ? `${t("muted_label")} · ` : ""}
-            {roomType === "direct" ? t("direct_chat") : `${data?.members?.length ?? 0} ${t("members_count")}`}
-          </Text>
-        </View>
+        <Pressable
+          style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: 10 }}
+          onPress={() => { if (roomType !== "direct") router.push(`/chat/info/${roomId}`); }}
+          disabled={roomType === "direct"}
+          testID="chat-header-info"
+        >
+          <View style={styles.roomIcon}>
+            {data?.room_picture ? (
+              <Image source={{ uri: fileUrl(data.room_picture) }} style={styles.roomIconImg} contentFit="cover" />
+            ) : (
+              <Feather name={roomType === "direct" ? "user" : "users"} size={18} color={colors.brandPrimary} />
+            )}
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.roomName} numberOfLines={1}>{roomName}</Text>
+            <Text style={styles.roomSub}>
+              {muted ? `${t("muted_label")} · ` : ""}
+              {roomType === "direct" ? t("direct_chat") : `${data?.members?.length ?? 0} ${t("members_count")}`}
+            </Text>
+          </View>
+        </Pressable>
         <Pressable style={styles.backBtn} onPress={() => setSettingsOpen(true)} hitSlop={8} testID="chat-settings">
           <Feather name="more-vertical" size={22} color={colors.onSurface} />
         </Pressable>
@@ -499,6 +514,16 @@ export default function ChatRoomScreen() {
               <Feather name="corner-up-left" size={18} color={colors.brandSecondary} />
               <Text style={styles.pickText}>{t("reply")}</Text>
             </Pressable>
+            {actionMsg && actionMsg.sender_id === user?.user_id && roomType !== "direct" ? (
+              <Pressable
+                style={styles.pickRow}
+                onPress={() => { setReadInfoMsg(actionMsg); setActionMsg(null); }}
+                testID="action-info"
+              >
+                <Feather name="info" size={18} color={colors.brandSecondary} />
+                <Text style={styles.pickText}>{t("message_info")}</Text>
+              </Pressable>
+            ) : null}
             {actionMsg && (isAdmin || actionMsg.sender_id === user?.user_id) ? (
               <Pressable style={styles.pickRow} onPress={() => removeMessage(actionMsg.id)} testID="action-delete">
                 <Feather name="trash-2" size={18} color={colors.error} />
@@ -508,6 +533,51 @@ export default function ChatRoomScreen() {
           </Pressable>
         </Pressable>
       </Modal>
+
+      {/* Message read-info (who read this message) */}
+      <Modal visible={!!readInfoMsg} transparent animationType="slide" onRequestClose={() => setReadInfoMsg(null)}>
+        <Pressable style={styles.modalBg} onPress={() => setReadInfoMsg(null)}>
+          <Pressable style={styles.sheet} onPress={() => {}}>
+            <Text style={styles.sheetTitle}>{t("message_info")}</Text>
+            {(() => {
+              const readBy: string[] = readInfoMsg?.read_by ?? [];
+              const others = members.filter((m: any) => m.user_id !== readInfoMsg?.sender_id);
+              const readers = others.filter((m: any) => readBy.includes(m.user_id));
+              const pending = others.filter((m: any) => !readBy.includes(m.user_id));
+              return (
+                <View style={{ paddingBottom: insets.bottom + 16 }}>
+                  <View style={styles.readHeadRow}>
+                    <Feather name="check-circle" size={15} color={colors.info} />
+                    <Text style={styles.readHead}>{t("read_by")} · {readers.length}</Text>
+                  </View>
+                  {readers.length === 0 ? <Text style={styles.readEmpty}>-</Text> : null}
+                  {readers.map((m: any) => (
+                    <View key={m.user_id} style={styles.readRow}>
+                      <View style={styles.readAvatar}>
+                        {m.picture ? <Image source={{ uri: fileUrl(m.picture) }} style={styles.readAvatarImg} contentFit="cover" /> : <Feather name="user" size={14} color={colors.muted} />}
+                      </View>
+                      <Text style={styles.readName}>{m.name}</Text>
+                    </View>
+                  ))}
+                  <View style={[styles.readHeadRow, { marginTop: 14 }]}>
+                    <Feather name="clock" size={15} color={colors.muted} />
+                    <Text style={styles.readHead}>{t("delivered_to")} · {pending.length}</Text>
+                  </View>
+                  {pending.map((m: any) => (
+                    <View key={m.user_id} style={styles.readRow}>
+                      <View style={styles.readAvatar}>
+                        {m.picture ? <Image source={{ uri: fileUrl(m.picture) }} style={styles.readAvatarImg} contentFit="cover" /> : <Feather name="user" size={14} color={colors.muted} />}
+                      </View>
+                      <Text style={styles.readName}>{m.name}</Text>
+                    </View>
+                  ))}
+                </View>
+              );
+            })()}
+          </Pressable>
+        </Pressable>
+      </Modal>
+
       {/* Chat settings sheet (mute + manage group) */}
       <Modal visible={settingsOpen} transparent animationType="slide" onRequestClose={() => setSettingsOpen(false)}>
         <Pressable style={styles.modalBg} onPress={() => setSettingsOpen(false)}>

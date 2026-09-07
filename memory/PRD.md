@@ -523,3 +523,15 @@ User choices: chat notif = getar + suara "ding"; kerjakan Push sekarang.
   expo-audio). Settings→Preferences row "Nada Notifikasi Chat". chat/[roomId].tsx loads chosen sound (soundRef +
   dingPlayer.replace) and skips play when "none"/muted. Route registered. i18n chat_sound/chat_sound_hint (ID/EN).
 - Backend group-photo verified e2e (create+get+update picture, members carry picture). Frontend behind OAuth = device test.
+
+## Iteration 26 — Info Grup + Status Dibaca Grup (2026-06, fork)
+- INFO GRUP: get_chat members now include role (from tree_members) + is_creator; response adds created_by.
+  New screen app/chat/info/[roomId].tsx (WhatsApp-style): big group photo + name + member count, actions
+  (Bisukan switch, Kelola Grup if can_manage, Keluar Grup if group), member list with avatar + badge
+  (Pembuat grup / Admin / Editor). Entry: tapping the chat room header (name/photo) for non-direct rooms.
+  Route registered.
+- STATUS DIBACA GRUP (read receipts): message action sheet (long-press own message in group/family) gained
+  "Info Pesan" → modal listing "Dibaca oleh" (readers, from message.read_by mapped to members) and
+  "Belum dibaca" (pending) with avatars. No backend change (read_by already tracked; members now carry picture).
+- i18n group_info/group_members/group_creator/badge_admin/badge_editor/read_by/delivered_to/message_info (ID/EN).
+- Backend verified: get_chat returns members[role,is_creator] + created_by. Frontend behind OAuth = device test.
