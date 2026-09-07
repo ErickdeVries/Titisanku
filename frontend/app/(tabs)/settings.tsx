@@ -79,7 +79,7 @@ export default function SettingsScreen() {
   const qc = useQueryClient();
 
   const isAdmin = (activeTree?.role ?? user?.role) === "admin";
-  const isPro = activeTree?.plan === "pro" || activeTree?.plan === "family";
+  const isPro = activeTree?.plan === "pro" || activeTree?.plan === "family" || activeTree?.plan === "unlimited" || !!user?.is_superadmin;
   const [deleteAccOpen, setDeleteAccOpen] = useState(false);
   const [deletingAcc, setDeletingAcc] = useState(false);
   const [photoBusy, setPhotoBusy] = useState(false);

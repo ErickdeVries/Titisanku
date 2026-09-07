@@ -2,7 +2,7 @@ import { useState } from "react";
 import { View, Text, Pressable, FlatList, TextInput, ActivityIndicator, Alert } from "react-native";
 import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
-import { useRouter } from "expo-router";
+import { useRouter, useLocalSearchParams } from "expo-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Feather from "@react-native-vector-icons/feather";
@@ -53,6 +53,7 @@ export default function NewChatScreen() {
   const { t } = useI18n();
   const { activeTree } = useTree();
   const router = useRouter();
+  const params = useLocalSearchParams<{ mode?: string }>();
   const insets = useSafeAreaInsets();
   const qc = useQueryClient();
 
@@ -60,7 +61,7 @@ export default function NewChatScreen() {
   const contacts = data?.contacts ?? [];
   const canGroup = !!activeTree;
 
-  const [groupMode, setGroupMode] = useState(false);
+  const [groupMode, setGroupMode] = useState(params.mode === "group");
   const [groupName, setGroupName] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState("");
@@ -234,7 +235,8 @@ export default function NewChatScreen() {
         renderItem={renderContact}
         ListEmptyComponent={
           <View style={styles.empty}>
-            <Text style={styles.emptyText}>{t("no_contacts")}</Text>
+            <Feather name="user-plus" size={34} color={colors.muted} style={{ marginBottom: 10 }} />
+            <Text style={styles.emptyText}>{groupMode ? t("no_contacts_invite") : t("no_contacts")}</Text>
           </View>
         }
       />

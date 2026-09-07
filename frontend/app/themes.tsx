@@ -6,6 +6,7 @@ import { ArrowLeft, Check, Lock, Crown } from "lucide-react-native";
 import { fonts, makeStyles, useTheme, usePremiumTheme, PREMIUM_THEMES, PremiumThemeId, BG_PRESETS, BgPresetId } from "@/src/theme";
 import { useI18n } from "@/src/i18n";
 import { useTree } from "@/src/tree-context";
+import { useAuth } from "@/src/auth";
 
 const useStyles = makeStyles((c) => ({
   root: { flex: 1, backgroundColor: c.surface },
@@ -39,10 +40,15 @@ export default function ThemesScreen() {
   const { themeId, setThemeId, chatBgId, setChatBgId, canvasBgId, setCanvasBgId } = usePremiumTheme();
   const { t } = useI18n();
   const { activeTree } = useTree();
+  const { user } = useAuth();
   const router = useRouter();
   const insets = useSafeAreaInsets();
 
-  const isPro = activeTree?.plan === "pro" || activeTree?.plan === "family";
+  const isPro =
+    activeTree?.plan === "pro" ||
+    activeTree?.plan === "family" ||
+    activeTree?.plan === "unlimited" ||
+    !!user?.is_superadmin;
 
   const onSelect = (id: PremiumThemeId, premium: boolean) => {
     if (premium && !isPro) {

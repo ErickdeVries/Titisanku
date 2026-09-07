@@ -590,3 +590,16 @@ User choices: chat notif = getar + suara "ding"; kerjakan Push sekarang.
 - NEW ICON: regenerated (Nano Banana) matching login emblem (gold tree + royal-blue crest on navy). PIL filled margin -> full-bleed navy #12275C. icon/favicon/splash=tile, adaptive=tree 78% on navy. app.json adaptive+splash bg #12275C.
 - SUPERADMIN UNLIMITED (emmusic.indonesia@gmail.com): PLAN_LIMITS+"unlimited"(all None). resolve_tree & list_trees force plan=unlimited in-memory for superadmin + skip expiry. Verified getTree plan=unlimited, no limits/expiry.
 - CHAT/CANVAS BG (3c): theme.ts BG_PRESETS + bgColor() + ThemeProvider chatBgId/canvasBgId persisted(chat_bg/canvas_bg) default theme. chat root bg=override??surfaceSecondary; canvasArea bg=override??surface. themes.tsx two swatch pickers. i18n chat_bg_label/canvas_bg_label. Lint clean.
+
+## Iteration 32 — FIX superadmin tema premium tergembok + Menu Grup WhatsApp-style (2026-06, fork)
+- FIX TEMA PREMIUM SUPERADMIN: themes.tsx & settings.tsx `isPro` hanya cek "pro"/"family" -> paket
+  "unlimited" (superadmin) & is_superadmin tidak dikenali, jadi semua tema premium tetap tergembok.
+  FIX: isPro kini juga true utk plan==="unlimited" || user.is_superadmin (import useAuth di themes.tsx).
+  Superadmin (emmusic.indonesia@gmail.com) & paket unlimited kini bebas pakai SEMUA tema premium.
+- MENU GRUP WA-STYLE (chat.tsx): header tab Chat kini punya ikon titik-3 (more-vertical, testID
+  chat-menu-button) di kanan atas -> Modal dropdown: "Grup Baru" (menu-new-group -> /chat/new?mode=group)
+  & "Obrolan Baru" (menu-new-chat -> /chat/new). Ikon pensil quick new-chat tetap ada di sampingnya.
+- new.tsx: baca param ?mode=group -> langsung masuk groupMode (foto grup + nama grup editable + pilih
+  anggota). Empty-state kontak di mode grup kini pesan jelas no_contacts_invite ("Undang anggota keluarga
+  ke aplikasi ... agar bisa dipilih ke dalam grup") + ikon user-plus, bukan tombol mati diam.
+- i18n: no_contacts_invite, menu_chat (ID+EN). Lint clean, app boot OK. UI di balik Google OAuth = tes device.

@@ -1,5 +1,5 @@
-import { useCallback } from "react";
-import { View, Text, Pressable, FlatList } from "react-native";
+import { useCallback, useState } from "react";
+import { View, Text, Pressable, FlatList, Modal } from "react-native";
 import { Image } from "expo-image";
 import { useRouter, useFocusEffect } from "expo-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -13,8 +13,12 @@ const useStyles = makeStyles((c) => ({
   root: { flex: 1, backgroundColor: c.surface },
   header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 20, paddingBottom: 12, backgroundColor: c.surface, borderBottomWidth: 1, borderBottomColor: c.divider },
   title: { fontFamily: fonts.display, fontSize: 26, color: c.onSurface },
-  newBtn: { flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: c.brandPrimary, paddingHorizontal: 14, height: 40, borderRadius: 999 },
-  newBtnText: { fontFamily: fonts.semibold, fontSize: 14, color: c.onBrandPrimary },
+  headerActions: { flexDirection: "row", alignItems: "center", gap: 6 },
+  iconBtn: { width: 40, height: 40, borderRadius: 999, alignItems: "center", justifyContent: "center" },
+  menuOverlay: { flex: 1 },
+  menuCard: { position: "absolute", right: 16, backgroundColor: c.surfaceSecondary, borderRadius: 14, paddingVertical: 6, minWidth: 190, borderWidth: 1, borderColor: c.border, shadowColor: "#000", shadowOpacity: 0.12, shadowRadius: 12, shadowOffset: { width: 0, height: 4 }, elevation: 6 },
+  menuItem: { flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 16, paddingVertical: 13 },
+  menuItemText: { fontFamily: fonts.medium, fontSize: 15, color: c.onSurface },
   row: { flexDirection: "row", alignItems: "center", gap: 14, paddingHorizontal: 16, paddingVertical: 12 },
   avatar: { width: 52, height: 52, borderRadius: 999, backgroundColor: c.brandTertiary, alignItems: "center", justifyContent: "center", overflow: "hidden" },
   avatarImg: { width: "100%", height: "100%" },
@@ -49,6 +53,7 @@ export default function ChatListScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const qc = useQueryClient();
+  const [menuOpen, setMenuOpen] = useState(false);
 
   const { data } = useQuery({ queryKey: ["chatRooms"], queryFn: listChatRooms, refetchInterval: 4000 });
   const rooms = data?.rooms ?? [];
@@ -91,11 +96,44 @@ export default function ChatListScreen() {
     <View style={[styles.root, { paddingTop: insets.top + 8 }]}>
       <View style={styles.header}>
         <Text style={styles.title}>{t("chats")}</Text>
-        <Pressable style={styles.newBtn} onPress={() => router.push("/chat/new")} testID="new-chat-button">
-          <Feather name="edit" size={16} color={colors.onBrandPrimary} />
-          <Text style={styles.newBtnText}>{t("new_chat")}</Text>
-        </Pressable>
+        <View style={styles.headerActions}>
+          <Pressable style={styles.iconBtn} onPress={() => router.push("/chat/new")} testID="new-chat-button">
+            <Feather name="edit" size={20} color={colors.brandSecondary} />
+          </Pressable>
+          <Pressable style={styles.iconBtn} onPress={() => setMenuOpen(true)} testID="chat-menu-button">
+            <Feather name="more-vertical" size={22} color={colors.onSurface} />
+          </Pressable>
+        </View>
       </View>
+
+      <Modal visible={menuOpen} transparent animationType="fade" onRequestClose={() => setMenuOpen(false)}>
+        <Pressable style={styles.menuOverlay} onPress={() => setMenuOpen(false)}>
+          <View style={[styles.menuCard, { top: insets.top + 52 }]}>
+            <Pressable
+              style={styles.menuItem}
+              testID="menu-new-group"
+              onPress={() => {
+                setMenuOpen(false);
+                router.push("/chat/new?mode=group");
+              }}
+            >
+              <Feather name="users" size={19} color={colors.brandPrimary} />
+              <Text style={styles.menuItemText}>{t("new_group")}</Text>
+            </Pressable>
+            <Pressable
+              style={styles.menuItem}
+              testID="menu-new-chat"
+              onPress={() => {
+                setMenuOpen(false);
+                router.push("/chat/new");
+              }}
+            >
+              <Feather name="message-circle" size={19} color={colors.brandSecondary} />
+              <Text style={styles.menuItemText}>{t("new_chat")}</Text>
+            </Pressable>
+          </View>
+        </Pressable>
+      </Modal>
 
       <FlatList
         data={rooms}
