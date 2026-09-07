@@ -1,27 +1,35 @@
-import { View, Text } from "react-native";
-import { Image } from "expo-image";
+import { View, Text, ImageBackground } from "react-native";
+import { LinearGradient } from "expo-linear-gradient";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import Feather from "@react-native-vector-icons/feather";
 import { fonts, makeStyles } from "@/src/theme";
 import { useAuth } from "@/src/auth";
 import { useI18n } from "@/src/i18n";
 import { GradientButton } from "@/src/components/GradientButton";
 
-const EMBLEM = require("../assets/images/titisanku-emblem.png");
+const HERO =
+  "https://images.unsplash.com/photo-1706200637521-b446bd05df0d?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzMzJ8MHwxfHNlYXJjaHwxfHxmYW1pbHklMjBjb25uZWN0aW9uJTIwZ2VuZWFsb2d5fGVufDB8fHx8MTc4ODYxODU3OHww&ixlib=rb-4.1.0&q=85";
 
 const useStyles = makeStyles((c) => ({
-  root: { flex: 1, backgroundColor: c.surface, alignItems: "center" },
-  frameOuter: { position: "absolute", top: 16, left: 16, right: 16, bottom: 16, borderWidth: 1.5, borderColor: c.brandPrimary, borderRadius: 10 },
-  frameInner: { position: "absolute", top: 22, left: 22, right: 22, bottom: 22, borderWidth: 0.75, borderColor: c.brandPrimary, borderRadius: 6, opacity: 0.6 },
-  content: { flex: 1, alignItems: "center", justifyContent: "center", paddingHorizontal: 40, gap: 6 },
-  emblem: { width: 210, height: 210 },
-  kicker: { fontFamily: fonts.medium, fontSize: 12, color: c.brandPrimary, letterSpacing: 4, marginTop: 4 },
-  brand: { fontFamily: fonts.display, fontSize: 46, color: c.brandSecondary, letterSpacing: 1, marginTop: 2 },
-  divider: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 10, marginBottom: 6 },
-  dline: { width: 46, height: 1, backgroundColor: c.brandPrimary, opacity: 0.7 },
-  diamond: { width: 8, height: 8, backgroundColor: c.brandPrimary, transform: [{ rotate: "45deg" }] },
-  subtitle: { fontFamily: fonts.regular, fontSize: 14.5, color: c.muted, textAlign: "center", lineHeight: 22, marginTop: 4 },
-  footer: { width: "100%", paddingHorizontal: 40 },
-  legal: { fontFamily: fonts.regular, fontSize: 11, color: c.muted, textAlign: "center", marginTop: 14, opacity: 0.8 },
+  root: { flex: 1, backgroundColor: c.surface },
+  hero: { width: "100%", height: "58%" },
+  scrim: { flex: 1, justifyContent: "flex-end" },
+  logoBadge: {
+    position: "absolute",
+    top: 60,
+    left: 24,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: "rgba(255,255,255,0.9)",
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 999,
+  },
+  logoText: { fontFamily: fonts.bold, fontSize: 14, color: c.brandPrimary, letterSpacing: 1 },
+  body: { paddingHorizontal: 24, paddingTop: 28, flex: 1 },
+  title: { fontFamily: fonts.bold, fontSize: 28, color: c.onSurface, lineHeight: 34 },
+  subtitle: { fontFamily: fonts.regular, fontSize: 15, color: c.muted, marginTop: 12, lineHeight: 22 },
 }));
 
 export default function Login() {
@@ -32,32 +40,28 @@ export default function Login() {
 
   return (
     <View style={styles.root}>
-      <View style={styles.frameOuter} pointerEvents="none" />
-      <View style={styles.frameInner} pointerEvents="none" />
-
-      <View style={[styles.content, { paddingTop: insets.top }]}>
-        <Image source={EMBLEM} style={styles.emblem} contentFit="contain" />
-        <Text style={styles.kicker}>SILSILAH KELUARGA</Text>
-        <Text style={styles.brand}>Titisanku</Text>
-        <View style={styles.divider}>
-          <View style={styles.dline} />
-          <View style={styles.diamond} />
-          <View style={styles.dline} />
+      <ImageBackground source={{ uri: HERO }} style={styles.hero}>
+        <LinearGradient colors={["transparent", "rgba(255,255,255,0.4)", "#FFFFFF"]} style={styles.scrim} />
+        <View style={styles.logoBadge}>
+          <Feather name="git-merge" size={16} color="#F59E0B" />
+          <Text style={styles.logoText}>TITISANKU</Text>
         </View>
+      </ImageBackground>
+      <View style={styles.body}>
+        <Text style={styles.title}>{t("login_title")}</Text>
         <Text style={styles.subtitle}>{t("login_subtitle")}</Text>
-      </View>
-
-      <View style={[styles.footer, { paddingBottom: insets.bottom + 30 }]}>
+        <View style={{ flex: 1 }} />
         <GradientButton
           testID="google-login-button"
           title={signingIn ? t("logging_in") : t("login_google")}
           icon="log-in"
           loading={signingIn}
           onPress={login}
+          style={{ marginBottom: insets.bottom + 24 }}
         />
-        <Text style={styles.legal}>© Titisanku · Warisan keluarga Anda</Text>
       </View>
     </View>
   );
 }
+
 

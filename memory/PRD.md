@@ -552,3 +552,16 @@ User choices: chat notif = getar + suara "ding"; kerjakan Push sekarang.
   fallback + idempotent _activate_order. Verified e2e via synthetic webhook (plan free→pro, order→paid, reverted).
   ⚠️ OPEN COMPLIANCE ISSUE: Google Play requires digital in-app subscriptions via Play Billing (RevenueCat),
   NOT Midtrans — flagged to user for decision before Play Store upload.
+
+## Iteration 28 — Revert login + push check + notes-route fix (2026-06, fork)
+- LOGIN reverted to previous hero-photo design (per user) — TITISANKU badge, "Bangun Silsilah Keluarga",
+  subtitle, gradient Google button. Kept the button text refit (GradientButton: numberOfLines=1 +
+  adjustsFontSizeToFit + flexShrink) so "Masuk dengan Google" fits. Emblem assets remain for icon/splash.
+- USER CHOICE: keep Midtrans on all platforms (Play Billing risk acknowledged). Midtrans key update pending.
+- PUSH CHECK: verified full wiring vs official playbook — base URL https://integrations.emergentagent.com,
+  X-Push-Key, /api/v1/push/users/register + /api/v1/push/trigger, module-scope handler+channels(default+chat/
+  ding.wav), warm+cold tap handlers, getDevicePushTokenAsync, denied nudge, app.json plugin+sounds+
+  googleServicesFile, EMERGENT_PUSH_KEY=placeholder. All self-verification greps pass. Works after deploy+build.
+- REGRESSION FIX (found during push check): the iteration-24 push-block insertion had accidentally deleted the
+  `@api_router.get("/people/{person_id}/notes")` decorator, leaving list_person_notes unregistered (GET notes
+  = 404). Restored decorator; route now 401 (registered). Backend restarted, syntax OK.

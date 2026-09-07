@@ -1076,6 +1076,9 @@ async def send_push(recipients: list, data: dict, idempotency_key: Optional[str]
         payload["$idempotency_key"] = idempotency_key
     resp = await _push_client.post("/api/v1/push/trigger", json=payload)
     resp.raise_for_status()
+
+
+@api_router.get("/people/{person_id}/notes")
 async def list_person_notes(person_id: str, tree_id: Optional[str] = Query(None), user=Depends(get_current_user)):
     tree, role = await resolve_tree(user, tree_id)
     notes = await db.person_notes.find({"person_id": person_id, "tree_id": tree["id"], "deleted_at": None}, {"_id": 0}).sort("created_at", -1).to_list(2000)
