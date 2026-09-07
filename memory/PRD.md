@@ -575,3 +575,9 @@ User choices: chat notif = getar + suara "ding"; kerjakan Push sekarang.
   No cron needed. Verified e2e: expired->free+1 notif; 5-day->family kept+reminder+idempotent.
 - FRONTEND subscription.tsx: shows "Berlaku sampai <tgl id-ID>" in usage card + renewal banner when daysLeft<=14
   (expires_at comes through tree object). expires_at serialized by FastAPI. Lint clean.
+
+## Iteration 30 — Change bundle ID to com.titisanku.app (2026-06, fork)
+- app.json ios.bundleIdentifier + android.package -> com.titisanku.app (was com.emergent.keturunanku.xhuaqr).
+- ⚠️ google-services.json still has OLD package (com.emergent.keturunanku.xhuaqr) -> MISMATCH. User MUST create a
+  new Firebase Android app with package com.titisanku.app, download google-services.json, and re-upload; else
+  Android build + push break. Flagged to user. Storage/backend keturunanku prefix unaffected (internal only).
