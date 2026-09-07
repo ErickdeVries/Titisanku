@@ -469,3 +469,20 @@ FASE 3 (chat avatar = account photo, changeable):
   api.ts addFirstPerson. i18n first_person_title/sub. Route registered in _layout.
 - Create NEW tree: already works via header tree-switcher -> /trees -> create (dashed) button; createTree
   auto-makes a root person + sets active. Verified seed endpoint e2e (first ok, second 400, root set).
+
+## Iteration 22 — FIX: birthday stat card text terpotong di HP (2026-06)
+- stat-birthday card: value now "H-<days>" (🎂 on day), label "<name> ultah" / "<name> ultah hari ini!".
+  statValue adjustsFontSizeToFit; statLabel numberOfLines=2 + adjustsFontSizeToFit minimumFontScale 0.8 so
+  full text fits inside the card. i18n birthday_short/birthday_today_short (ID+EN).
+- VERIFIED by testing_agent (iteration_12.json): renders "H-56" + "Mahdiana ultah", fits at 360px & 390px,
+  fallbacks ok, real data untouched. Safe seed script: backend/tests/seed_stat_birthday.py (scoped cleanup).
+
+## Iteration 23 — Notif chat (badge dalam aplikasi) [user chose 1b] (2026-06)
+- FINDING: in-app chat unread badge ALREADY fully implemented & working. No Firebase/push needed.
+  - send_chat -> notify_room() inserts app_notifications type "chat" for all family/room members except
+    sender & muted.
+  - Tab bar badge: (tabs)/_layout.tsx reads /notifications unread_chat (poll 8s) -> red number on Chat icon.
+  - Per-room unread badge in chat list (chat.tsx, from /chat/rooms read_by count).
+  - Cleared via markNotificationsRead("chat") on opening chat list & room.
+  - VERIFIED e2e (scoped test): A sends -> B unread_chat=1 -> after read=0 -> sender stays 0. Real data untouched.
+- No code change this turn. Possible future: dedicated notifications inbox (bell) screen (items already returned).

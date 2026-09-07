@@ -477,14 +477,14 @@ export default function TreeScreen() {
               <Text style={styles.statLabel}>{t("stats_generations")}</Text>
             </View>
             <View style={styles.statCard} testID="stat-birthday">
-              <Text style={styles.statValue} numberOfLines={1}>
-                {stats.birthday ? (stats.birthday.days === 0 ? "🎂" : `${stats.birthday.days}`) : "—"}
+              <Text style={styles.statValue} numberOfLines={1} adjustsFontSizeToFit>
+                {stats.birthday ? (stats.birthday.days === 0 ? "🎂" : `H-${stats.birthday.days}`) : "—"}
               </Text>
-              <Text style={styles.statLabel} numberOfLines={1}>
+              <Text style={styles.statLabel} numberOfLines={2} adjustsFontSizeToFit minimumFontScale={0.8}>
                 {stats.birthday
                   ? stats.birthday.days === 0
-                    ? `${t("today_birthday")} ${stats.birthday.name}`
-                    : `${stats.birthday.name} · ${t("days_left")}`
+                    ? `${stats.birthday.name} ${t("birthday_today_short")}`
+                    : `${stats.birthday.name} ${t("birthday_short")}`
                   : t("no_birthday")}
               </Text>
             </View>

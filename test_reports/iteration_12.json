@@ -1,0 +1,29 @@
+{
+  "summary": "Verified the stat-birthday card fix on the KETURUNANKU home/canvas at mobile width. Seeded synthetic user + session + tree + 2 people (Mahdiana with a birthday exactly 56 days away), injected the session_token into localStorage, and rendered the canvas at 390x844. The stat-birthday card shows value='H-56' and label='Mahdiana ultah'. The label wraps to 2 lines (numberOfLines=2, adjustsFontSizeToFit, minimumFontScale=0.8) and both lines sit fully inside the card box with ~12px right margin and ~10px bottom margin — no truncation, no overflow. Verified again at 360px width — still contained. All synthetic seed docs were cleaned up (users/sessions/trees/tree_members/people deleted counts = 1/1/1/1/2). No modifications to shared data.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/seed_stat_birthday.py"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "stat-birthday JSX correctly gates 'H-<days>' vs 🎂 on days === 0 and falls back to '—' + no_birthday when stats.birthday is null. Good defensive coverage.",
+    "statLabel uses numberOfLines=2 + adjustsFontSizeToFit + minimumFontScale=0.8, and the card has paddingHorizontal:12 / gap:2 — this is what actually enables 'Mahdiana ultah' to fit even at narrower widths. Do not tighten padding or drop numberOfLines=2, or long Indonesian names may clip again.",
+    "index.tsx is 717 lines — approaching the 700-line threshold. Consider extracting the stats strip and export/filter modals into separate components on a future refactor (not blocking)."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (frontend-only request)", "frontend": "100%"},
+  "seed_data_creation": "Seeded 1 user (TEST_bdstat_user), 1 session (TEST_bdstat_session_token_xyz), 1 tree (TEST_bdstat_tree), 1 tree_members row, and 2 people (TEST_bdstat_person_root, TEST_bdstat_person_mahdiana with birth_date 1970-11-02 → 56 days from today 2026-09-07) via /app/backend/tests/seed_stat_birthday.py. All docs cleaned up after the test using deterministic IDs — real user data untouched.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "To retest this or any auth-gated canvas UI without going through Google OAuth: run `python /app/backend/tests/seed_stat_birthday.py`, then in Playwright navigate to EXPO_PUBLIC_BACKEND_URL, do `window.localStorage.setItem('session_token', 'TEST_bdstat_session_token_xyz')`, reload, and wait for [data-testid=\"stat-birthday\"]. Always run `python /app/backend/tests/seed_stat_birthday.py cleanup` afterwards — it deletes only the exact TEST_ prefixed docs it created, so it is safe against the shared dev DB.",
+  "rca_of_issue": "Original bug: at phone width the third stat card's label ('<Name> ultah') was cut off. Fix implemented by main agent adds numberOfLines=2 + adjustsFontSizeToFit + minimumFontScale=0.8 on the label and numberOfLines=1 + adjustsFontSizeToFit on the value, while the value string was changed to the compact 'H-<days>' form (or 🎂 on the day). Verified: at 390px viewport the card is ~112.67px wide with ~88.67px of usable text width; 'Mahdiana ultah' at fontSize 11 wraps to 2 lines and stays inside the card. Reproduction after cleanup requires re-seeding via the provided script."
+}
