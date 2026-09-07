@@ -3,7 +3,7 @@ import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import { ArrowLeft, Check, Lock, Crown } from "lucide-react-native";
-import { fonts, makeStyles, useTheme, usePremiumTheme, PREMIUM_THEMES, PremiumThemeId } from "@/src/theme";
+import { fonts, makeStyles, useTheme, usePremiumTheme, PREMIUM_THEMES, PremiumThemeId, BG_PRESETS, BgPresetId } from "@/src/theme";
 import { useI18n } from "@/src/i18n";
 import { useTree } from "@/src/tree-context";
 
@@ -26,12 +26,17 @@ const useStyles = makeStyles((c) => ({
   upsellText: { flex: 1, fontFamily: fonts.medium, fontSize: 13, color: "#FFFFFF" },
   upsellBtn: { backgroundColor: "rgba(255,255,255,0.22)", paddingHorizontal: 14, paddingVertical: 8, borderRadius: 999 },
   upsellBtnText: { fontFamily: fonts.semibold, fontSize: 13, color: "#FFFFFF" },
+  sectionLabel: { fontFamily: fonts.semibold, fontSize: 13, color: c.onSurfaceSecondary, marginTop: 18, marginBottom: 10, textTransform: "uppercase", letterSpacing: 0.5 },
+  bgRow: { flexDirection: "row", flexWrap: "wrap", gap: 14 },
+  bgItem: { alignItems: "center", width: 62, gap: 6 },
+  bgSwatch: { width: 48, height: 48, borderRadius: 999, borderWidth: 2, alignItems: "center", justifyContent: "center" },
+  bgName: { fontFamily: fonts.regular, fontSize: 11, color: c.onSurfaceSecondary, textAlign: "center" },
 }));
 
 export default function ThemesScreen() {
   const styles = useStyles();
   const { colors, gradient } = useTheme();
-  const { themeId, setThemeId } = usePremiumTheme();
+  const { themeId, setThemeId, chatBgId, setChatBgId, canvasBgId, setCanvasBgId } = usePremiumTheme();
   const { t } = useI18n();
   const { activeTree } = useTree();
   const router = useRouter();
@@ -46,6 +51,29 @@ export default function ThemesScreen() {
     }
     setThemeId(id);
   };
+
+  const renderBgPicker = (label: string, value: BgPresetId, onChange: (id: BgPresetId) => void, keyPrefix: string) => (
+    <View>
+      <Text style={styles.sectionLabel}>{label}</Text>
+      <View style={styles.bgRow}>
+        {BG_PRESETS.map((b) => {
+          const sel = b.id === value;
+          return (
+            <Pressable key={b.id} onPress={() => onChange(b.id)} style={styles.bgItem} testID={`${keyPrefix}-${b.id}`}>
+              <View style={[styles.bgSwatch, { backgroundColor: b.color ?? colors.surfaceTertiary, borderColor: sel ? colors.brandPrimary : colors.border }]}>
+                {b.color === null ? (
+                  <Crown size={16} color={colors.brandPrimary} />
+                ) : sel ? (
+                  <Check size={16} color={b.id === "graphite" ? "#FFFFFF" : "#1A1A1A"} />
+                ) : null}
+              </View>
+              <Text style={styles.bgName}>{b.name}</Text>
+            </Pressable>
+          );
+        })}
+      </View>
+    </View>
+  );
 
   return (
     <View style={[styles.root, { paddingTop: insets.top + 8 }]}>
@@ -97,6 +125,9 @@ export default function ThemesScreen() {
             </Pressable>
           );
         })}
+
+        {renderBgPicker(t("chat_bg_label"), chatBgId, setChatBgId, "chatbg")}
+        {renderBgPicker(t("canvas_bg_label"), canvasBgId, setCanvasBgId, "canvasbg")}
       </ScrollView>
 
       {!isPro ? (

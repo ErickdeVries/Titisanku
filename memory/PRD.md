@@ -583,3 +583,10 @@ User choices: chat notif = getar + suara "ding"; kerjakan Push sekarang.
   Android build + push break. Flagged to user. Storage/backend keturunanku prefix unaffected (internal only).
 - RESOLVED: user uploaded new google-services.json (Firebase project kulproy-app) containing com.titisanku.app
   (valid app_id + api_key). Installed at frontend/google-services.json — now matches android.package. Push ready.
+
+## Iteration 31 - Superadmin delete-block, emblem icon, superadmin unlimited, chat/canvas bg themes (2026-06)
+- DELETE ACCOUNT: confirm modal existed; added guard so superadmin cannot delete (backend 403 in DELETE /account + settings row hidden for user.is_superadmin).
+- GROUP CREATE: any tree member (not only admin/editor) can create a group + pick any members; backend role gate removed; creator can manage via created_by.
+- NEW ICON: regenerated (Nano Banana) matching login emblem (gold tree + royal-blue crest on navy). PIL filled margin -> full-bleed navy #12275C. icon/favicon/splash=tile, adaptive=tree 78% on navy. app.json adaptive+splash bg #12275C.
+- SUPERADMIN UNLIMITED (emmusic.indonesia@gmail.com): PLAN_LIMITS+"unlimited"(all None). resolve_tree & list_trees force plan=unlimited in-memory for superadmin + skip expiry. Verified getTree plan=unlimited, no limits/expiry.
+- CHAT/CANVAS BG (3c): theme.ts BG_PRESETS + bgColor() + ThemeProvider chatBgId/canvasBgId persisted(chat_bg/canvas_bg) default theme. chat root bg=override??surfaceSecondary; canvasArea bg=override??surface. themes.tsx two swatch pickers. i18n chat_bg_label/canvas_bg_label. Lint clean.

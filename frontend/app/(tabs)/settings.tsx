@@ -522,15 +522,19 @@ export default function SettingsScreen() {
               </View>
               <Feather name="chevron-right" size={20} color={colors.muted} />
             </Pressable>
-            <View style={styles.divider} />
-            <Pressable style={styles.rowItem} onPress={() => setDeleteAccOpen(true)} testID="delete-account-row">
-              <Feather name="trash-2" size={20} color={colors.error} />
-              <View style={styles.rowTextWrap}>
-                <Text style={[styles.rowLabel, { color: colors.error }]}>{t("delete_account")}</Text>
-                <Text style={styles.rowDesc}>{t("delete_account_desc")}</Text>
-              </View>
-              <Feather name="chevron-right" size={20} color={colors.muted} />
-            </Pressable>
+            {!user?.is_superadmin ? (
+              <>
+                <View style={styles.divider} />
+                <Pressable style={styles.rowItem} onPress={() => setDeleteAccOpen(true)} testID="delete-account-row">
+                  <Feather name="trash-2" size={20} color={colors.error} />
+                  <View style={styles.rowTextWrap}>
+                    <Text style={[styles.rowLabel, { color: colors.error }]}>{t("delete_account")}</Text>
+                    <Text style={styles.rowDesc}>{t("delete_account_desc")}</Text>
+                  </View>
+                  <Feather name="chevron-right" size={20} color={colors.muted} />
+                </Pressable>
+              </>
+            ) : null}
           </View>
         </View>
 

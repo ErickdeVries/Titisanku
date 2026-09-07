@@ -201,6 +201,7 @@ PLAN_LIMITS = {
     "free": {"people": 50, "editors": 3, "photos": 20},
     "pro": {"people": None, "editors": 10, "photos": None},
     "family": {"people": None, "editors": 50, "photos": None},
+    "unlimited": {"people": None, "editors": None, "photos": None},
 }
 
 
@@ -259,14 +260,17 @@ async def resolve_tree(user, tree_id: Optional[str]):
                 tree = await db.trees.find_one({"id": tree_id}, {"_id": 0})
                 if not tree:
                     raise HTTPException(status_code=404, detail="Pohon tidak ditemukan")
-                tree = await _check_plan_expiry(tree)
+                tree["plan"] = "unlimited"
                 return tree, "admin"
             raise HTTPException(status_code=403, detail="Anda bukan anggota pohon ini")
         return None, None
     tree = await db.trees.find_one({"id": member["tree_id"]}, {"_id": 0})
     if not tree:
         raise HTTPException(status_code=404, detail="Pohon tidak ditemukan")
-    tree = await _check_plan_expiry(tree)
+    if is_superadmin(user):
+        tree["plan"] = "unlimited"
+    else:
+        tree = await _check_plan_expiry(tree)
     role = "admin" if is_superadmin(user) else member["role"]
     return tree, role
 
@@ -1567,7 +1571,10 @@ async def list_trees(user=Depends(get_current_user)):
         tree = await db.trees.find_one({"id": m["tree_id"]}, {"_id": 0})
         if not tree:
             continue
-        tree = await _check_plan_expiry(tree)
+        if is_superadmin(user):
+            tree["plan"] = "unlimited"
+        else:
+            tree = await _check_plan_expiry(tree)
         count = await tree_person_count(tree["id"])
         member_count = await db.tree_members.count_documents({"tree_id": tree["id"]})
         limits = plan_limits(tree.get("plan"))
@@ -1834,6 +1841,8 @@ async def submit_feedback(body: FeedbackInput, user=Depends(get_current_user)):
 
 @api_router.delete("/account")
 async def delete_account(user=Depends(get_current_user)):
+    if is_superadmin(user):
+        raise HTTPException(status_code=403, detail="Akun superadmin tidak dapat dihapus")
     uid = user["user_id"]
     owned = await db.trees.find({"owner_id": uid}, {"_id": 0, "id": 1}).to_list(1000)
     for tr in owned:

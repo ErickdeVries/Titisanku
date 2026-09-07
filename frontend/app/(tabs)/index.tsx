@@ -8,7 +8,7 @@ import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, { useSharedValue, useAnimatedStyle, withTiming, withDelay, withSpring, withSequence } from "react-native-reanimated";
 import Svg, { Line } from "react-native-svg";
 import Feather from "@react-native-vector-icons/feather";
-import { fonts, makeStyles, useTheme } from "@/src/theme";
+import { fonts, makeStyles, useTheme, usePremiumTheme, bgColor } from "@/src/theme";
 import { getTree, Person, Relation, getNotifications } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { useTree } from "@/src/tree-context";
@@ -183,6 +183,8 @@ function directLineSet(
 export default function TreeScreen() {
   const styles = useStyles();
   const { colors } = useTheme();
+  const { canvasBgId } = usePremiumTheme();
+  const canvasBg = bgColor(canvasBgId) ?? colors.surface;
   const { t } = useI18n();
   const { user } = useAuth();
   const router = useRouter();
@@ -530,7 +532,7 @@ export default function TreeScreen() {
           ) : null}
         </View>
       ) : (
-        <View style={styles.canvasArea}>
+        <View style={[styles.canvasArea, { backgroundColor: canvasBg }]}>
           <GestureDetector gesture={composed}>
             <Animated.View style={{ flex: 1 }}>
               <Pressable style={{ flex: 1 }} onPress={() => setSelected(null)}>

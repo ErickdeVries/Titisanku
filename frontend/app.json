@@ -18,7 +18,7 @@
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
-        "backgroundColor": "#1E3A8A"
+        "backgroundColor": "#12275C"
       },
       "package": "com.titisanku.app",
       "googleServicesFile": "./google-services.json",
@@ -40,9 +40,9 @@
         "expo-splash-screen",
         {
           "image": "./assets/images/splash-image.png",
-          "imageWidth": 220,
+          "imageWidth": 200,
           "resizeMode": "contain",
-          "backgroundColor": "#FFFBF0"
+          "backgroundColor": "#12275C"
         }
       ],
       "expo-font",

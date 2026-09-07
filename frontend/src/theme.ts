@@ -155,12 +155,34 @@ export const fonts = {
 export const brandGradient = PREMIUM_THEMES[0].gradient;
 
 const THEME_KEY = "premium_theme";
+const CHAT_BG_KEY = "chat_bg";
+const CANVAS_BG_KEY = "canvas_bg";
+
+// Overridable backgrounds for the chat area and the tree canvas ("theme" = follow premium theme).
+export type BgPresetId = "theme" | "cream" | "sand" | "sky" | "sage" | "graphite" | "white";
+export const BG_PRESETS: { id: BgPresetId; name: string; color: string | null; swatch: string }[] = [
+  { id: "theme", name: "Ikut Tema", color: null, swatch: "#D4AF37" },
+  { id: "cream", name: "Krem", color: "#FBF3D5", swatch: "#FBF3D5" },
+  { id: "sand", name: "Emas Lembut", color: "#F3E7C6", swatch: "#F3E7C6" },
+  { id: "sky", name: "Biru Muda", color: "#E4E8FB", swatch: "#E4E8FB" },
+  { id: "sage", name: "Hijau Sage", color: "#E4F0E9", swatch: "#E4F0E9" },
+  { id: "graphite", name: "Gelap", color: "#161E33", swatch: "#161E33" },
+  { id: "white", name: "Putih", color: "#FFFFFF", swatch: "#FFFFFF" },
+];
+export function bgColor(id: string | null | undefined): string | null {
+  const p = BG_PRESETS.find((x) => x.id === id);
+  return p ? p.color : null;
+}
 
 type ThemeState = {
   colors: ThemeColors;
   gradient: readonly [string, string];
   themeId: PremiumThemeId;
   setThemeId: (id: PremiumThemeId) => void;
+  chatBgId: BgPresetId;
+  setChatBgId: (id: BgPresetId) => void;
+  canvasBgId: BgPresetId;
+  setCanvasBgId: (id: BgPresetId) => void;
 };
 
 const fallback = paletteFor("heritage");
@@ -168,10 +190,18 @@ const ThemeContext = createContext<ThemeState | null>(null);
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const [themeId, setThemeIdState] = useState<PremiumThemeId>("heritage");
+  const [chatBgId, setChatBgIdState] = useState<BgPresetId>("theme");
+  const [canvasBgId, setCanvasBgIdState] = useState<BgPresetId>("theme");
 
   useEffect(() => {
     storage.getItem<PremiumThemeId>(THEME_KEY, "heritage").then((v) => {
       if (v && PREMIUM_THEMES.some((t) => t.id === v)) setThemeIdState(v);
+    });
+    storage.getItem<BgPresetId>(CHAT_BG_KEY, "theme").then((v) => {
+      if (v && BG_PRESETS.some((b) => b.id === v)) setChatBgIdState(v);
+    });
+    storage.getItem<BgPresetId>(CANVAS_BG_KEY, "theme").then((v) => {
+      if (v && BG_PRESETS.some((b) => b.id === v)) setCanvasBgIdState(v);
     });
   }, []);
 
@@ -179,9 +209,20 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     setThemeIdState(id);
     storage.setItem(THEME_KEY, id);
   };
+  const setChatBgId = (id: BgPresetId) => {
+    setChatBgIdState(id);
+    storage.setItem(CHAT_BG_KEY, id);
+  };
+  const setCanvasBgId = (id: BgPresetId) => {
+    setCanvasBgIdState(id);
+    storage.setItem(CANVAS_BG_KEY, id);
+  };
 
   const { colors, gradient } = useMemo(() => paletteFor(themeId), [themeId]);
-  const value = useMemo<ThemeState>(() => ({ colors, gradient, themeId, setThemeId }), [colors, gradient, themeId]);
+  const value = useMemo<ThemeState>(
+    () => ({ colors, gradient, themeId, setThemeId, chatBgId, setChatBgId, canvasBgId, setCanvasBgId }),
+    [colors, gradient, themeId, chatBgId, canvasBgId],
+  );
 
   return React.createElement(ThemeContext.Provider, { value }, children);
 }
@@ -194,7 +235,17 @@ export function useTheme(): { scheme: ColorScheme; colors: ThemeColors; gradient
 
 export function usePremiumTheme(): ThemeState {
   const ctx = useContext(ThemeContext);
-  return ctx ?? { ...fallback, themeId: "heritage", setThemeId: () => {} };
+  return (
+    ctx ?? {
+      ...fallback,
+      themeId: "heritage",
+      setThemeId: () => {},
+      chatBgId: "theme",
+      setChatBgId: () => {},
+      canvasBgId: "theme",
+      setCanvasBgId: () => {},
+    }
+  );
 }
 
 export function makeStyles<T extends StyleSheet.NamedStyles<T> | StyleSheet.NamedStyles<any>>(

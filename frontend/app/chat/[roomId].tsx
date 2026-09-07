@@ -11,7 +11,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Feather from "@react-native-vector-icons/feather";
-import { fonts, makeStyles, useTheme } from "@/src/theme";
+import { fonts, makeStyles, useTheme, usePremiumTheme, bgColor } from "@/src/theme";
 import { getChat, sendChat, deleteChat, setTyping, uploadPhoto, fileUrl, markNotificationsRead, muteRoom, leaveGroup } from "@/src/api";
 import { compressImage } from "@/src/utils/image";
 import { storage } from "@/src/utils/storage";
@@ -144,6 +144,8 @@ function MessageText({ text, color, styles }: { text: string; color: string; sty
 export default function ChatRoomScreen() {
   const styles = useStyles();
   const { colors } = useTheme();
+  const { chatBgId } = usePremiumTheme();
+  const chatBg = bgColor(chatBgId) ?? colors.surfaceSecondary;
   const { t } = useI18n();
   const { user } = useAuth();
   const router = useRouter();
@@ -375,7 +377,7 @@ export default function ChatRoomScreen() {
   };
 
   return (
-    <View style={[styles.root, { paddingTop: insets.top + 8 }]}>
+    <View style={[styles.root, { paddingTop: insets.top + 8, backgroundColor: chatBg }]}>
       <View style={styles.header}>
         <Pressable style={styles.backBtn} onPress={() => router.back()} hitSlop={8} testID="chat-back">
           <Feather name="chevron-left" size={24} color={colors.onSurface} />
