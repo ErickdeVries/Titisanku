@@ -1,21 +1,40 @@
 {
   "project_info": {
-    "project_number": "871523175336",
-    "project_id": "keturunanku-app",
-    "storage_bucket": "keturunanku-app.firebasestorage.app"
+    "project_number": "710949408785",
+    "project_id": "kulproy-app",
+    "storage_bucket": "kulproy-app.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:871523175336:android:58bf8c41730f994841eb9d",
+        "mobilesdk_app_id": "1:710949408785:android:1d9ebd95652dd3b9ad21b0",
         "android_client_info": {
-          "package_name": "com.emergent.keturunanku.xhuaqr"
+          "package_name": "com.kulproy.app"
         }
       },
       "oauth_client": [],
       "api_key": [
         {
-          "current_key": "AIzaSyA2lEkRyJiDfkeYXHFwaiKlc5__NiI5xK4"
+          "current_key": "AIzaSyAhvwzUQtfwbhBDsn3wfbCT-sFP3vZbDf0"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:710949408785:android:b82cd1a697d1f614ad21b0",
+        "android_client_info": {
+          "package_name": "com.titisanku.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAhvwzUQtfwbhBDsn3wfbCT-sFP3vZbDf0"
         }
       ],
       "services": {

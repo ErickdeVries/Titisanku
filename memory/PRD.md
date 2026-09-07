@@ -581,3 +581,5 @@ User choices: chat notif = getar + suara "ding"; kerjakan Push sekarang.
 - ⚠️ google-services.json still has OLD package (com.emergent.keturunanku.xhuaqr) -> MISMATCH. User MUST create a
   new Firebase Android app with package com.titisanku.app, download google-services.json, and re-upload; else
   Android build + push break. Flagged to user. Storage/backend keturunanku prefix unaffected (internal only).
+- RESOLVED: user uploaded new google-services.json (Firebase project kulproy-app) containing com.titisanku.app
+  (valid app_id + api_key). Installed at frontend/google-services.json — now matches android.package. Push ready.
