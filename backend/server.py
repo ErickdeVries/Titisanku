@@ -1316,7 +1316,9 @@ async def chat_contacts(tree_id: Optional[str] = Query(None), user=Depends(get_c
 @api_router.post("/chat/group")
 async def create_group(body: GroupCreateInput, tree_id: Optional[str] = Query(None), user=Depends(get_current_user)):
     tree, role = await resolve_tree(user, tree_id)
-    require_role_t(role, ["admin", "editor"])
+    # Any member of the tree can create a group chat and freely choose who to add.
+    if not tree:
+        raise HTTPException(status_code=403, detail="Anda bukan anggota pohon ini")
     name = (body.name or "").strip()
     if not name:
         raise HTTPException(status_code=400, detail="Nama grup wajib diisi")
