@@ -537,15 +537,12 @@ export default function TreeScreen() {
                 <Animated.View style={[{ width: layout.width, height: layout.height }, canvasStyle]}>
                   <Svg width={layout.width} height={layout.height} style={{ position: "absolute", top: 0, left: 0 }}>
                     {layout.edges.map((e) => {
-                      const isLineage = e.kind === "relation" && e.lineage != null;
                       const stroke =
                         e.kind === "adopted"
                           ? colors.nodeAdoptedLine
                           : e.kind === "divorce"
                             ? colors.nodeDivorceLine
-                            : isLineage
-                              ? lineageColor(e.lineage!)
-                              : colors.nodeRelationLine;
+                            : colors.nodeRelationLine;
                       return (
                         <Line
                           key={e.key}
@@ -554,7 +551,7 @@ export default function TreeScreen() {
                           x2={e.x2}
                           y2={e.y2}
                           stroke={stroke}
-                          strokeWidth={isLineage ? 3.5 : 2}
+                          strokeWidth={2}
                           strokeLinecap="round"
                           strokeDasharray={e.kind === "adopted" ? "7,6" : undefined}
                         />
