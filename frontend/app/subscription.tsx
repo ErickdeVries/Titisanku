@@ -29,6 +29,12 @@ export default function SubscriptionScreen() {
 
   const plan = (activeTree?.plan ?? "free") as PlanId;
   const isAdmin = activeTree?.role === "admin";
+  const expIso = (activeTree as any)?.expires_at as string | undefined;
+  const expDate = expIso ? new Date(expIso) : null;
+  const daysLeft = expDate ? Math.ceil((expDate.getTime() - Date.now()) / 86400000) : null;
+  const expFmt = expDate
+    ? expDate.toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" })
+    : null;
   const limits = activeTree?.plan_limits;
   const usage = [
     { icon: <Users size={16} color={colors.brandSecondary} />, label: "Orang", used: activeTree?.person_count ?? 0, max: limits?.people ?? null },
@@ -99,6 +105,9 @@ export default function SubscriptionScreen() {
               <Text style={styles.usagePlan}>{plan === "free" ? "Free" : plan === "pro" ? "Pro" : "Keluarga"}</Text>
             </View>
             <Text style={styles.usageTree} numberOfLines={1}>{activeTree.name}</Text>
+            {plan !== "free" && expFmt ? (
+              <Text style={styles.usageExp}>Berlaku sampai {expFmt}</Text>
+            ) : null}
             <View style={styles.usageRow}>
               {usage.map((u) => (
                 <View key={u.label} style={styles.usageItem}>
@@ -108,6 +117,17 @@ export default function SubscriptionScreen() {
               ))}
             </View>
           </LinearGradient>
+
+          {plan !== "free" && daysLeft != null && daysLeft <= 14 ? (
+            <View style={[styles.expBanner, { backgroundColor: colors.brandTertiary, borderColor: colors.brandPrimary }]}>
+              <Crown size={18} color={colors.brandSecondary} />
+              <Text style={[styles.expBannerText, { color: colors.onSurface }]}>
+                {daysLeft <= 0
+                  ? "Paket Anda telah berakhir. Perpanjang untuk membuka kembali fitur premium."
+                  : `Paket berakhir dalam ${daysLeft} hari. Perpanjang agar fitur premium tetap aktif.`}
+              </Text>
+            </View>
+          ) : null}
 
           {/* Plans */}
           {PLANS.map((p) => {
@@ -180,6 +200,9 @@ const styles = StyleSheet.create({
   usageTop: { flexDirection: "row", alignItems: "center", gap: 10 },
   usagePlan: { fontFamily: fonts.bold, fontSize: 20, color: "#FFFFFF" },
   usageTree: { fontFamily: fonts.medium, fontSize: 14, color: "rgba(255,255,255,0.85)" },
+  usageExp: { fontFamily: fonts.regular, fontSize: 12, color: "rgba(255,255,255,0.8)", marginTop: 2 },
+  expBanner: { flexDirection: "row", alignItems: "center", gap: 10, padding: 14, borderRadius: 16, borderWidth: 1 },
+  expBannerText: { fontFamily: fonts.medium, fontSize: 13, flex: 1, lineHeight: 18 },
   usageRow: { flexDirection: "row", justifyContent: "space-between", marginTop: 12 },
   usageItem: { alignItems: "center", flex: 1 },
   usageVal: { fontFamily: fonts.bold, fontSize: 18, color: "#FFFFFF" },

@@ -565,3 +565,13 @@ User choices: chat notif = getar + suara "ding"; kerjakan Push sekarang.
 - REGRESSION FIX (found during push check): the iteration-24 push-block insertion had accidentally deleted the
   `@api_router.get("/people/{person_id}/notes")` decorator, leaving list_person_notes unregistered (GET notes
   = 404). Restored decorator; route now 401 (registered). Backend restarted, syntax OK.
+
+## Iteration 29 — Restore classic-luxury login + Plan Expiry automation (2026-06, fork)
+- LOGIN: restored classic-luxury emblem design (user chose 1a) keeping the button-text refit. Verified screenshot.
+- PLAN EXPIRY (yearly): _activate_order + admin upgrade_tree now set expires_at = now+365d (paid) / unset (free)
+  and reset reminder flags. New _check_plan_expiry(tree) called lazily in resolve_tree (both paths) + list_trees:
+  * expired -> downgrade plan->free, unset expires_at, notify_tree("Paket berakhir") (data safe, Free limits apply)
+  * H-7 (days<=7) & H-1 (days<=1) -> one-time reminder notifications via flags expiry_reminder_7/1
+  No cron needed. Verified e2e: expired->free+1 notif; 5-day->family kept+reminder+idempotent.
+- FRONTEND subscription.tsx: shows "Berlaku sampai <tgl id-ID>" in usage card + renewal banner when daysLeft<=14
+  (expires_at comes through tree object). expires_at serialized by FastAPI. Lint clean.

@@ -259,12 +259,14 @@ async def resolve_tree(user, tree_id: Optional[str]):
                 tree = await db.trees.find_one({"id": tree_id}, {"_id": 0})
                 if not tree:
                     raise HTTPException(status_code=404, detail="Pohon tidak ditemukan")
+                tree = await _check_plan_expiry(tree)
                 return tree, "admin"
             raise HTTPException(status_code=403, detail="Anda bukan anggota pohon ini")
         return None, None
     tree = await db.trees.find_one({"id": member["tree_id"]}, {"_id": 0})
     if not tree:
         raise HTTPException(status_code=404, detail="Pohon tidak ditemukan")
+    tree = await _check_plan_expiry(tree)
     role = "admin" if is_superadmin(user) else member["role"]
     return tree, role
 
@@ -1039,8 +1041,47 @@ async def notify_tree(tree_id: str, actor_id: str, ntype: str, title: str, body:
         await db.app_notifications.insert_many(docs)
 
 
-# ---------------------------------------------------------------------------
-# Push notifications (Emergent-managed relay)
+async def _check_plan_expiry(tree):
+    """Lazily enforce yearly plan expiry on tree access (no cron needed).
+    Auto-downgrades to free when expired and fires H-7 / H-1 reminders once."""
+    if not tree or tree.get("plan") in (None, "free"):
+        return tree
+    exp = tree.get("expires_at")
+    if not exp:
+        return tree
+    exp = _aware(exp)
+    now = now_utc()
+    tid = tree["id"]
+    name = tree.get("name", "")
+    if exp <= now:
+        await db.trees.update_one(
+            {"id": tid},
+            {"$set": {"plan": "free"}, "$unset": {"expires_at": "", "expiry_reminder_7": "", "expiry_reminder_1": ""}},
+        )
+        try:
+            await notify_tree(tid, "", "plan", "Paket berakhir",
+                              f"Paket berbayar untuk \"{name}\" telah berakhir. Pohon kini memakai paket Free — data Anda tetap aman. Perpanjang untuk membuka kembali fitur premium.")
+        except Exception as e:
+            logger.warning(f"expiry notify failed: {e}")
+        tree["plan"] = "free"
+        tree.pop("expires_at", None)
+        return tree
+    days = (exp - now).days
+    if days <= 1 and not tree.get("expiry_reminder_1"):
+        await db.trees.update_one({"id": tid}, {"$set": {"expiry_reminder_1": True}})
+        try:
+            await notify_tree(tid, "", "plan", "Paket segera berakhir",
+                              f"Paket \"{name}\" berakhir dalam 1 hari. Perpanjang agar fitur premium tetap aktif.")
+        except Exception:
+            pass
+    elif days <= 7 and not tree.get("expiry_reminder_7"):
+        await db.trees.update_one({"id": tid}, {"$set": {"expiry_reminder_7": True}})
+        try:
+            await notify_tree(tid, "", "plan", "Paket akan berakhir",
+                              f"Paket \"{name}\" berakhir dalam {days} hari. Jangan lupa perpanjang langganan Anda.")
+        except Exception:
+            pass
+    return tree
 # ---------------------------------------------------------------------------
 PUSH_BASE_URL = "https://integrations.emergentagent.com"
 PUSH_KEY = os.environ.get("EMERGENT_PUSH_KEY", "placeholder")
@@ -1524,6 +1565,7 @@ async def list_trees(user=Depends(get_current_user)):
         tree = await db.trees.find_one({"id": m["tree_id"]}, {"_id": 0})
         if not tree:
             continue
+        tree = await _check_plan_expiry(tree)
         count = await tree_person_count(tree["id"])
         member_count = await db.tree_members.count_documents({"tree_id": tree["id"]})
         limits = plan_limits(tree.get("plan"))
@@ -1907,7 +1949,10 @@ async def upgrade_tree(tid: str, body: UpgradeInput, user=Depends(get_current_us
     tree, role = await resolve_tree(user, tid)
     require_role_t(role, ["admin"])
     plan = body.plan if body.plan in ("free", "pro", "family") else "pro"
-    await db.trees.update_one({"id": tid}, {"$set": {"plan": plan, "upgraded_at": now_utc()}})
+    if plan == "free":
+        await db.trees.update_one({"id": tid}, {"$set": {"plan": "free"}, "$unset": {"expires_at": "", "expiry_reminder_7": "", "expiry_reminder_1": ""}})
+    else:
+        await db.trees.update_one({"id": tid}, {"$set": {"plan": plan, "upgraded_at": now_utc(), "expires_at": now_utc() + timedelta(days=365)}, "$unset": {"expiry_reminder_7": "", "expiry_reminder_1": ""}})
     return {"ok": True, "plan": plan}
 
 
@@ -1919,7 +1964,11 @@ class PaymentInput(BaseModel):
 async def _activate_order(order):
     if order.get("status") == "paid":
         return
-    await db.trees.update_one({"id": order["tree_id"]}, {"$set": {"plan": order["plan"], "upgraded_at": now_utc()}})
+    await db.trees.update_one(
+        {"id": order["tree_id"]},
+        {"$set": {"plan": order["plan"], "upgraded_at": now_utc(), "expires_at": now_utc() + timedelta(days=365)},
+         "$unset": {"expiry_reminder_7": "", "expiry_reminder_1": ""}},
+    )
     await db.payment_orders.update_one({"order_id": order["order_id"]}, {"$set": {"status": "paid", "paid_at": now_utc()}})
 
 
