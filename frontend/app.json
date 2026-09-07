@@ -21,7 +21,13 @@
         "backgroundColor": "#000000"
       },
       "package": "com.emergent.keturunanku.xhuaqr",
-      "permissions": ["READ_MEDIA_IMAGES", "RECEIVE_BOOT_COMPLETED", "SCHEDULE_EXACT_ALARM", "CAMERA"]
+      "googleServicesFile": "./google-services.json",
+      "permissions": [
+        "READ_MEDIA_IMAGES",
+        "RECEIVE_BOOT_COMPLETED",
+        "SCHEDULE_EXACT_ALARM",
+        "CAMERA"
+      ]
     },
     "web": {
       "bundler": "metro",
@@ -53,13 +59,19 @@
           "photosPermission": "Add family member photos to their profiles"
         }
       ],
-      "expo-notifications",
+      [
+        "expo-notifications",
+        {
+          "sounds": ["./assets/ding.wav"]
+        }
+      ],
       [
         "expo-camera",
         {
           "cameraPermission": "Scan invite QR codes to join family trees"
         }
-      ]
+      ],
+      "expo-audio"
     ],
     "experiments": {
       "typedRoutes": true

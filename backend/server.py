@@ -1001,6 +1001,19 @@ async def notify_room(room, actor_id: str, ntype: str, title: str, body: str):
         })
     if docs:
         await db.app_notifications.insert_many(docs)
+    try:
+        await send_push(
+            [d["user_id"] for d in docs],
+            {
+                "title": title,
+                "message": body,
+                "channel_id": "chat",
+                "sound": "ding.wav",
+                "action_url": f"/chat/{room['id']}",
+            },
+        )
+    except Exception as e:
+        logger.warning(f"Push failed (non-blocking): {e}")
 
 
 async def notify_tree(tree_id: str, actor_id: str, ntype: str, title: str, body: str):
@@ -1025,7 +1038,43 @@ async def notify_tree(tree_id: str, actor_id: str, ntype: str, title: str, body:
         await db.app_notifications.insert_many(docs)
 
 
-@api_router.get("/people/{person_id}/notes")
+# ---------------------------------------------------------------------------
+# Push notifications (Emergent-managed relay)
+# ---------------------------------------------------------------------------
+PUSH_BASE_URL = "https://integrations.emergentagent.com"
+PUSH_KEY = os.environ.get("EMERGENT_PUSH_KEY", "placeholder")
+_push_client = httpx.AsyncClient(base_url=PUSH_BASE_URL, headers={"X-Push-Key": PUSH_KEY}, timeout=10.0)
+
+
+class RegisterPushBody(BaseModel):
+    platform: str
+    device_token: str
+
+
+@api_router.post("/register-push", status_code=201)
+async def register_push(body: RegisterPushBody, user=Depends(get_current_user)):
+    resp = await _push_client.post(
+        "/api/v1/push/users/register",
+        json={"user_id": user["user_id"], "platform": body.platform, "device_token": body.device_token},
+    )
+    if resp.status_code == 401:
+        raise HTTPException(500, "EMERGENT_PUSH_KEY missing or invalid")
+    if resp.status_code >= 500:
+        raise HTTPException(502, "Push provider unavailable")
+    resp.raise_for_status()
+    return {"status": "registered"}
+
+
+async def send_push(recipients: list, data: dict, idempotency_key: Optional[str] = None):
+    """Relay a push via the Emergent managed service. Never let failures block the caller."""
+    recipients = list(dict.fromkeys([r for r in recipients if r]))[:100]
+    if not recipients or "title" not in data or "message" not in data:
+        return
+    payload = {"recipients": recipients, "data": data}
+    if idempotency_key:
+        payload["$idempotency_key"] = idempotency_key
+    resp = await _push_client.post("/api/v1/push/trigger", json=payload)
+    resp.raise_for_status()
 async def list_person_notes(person_id: str, tree_id: Optional[str] = Query(None), user=Depends(get_current_user)):
     tree, role = await resolve_tree(user, tree_id)
     notes = await db.person_notes.find({"person_id": person_id, "tree_id": tree["id"], "deleted_at": None}, {"_id": 0}).sort("created_at", -1).to_list(2000)

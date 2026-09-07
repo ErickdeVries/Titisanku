@@ -1,14 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { View, Text, Pressable, TextInput, FlatList, Modal, Switch } from "react-native";
+import { View, Text, Pressable, TextInput, FlatList, Modal, Switch, Alert, Platform } from "react-native";
 import { Image } from "expo-image";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import * as ImagePicker from "expo-image-picker";
+import * as Haptics from "expo-haptics";
+import { useAudioPlayer } from "expo-audio";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Feather from "@react-native-vector-icons/feather";
 import { fonts, makeStyles, useTheme } from "@/src/theme";
 import { getChat, sendChat, deleteChat, setTyping, uploadPhoto, fileUrl, markNotificationsRead, muteRoom, leaveGroup } from "@/src/api";
+import { compressImage } from "@/src/utils/image";
 import { useAuth } from "@/src/auth";
 import { useI18n } from "@/src/i18n";
 
@@ -44,6 +47,10 @@ const useStyles = makeStyles((c) => ({
   readonly: { padding: 16, alignItems: "center", backgroundColor: c.surface, borderTopWidth: 1, borderTopColor: c.divider },
   readonlyText: { fontFamily: fonts.medium, fontSize: 13, color: c.muted },
   replyBar: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", backgroundColor: c.surfaceTertiary, marginHorizontal: 12, marginTop: 8, borderRadius: 10, padding: 8 },
+  mentionBox: { maxHeight: 220, marginHorizontal: 12, marginBottom: 6, backgroundColor: c.surface, borderRadius: 14, borderWidth: 1, borderColor: c.divider, overflow: "hidden" },
+  mentionRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 14, paddingVertical: 10 },
+  mentionAvatar: { width: 32, height: 32, borderRadius: 999, backgroundColor: c.surfaceTertiary, alignItems: "center", justifyContent: "center", overflow: "hidden" },
+  mentionName: { fontFamily: fonts.medium, fontSize: 14, color: c.onSurface, flex: 1 },
   empty: { flex: 1, alignItems: "center", justifyContent: "center", padding: 40, gap: 10 },
   emptyText: { fontFamily: fonts.regular, fontSize: 14, color: c.muted, textAlign: "center" },
   modalBg: { flex: 1, backgroundColor: "rgba(15,23,42,0.4)", justifyContent: "flex-end" },
@@ -86,12 +93,15 @@ export default function ChatRoomScreen() {
   const qc = useQueryClient();
   const listRef = useRef<FlatList>(null);
   const { roomId } = useLocalSearchParams<{ roomId: string }>();
+  const dingPlayer = useAudioPlayer(require("../../assets/ding.wav"));
+  const lastMsgId = useRef<string | null>(null);
+  const initialized = useRef(false);
 
   const { data } = useQuery({ queryKey: ["chat", roomId], queryFn: () => getChat(roomId), refetchInterval: 3000 });
   const [text, setText] = useState("");
   const [replyTo, setReplyTo] = useState<any>(null);
   const [sending, setSending] = useState(false);
-  const [mentionOpen, setMentionOpen] = useState(false);
+  const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const [mentions, setMentions] = useState<string[]>([]);
   const [actionMsg, setActionMsg] = useState<any>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -130,12 +140,23 @@ export default function ChatRoomScreen() {
 
   const onType = (v: string) => {
     setText(v);
+    if (roomType !== "direct") {
+      const m = /(^|\s)@([^\s@]*)$/.exec(v);
+      setMentionQuery(m ? m[2] : null);
+    }
     const now = Date.now();
     if (now - lastTyped.current > 2000) {
       lastTyped.current = now;
       setTyping(roomId).catch(() => {});
     }
   };
+
+  const mentionCandidates =
+    mentionQuery === null
+      ? []
+      : members
+          .filter((m: any) => m.user_id !== user?.user_id)
+          .filter((m: any) => m.name.toLowerCase().includes(mentionQuery.toLowerCase()));
 
   const removeMessage = async (msgId: string) => {
     setActionMsg(null);
@@ -157,10 +178,35 @@ export default function ChatRoomScreen() {
     if (messages.length) setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 200);
   }, [messages.length]);
 
+  // Haptic + "ding" sound when a NEW incoming message arrives (not mine, not muted).
+  useEffect(() => {
+    if (!messages.length) return;
+    const last = messages[messages.length - 1];
+    if (!initialized.current) {
+      initialized.current = true;
+      lastMsgId.current = last.id;
+      return;
+    }
+    if (last.id !== lastMsgId.current) {
+      lastMsgId.current = last.id;
+      if (last.sender_id !== user?.user_id && !muted) {
+        if (Platform.OS !== "web") {
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+        }
+        try {
+          dingPlayer.seekTo(0);
+          dingPlayer.play();
+        } catch {}
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages]);
+
   const resetInput = () => {
     setText("");
     setReplyTo(null);
     setMentions([]);
+    setMentionQuery(null);
   };
 
   const doSend = async (attachments: string[] = []) => {
@@ -180,25 +226,27 @@ export default function ChatRoomScreen() {
   const sendPhoto = async () => {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) return;
-    const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images"], quality: 0.6 });
+    const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images"], quality: 0.8 });
     if (res.canceled || !res.assets?.length) return;
     setSending(true);
     try {
-      const path = await uploadPhoto(res.assets[0].uri);
+      const compressed = await compressImage(res.assets[0].uri);
+      const path = await uploadPhoto(compressed);
       await sendChat({ message: text.trim(), attachments: [path], reply_to: replyTo?.id ?? null, mentions }, roomId);
       resetInput();
       await qc.invalidateQueries({ queryKey: ["chat", roomId] });
-    } catch (e) {
+    } catch (e: any) {
       console.log("photo send error", e);
+      Alert.alert(t("photo"), e?.message || "Upload failed");
     } finally {
       setSending(false);
     }
   };
 
-  const addMention = (m: any) => {
-    setText((prev) => `${prev}@${m.name} `);
+  const insertMention = (m: any) => {
+    setText((prev) => prev.replace(/(^|\s)@([^\s@]*)$/, (_full, pre) => `${pre}@${m.name} `));
     setMentions((prev) => Array.from(new Set([...prev, m.user_id])));
-    setMentionOpen(false);
+    setMentionQuery(null);
   };
 
   const renderItem = ({ item }: { item: any }) => {
@@ -313,13 +361,39 @@ export default function ChatRoomScreen() {
           </Text>
         ) : null}
 
+        {mentionCandidates.length > 0 ? (
+          <View style={styles.mentionBox}>
+            <FlatList
+              data={mentionCandidates}
+              keyExtractor={(m) => m.user_id}
+              keyboardShouldPersistTaps="handled"
+              renderItem={({ item }) => (
+                <Pressable style={styles.mentionRow} onPress={() => insertMention(item)} testID={`mention-${item.user_id}`}>
+                  <View style={styles.mentionAvatar}>
+                    {item.picture ? (
+                      <Image source={{ uri: fileUrl(item.picture) }} style={styles.avatarImg} contentFit="cover" />
+                    ) : (
+                      <Feather name="user" size={15} color={colors.muted} />
+                    )}
+                  </View>
+                  <Text style={styles.mentionName} numberOfLines={1}>{item.name}</Text>
+                </Pressable>
+              )}
+            />
+          </View>
+        ) : null}
+
         {canChat ? (
           <View style={[styles.inputBar, { paddingBottom: insets.bottom + 8 }]}>
             <Pressable style={styles.iconBtn} onPress={sendPhoto} testID="chat-photo-button">
               <Feather name="image" size={22} color={colors.muted} />
             </Pressable>
             {roomType !== "direct" ? (
-              <Pressable style={styles.iconBtn} onPress={() => setMentionOpen(true)} testID="chat-mention-button">
+              <Pressable
+                style={styles.iconBtn}
+                onPress={() => onType(text.length === 0 || text.endsWith(" ") ? `${text}@` : `${text} @`)}
+                testID="chat-mention-button"
+              >
                 <Feather name="at-sign" size={20} color={colors.muted} />
               </Pressable>
             ) : null}
@@ -342,26 +416,6 @@ export default function ChatRoomScreen() {
           </View>
         )}
       </KeyboardAvoidingView>
-
-      {/* Mention picker */}
-      <Modal visible={mentionOpen} transparent animationType="slide" onRequestClose={() => setMentionOpen(false)}>
-        <Pressable style={styles.modalBg} onPress={() => setMentionOpen(false)}>
-          <Pressable style={styles.sheet} onPress={() => {}}>
-            <Text style={styles.sheetTitle}>{t("mention")}</Text>
-            <FlatList
-              data={members.filter((m: any) => m.user_id !== user?.user_id)}
-              keyExtractor={(m) => m.user_id}
-              renderItem={({ item }) => (
-                <Pressable style={styles.pickRow} onPress={() => addMention(item)} testID={`mention-${item.user_id}`}>
-                  <Feather name="at-sign" size={18} color={colors.brandSecondary} />
-                  <Text style={styles.pickText}>{item.name}</Text>
-                </Pressable>
-              )}
-              ListEmptyComponent={<Text style={[styles.emptyText, { padding: 20 }]}>-</Text>}
-            />
-          </Pressable>
-        </Pressable>
-      </Modal>
 
       {/* Message action sheet (reply / delete) */}
       <Modal visible={!!actionMsg} transparent animationType="slide" onRequestClose={() => setActionMsg(null)}>

@@ -486,3 +486,26 @@ FASE 3 (chat avatar = account photo, changeable):
   - Cleared via markNotificationsRead("chat") on opening chat list & room.
   - VERIFIED e2e (scoped test): A sends -> B unread_chat=1 -> after read=0 -> sender stays 0. Real data untouched.
 - No code change this turn. Possible future: dedicated notifications inbox (bell) screen (items already returned).
+
+## Iteration 24 — Chat photo fix + Notif Inbox + Push + WA-style group/mention + test safety (2026-06, fork)
+User choices: chat notif = getar + suara "ding"; kerjakan Push sekarang.
+- CHAT PHOTO FIX: chat/[roomId].tsx sendPhoto now compressImage() before uploadPhoto (raw content:// URIs
+  failed the winter-fetch File ctor; profile/gallery already compressed → worked). Errors now surfaced via Alert.
+- NOTIF INBOX: notifications.tsx wired (was orphaned) — added AppNotification type + typed getNotifications in
+  api.ts, i18n no_notifications (ID/EN), route registered in _layout, bell icon + unread badge in Tree header
+  (index.tsx) → /notifications. markNotificationsRead on blur.
+- CHAT HAPTICS + DING: expo-audio + expo-haptics. chat/[roomId].tsx plays assets/ding.wav + Haptics on NEW
+  incoming message (not mine, not muted). Generated ding.wav (sine ding) in assets/.
+- PUSH (Emergent relay): backend send_push() + POST /register-push (auth, derives user_id) + notify_room fans
+  out push (channel_id chat, sound ding.wav, action_url /chat/{room}) wrapped try/except (non-blocking).
+  EMERGENT_PUSH_KEY=placeholder in backend/.env. Frontend _layout.tsx: module-scope setNotificationHandler +
+  Android channels (default + chat w/ ding), tap handlers (warm+cold), device registration after auth,
+  weekly denied nudge → Linking.openSettings. app.json: expo-notifications plugin sounds:[ding.wav] +
+  android.googleServicesFile ./google-services.json. NEEDS user google-services.json + native build to test.
+- WA-STYLE GROUP: chat/new.tsx added contact search + selected-member chips (avatar + remove). i18n search_contacts.
+- WA-STYLE MENTION: chat/[roomId].tsx inline @autocomplete overlay above input (typing @ filters members,
+  tap inserts @Name) replacing the old modal picker. @ button now inserts "@" trigger.
+- TEST SAFETY: conftest.py `seeded` fixture now SKIPS (refuses) when DB has non-TEST_ users so its whole-collection
+  delete_many({}) can never wipe real data again.
+- Backend verified by testing_agent 9/9 PASS (upload, chat attachments, register-push 401/500, notifications,
+  read, non-blocking push, mention notif). Real trees untouched. Frontend UI (behind Google OAuth) = user device test.

@@ -1,10 +1,11 @@
 import { useEffect } from "react";
-import { View, ActivityIndicator, StyleSheet } from "react-native";
+import { View, ActivityIndicator, StyleSheet, Platform, Alert, LogBox } from "react-native";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Stack, useRouter, useSegments } from "expo-router";
-import { LogBox } from "react-native";
 import { useFonts } from "expo-font";
 import * as SplashScreen from "expo-splash-screen";
+import * as Notifications from "expo-notifications";
+import * as Linking from "expo-linking";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { SafeAreaProvider } from "react-native-safe-area-context";
@@ -16,9 +17,36 @@ import { TreeProvider, useTree } from "@/src/tree-context";
 import { LanguageProvider } from "@/src/i18n";
 import { ThemeProvider } from "@/src/theme";
 import { storage } from "@/src/utils/storage";
+import { registerPush } from "@/src/api";
 
 LogBox.ignoreAllLogs(true);
 SplashScreen.preventAutoHideAsync().catch(() => {});
+
+// Push: foreground display behavior — module scope (before any component).
+if (Platform.OS !== "web") {
+  Notifications.setNotificationHandler({
+    handleNotification: async () => ({
+      shouldShowAlert: true,
+      shouldPlaySound: true,
+      shouldSetBadge: false,
+      shouldShowBanner: true,
+      shouldShowList: true,
+    }),
+  });
+}
+// Push: Android channels — module scope. "chat" carries the custom "ding" sound.
+if (Platform.OS === "android") {
+  Notifications.setNotificationChannelAsync("default", {
+    name: "Umum",
+    importance: Notifications.AndroidImportance.MAX,
+    sound: "default",
+  });
+  Notifications.setNotificationChannelAsync("chat", {
+    name: "Pesan Chat",
+    importance: Notifications.AndroidImportance.MAX,
+    sound: "ding.wav",
+  });
+}
 
 function RootNav() {
   const { user, loading } = useAuth();
@@ -59,6 +87,58 @@ function RootNav() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, loading]);
 
+  // Push: tap handlers (warm + cold start) → deep link into the app.
+  useEffect(() => {
+    if (Platform.OS === "web") return;
+    const handleUrl = (data: any) => {
+      const url = data?.deeplink || data?.action_url;
+      if (!url || typeof url !== "string") return;
+      if (url.startsWith("http")) Linking.openURL(url);
+      else router.push(url as any);
+    };
+    const tapSub = Notifications.addNotificationResponseReceivedListener((response) => {
+      handleUrl(response.notification.request.content.data || {});
+    });
+    Notifications.getLastNotificationResponseAsync().then((response) => {
+      if (response) handleUrl(response.notification.request.content.data || {});
+    });
+    return () => tapSub.remove();
+  }, [router]);
+
+  // Push: register the device once the user is authenticated (tokens rotate → re-register each open).
+  useEffect(() => {
+    if (Platform.OS === "web" || !user) return;
+    (async () => {
+      try {
+        const { status, canAskAgain } = await Notifications.getPermissionsAsync();
+        let finalStatus = status;
+        if (status !== "granted" && canAskAgain) {
+          finalStatus = (await Notifications.requestPermissionsAsync()).status;
+        }
+        if (finalStatus === "granted") {
+          const tokenResp = await Notifications.getDevicePushTokenAsync();
+          await registerPush(Platform.OS, String(tokenResp.data));
+        } else if (!canAskAgain) {
+          const last = await storage.getItem<string>("pushNudgeAt", "");
+          const oneWeek = 7 * 24 * 60 * 60 * 1000;
+          if (!last || Date.now() - Number(last) > oneWeek) {
+            await storage.setItem("pushNudgeAt", String(Date.now()));
+            Alert.alert(
+              "Notifikasi",
+              "Aktifkan notifikasi agar Anda menerima pesan chat & kabar keluarga.",
+              [
+                { text: "Nanti", style: "cancel" },
+                { text: "Buka Pengaturan", onPress: () => Linking.openSettings() },
+              ],
+            );
+          }
+        }
+      } catch (e) {
+        console.log("push register", e);
+      }
+    })();
+  }, [user]);
+
   if (loading) {
     return (
       <View style={styles.center}>
@@ -89,6 +169,7 @@ function RootNav() {
       <Stack.Screen name="feedback" />
       <Stack.Screen name="explorer/[id]" />
       <Stack.Screen name="invite/[token]" />
+      <Stack.Screen name="notifications" />
     </Stack>
   );
 }

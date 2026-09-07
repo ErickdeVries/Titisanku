@@ -1,0 +1,37 @@
+{
+  "summary": "Backend-only iteration 13: verified chat photo upload, in-app Notification Inbox, Emergent-managed push relay registration, non-blocking push in send_chat, and @mention notification. All 9 pytest tests pass (100%). Created isolated test file /app/backend/tests/test_push_notifications_inbox.py that seeds ONLY synthetic docs prefixed TESTPUSH_ against MONGO_URL/test_database, and deletes only those exact docs at teardown. Real trees tree_87087dfe29e9 and tree_6ce491402c6a were not touched (verified post-run). Note: register-push with EMERGENT_PUSH_KEY=placeholder correctly returns 500 with message 'EMERGENT_PUSH_KEY missing or invalid' (route is REGISTERED, not 404). Unauthenticated register-push returns 401. send_chat still returns 200 even though the push relay upstream fails — non-blocking behavior confirmed (regression check passes).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/register-push", "issue": "Upstream at integrations.emergentagent.com/api/v1/push/users/register returns 401 with placeholder key → surfaced as 500 to caller. This is by design per request, but the code path at server.py:1060 conflates 'key invalid' (should be a 5xx config error) with what could also be a legitimate 401 from upstream. Consider distinguishing 'X-Push-Key missing/invalid' via env check vs upstream 401. Non-blocking."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_push_notifications_inbox.py",
+    "/app/test_reports/pytest/iter13_push_notif_results.xml"
+  ],
+  "action_items": [
+    "Optional: when EMERGENT_PUSH_KEY is set to a real value, re-run tests — test_auth_route_registered_not_404 currently accepts 201/500/502. It will start returning 201 without any code change.",
+    "Optional cleanup: server.py line 1078 defines an async httpx client `_push_client` at module import (module-level side effect). Consider lazy init or app startup event for cleaner testing/teardown."
+  ],
+  "critical_code_review_comments": [
+    "server.py:1004-1016 notify_room correctly wraps send_push in try/except and logs a warning — this is what keeps send_chat non-blocking. Verified by test_send_chat_is_non_blocking_when_push_fails. Do not remove this try/except.",
+    "server.py:1412-1429 mention handler correctly de-dupes via set(body.mentions) and skips self-mention. Insert-many is only called when mention_docs is non-empty. Good.",
+    "server.py:1441-1447 mark_notifications_read: `type` param name shadows Python builtin — minor style nit only, works fine.",
+    "server.py:1054-1065 register_push maps upstream 401 → 500, 5xx → 502, and calls raise_for_status() for everything else. Route is properly registered under /api and gated by get_current_user (returns 401 when no bearer token). Matches request spec exactly.",
+    "server.py has grown to >1500 lines including this batch — approaching size where splitting chat/notifications/push into a router module would help maintainability (not blocking)."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (9/9)", "frontend": "n/a (backend-only request)"},
+  "seed_data_creation": "Test module seeds 3 users (admin/editor/viewer) + 3 user_sessions + 1 tree + 3 tree_members with per-tree roles, all prefixed TESTPUSH_. Teardown deletes ONLY those exact docs (verified: 0 leftover TESTPUSH_ docs in users/user_sessions/trees/tree_members/family_chat/app_notifications/chat_rooms/chat_typing/chat_mutes after run). Real trees tree_87087dfe29e9 (Erick De Vries) and tree_6ce491402c6a (Erick De Vries) confirmed untouched. Fixture is safe against shared dev DB.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "To retest run: `cd /app/backend/tests && python -m pytest test_push_notifications_inbox.py -v -n 0`. MUST use `-n 0` because the module-scoped `seeded` fixture is per-worker under pytest-xdist and cross-worker ordering breaks the 'editor received chat notification from admin' assertion. Do NOT use the sibling conftest.py fixture named `seeded` from /app/backend/tests/conftest.py — that fixture calls delete_many({}) on users/people/relations/user_sessions/etc. and WILL wipe real data. My tests define their own local `seeded` fixture inside the test file, so as long as you don't add a fixture request that hits the shared conftest one, you're safe. Endpoints verified: POST /api/upload (200 → {path,url}), POST /api/chat with attachments+mentions (200), POST /api/register-push (401 unauth, 500 auth with placeholder key), GET /api/notifications ({unread,unread_chat,items}), POST /api/notifications/read?type=chat (unread_chat → 0). Push relay integration point: server.py:1044-1077 (send_push + register_push). Non-blocking wrapper at server.py:1004-1016.",
+  "rca_of_issue": "N/A — no bug reported. All 7 requested test cases passed. Only observation: the intermediate pytest-xdist parallel run had one failure due to per-worker fixture duplication (each worker had its own tree and never saw the other worker's chat message). Root cause: `@pytest.fixture(scope='module')` under xdist creates one instance per worker. Mitigation: run with `-n 0` (documented in context_for_next_testing_agent). Not a product bug."
+}

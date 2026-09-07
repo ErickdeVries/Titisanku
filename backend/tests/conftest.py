@@ -62,14 +62,25 @@ def _seed_user(db, role: str, name_prefix="TEST"):
     return user_id, token, email
 
 
+def _has_real_data(db):
+    """True if the DB contains any non-synthetic user (real Google account)."""
+    return db.users.count_documents({"email": {"$not": {"$regex": "^TEST_"}}}) > 0
+
+
 @pytest.fixture(scope="session")
 def seeded(mongo_db):
     """Wipe target collections and seed admin/editor/viewer + root person.
 
-    Wipes at start (so we get a deterministic state) and at end (so real Google
-    user still becomes admin+root, as required).
+    SAFETY: refuses to run (skips) when the DB contains real (non-TEST_) users so
+    the destructive whole-collection wipe can NEVER touch real family data. Only
+    runs the wipe against a purely synthetic/empty DB.
     """
     db = mongo_db
+    if _has_real_data(db):
+        pytest.skip(
+            "Refusing destructive seed: DB contains non-synthetic users. "
+            "This legacy fixture wipes whole collections and must never run against real data."
+        )
     coll_names = [
         "users", "people", "relations", "user_sessions", "invites",
         "meta", "person_notes", "family_chat", "app_notifications",

@@ -285,7 +285,18 @@ export const setTyping = (roomId?: string) =>
   apiFetch(`/chat/typing${roomId ? `?room_id=${encodeURIComponent(roomId)}` : ""}`, { method: "POST" });
 
 // ---- Notifications ----
-export const getNotifications = () => apiFetch("/notifications");
+export type AppNotification = {
+  id: string;
+  type: string;
+  title: string;
+  body?: string;
+  read: boolean;
+  created_at: string;
+};
+export const getNotifications = (): Promise<{ unread: number; unread_chat: number; items: AppNotification[] }> =>
+  apiFetch("/notifications");
+export const registerPush = (platform: string, device_token: string): Promise<{ status: string }> =>
+  apiFetch("/register-push", { method: "POST", body: JSON.stringify({ platform, device_token }) });
 export const markNotificationsRead = (type?: string) =>
   apiFetch(`/notifications/read${type ? `?type=${type}` : ""}`, { method: "POST" });
 

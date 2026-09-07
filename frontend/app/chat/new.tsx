@@ -27,6 +27,14 @@ const useStyles = makeStyles((c) => ({
   check: { width: 24, height: 24, borderRadius: 999, borderWidth: 2, borderColor: c.borderStrong, alignItems: "center", justifyContent: "center" },
   checkOn: { backgroundColor: c.brandPrimary, borderColor: c.brandPrimary },
   input: { backgroundColor: c.surfaceTertiary, marginHorizontal: 16, marginVertical: 12, borderRadius: 14, paddingHorizontal: 16, paddingVertical: 14, fontFamily: fonts.regular, fontSize: 15, color: c.onSurface },
+  searchBar: { flexDirection: "row", alignItems: "center", gap: 10, marginHorizontal: 16, marginTop: 8, marginBottom: 4, backgroundColor: c.surfaceTertiary, borderRadius: 12, paddingHorizontal: 14, height: 44 },
+  searchInput: { flex: 1, fontFamily: fonts.regular, fontSize: 15, color: c.onSurface },
+  chipsWrap: { paddingTop: 4 },
+  chipsRow: { paddingHorizontal: 16, gap: 14, paddingVertical: 6 },
+  chip: { alignItems: "center", width: 56, gap: 4 },
+  chipAvatar: { width: 46, height: 46, borderRadius: 999, backgroundColor: c.surfaceTertiary, alignItems: "center", justifyContent: "center", overflow: "hidden" },
+  chipRemove: { position: "absolute", top: -2, right: -2, width: 18, height: 18, borderRadius: 999, backgroundColor: c.muted, alignItems: "center", justifyContent: "center", borderWidth: 1.5, borderColor: c.surface },
+  chipName: { fontFamily: fonts.regular, fontSize: 11, color: c.onSurfaceSecondary },
   footer: { padding: 16, borderTopWidth: 1, borderTopColor: c.divider },
   createBtn: { height: 52, borderRadius: 16, backgroundColor: c.brandPrimary, alignItems: "center", justifyContent: "center" },
   createText: { fontFamily: fonts.semibold, fontSize: 16, color: c.onBrandPrimary },
@@ -52,6 +60,11 @@ export default function NewChatScreen() {
   const [groupMode, setGroupMode] = useState(false);
   const [groupName, setGroupName] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [search, setSearch] = useState("");
+
+  const q = search.trim().toLowerCase();
+  const filtered = q ? contacts.filter((c) => c.name.toLowerCase().includes(q)) : contacts;
+  const selectedContacts = contacts.filter((c) => selected.has(c.user_id));
 
   const directMut = useMutation({
     mutationFn: (uid: string) => openDirect(uid),
@@ -134,12 +147,56 @@ export default function NewChatScreen() {
         />
       ) : null}
 
+      {groupMode && selectedContacts.length ? (
+        <View style={styles.chipsWrap}>
+          <FlatList
+            horizontal
+            data={selectedContacts}
+            keyExtractor={(c) => c.user_id}
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.chipsRow}
+            renderItem={({ item }) => (
+              <Pressable style={styles.chip} onPress={() => toggle(item.user_id)} testID={`chip-${item.user_id}`}>
+                <View style={styles.chipAvatar}>
+                  {item.picture ? (
+                    <Image source={{ uri: fileUrl(item.picture) }} style={styles.avatarImg} contentFit="cover" />
+                  ) : (
+                    <Feather name="user" size={16} color={colors.muted} />
+                  )}
+                  <View style={styles.chipRemove}>
+                    <Feather name="x" size={11} color={colors.onBrandPrimary} />
+                  </View>
+                </View>
+                <Text style={styles.chipName} numberOfLines={1}>{item.name.split(" ")[0]}</Text>
+              </Pressable>
+            )}
+          />
+        </View>
+      ) : null}
+
+      <View style={styles.searchBar}>
+        <Feather name="search" size={18} color={colors.muted} />
+        <TextInput
+          testID="contact-search"
+          style={styles.searchInput}
+          placeholder={t("search_contacts")}
+          placeholderTextColor={colors.muted}
+          value={search}
+          onChangeText={setSearch}
+        />
+        {search ? (
+          <Pressable onPress={() => setSearch("")} hitSlop={8}>
+            <Feather name="x" size={18} color={colors.muted} />
+          </Pressable>
+        ) : null}
+      </View>
+
       <Text style={styles.sectionLabel}>
         {groupMode ? `${t("select_members")} · ${selected.size} ${t("members_selected")}` : t("contacts")}
       </Text>
 
       <FlatList
-        data={contacts}
+        data={filtered}
         keyExtractor={(c) => c.user_id}
         renderItem={renderContact}
         ListEmptyComponent={

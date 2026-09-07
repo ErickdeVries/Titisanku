@@ -9,7 +9,7 @@ import Animated, { useSharedValue, useAnimatedStyle, withTiming, withDelay, with
 import Svg, { Line } from "react-native-svg";
 import Feather from "@react-native-vector-icons/feather";
 import { fonts, makeStyles, useTheme } from "@/src/theme";
-import { getTree, Person, Relation } from "@/src/api";
+import { getTree, Person, Relation, getNotifications } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { useTree } from "@/src/tree-context";
 import { useI18n } from "@/src/i18n";
@@ -43,6 +43,8 @@ const useStyles = makeStyles((c) => ({
   headerCount: { fontFamily: fonts.medium, fontSize: 12, color: c.muted },
   headerActions: { flexDirection: "row", alignItems: "center", gap: 8 },
   iconBtn: { width: 38, height: 38, borderRadius: 999, backgroundColor: c.brandTertiary, alignItems: "center", justifyContent: "center" },
+  notifDot: { position: "absolute", top: -3, right: -3, minWidth: 18, height: 18, paddingHorizontal: 4, borderRadius: 999, backgroundColor: c.error, alignItems: "center", justifyContent: "center", borderWidth: 1.5, borderColor: c.surface },
+  notifDotText: { fontFamily: fonts.bold, fontSize: 9, color: "#FFFFFF" },
   exportBtn: { flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: c.surfaceTertiary, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 999 },
   exportText: { fontFamily: fonts.medium, fontSize: 13, color: c.onSurfaceSecondary },
   bookBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, borderWidth: 1.5, borderRadius: 16, height: 52, marginTop: 10 },
@@ -188,6 +190,8 @@ export default function TreeScreen() {
   const { width: screenW } = useWindowDimensions();
 
   const { data, isLoading } = useQuery({ queryKey: ["tree"], queryFn: getTree });
+  const { data: notif } = useQuery({ queryKey: ["notifications"], queryFn: getNotifications, refetchInterval: 8000 });
+  const unreadNotif = notif?.unread ?? 0;
   const { activeTree, activeTreeId, pendingFocusId, setPendingFocus } = useTree();
   const [selected, setSelected] = useState<string | null>(null);
   const [focusId, setFocusId] = useState<string | null>(null);
@@ -447,6 +451,14 @@ export default function TreeScreen() {
         </View>
         {hasTree ? (
           <View style={styles.headerActions}>
+            <Pressable style={styles.iconBtn} onPress={() => router.push("/notifications")} testID="open-notifications">
+              <Feather name="bell" size={18} color={colors.brandSecondary} />
+              {unreadNotif > 0 ? (
+                <View style={styles.notifDot}>
+                  <Text style={styles.notifDotText}>{unreadNotif > 9 ? "9+" : unreadNotif}</Text>
+                </View>
+              ) : null}
+            </Pressable>
             <Pressable style={styles.iconBtn} onPress={() => setFilterOpen(true)} testID="open-filter">
               <Feather name="sliders" size={18} color={colors.brandSecondary} />
             </Pressable>
