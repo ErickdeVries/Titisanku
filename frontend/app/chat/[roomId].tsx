@@ -5,6 +5,8 @@ import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import * as ImagePicker from "expo-image-picker";
 import * as Haptics from "expo-haptics";
 import { useAudioPlayer } from "expo-audio";
+import { Gesture, GestureDetector } from "react-native-gesture-handler";
+import Animated, { useSharedValue, useAnimatedStyle, withSpring, runOnJS } from "react-native-reanimated";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -12,6 +14,8 @@ import Feather from "@react-native-vector-icons/feather";
 import { fonts, makeStyles, useTheme } from "@/src/theme";
 import { getChat, sendChat, deleteChat, setTyping, uploadPhoto, fileUrl, markNotificationsRead, muteRoom, leaveGroup } from "@/src/api";
 import { compressImage } from "@/src/utils/image";
+import { storage } from "@/src/utils/storage";
+import { CHAT_SOUND_STORAGE_KEY, ChatSound, DEFAULT_CHAT_SOUND, soundByKey } from "@/src/utils/chat-sounds";
 import { useAuth } from "@/src/auth";
 import { useI18n } from "@/src/i18n";
 
@@ -68,6 +72,53 @@ function timeOf(iso: string) {
   }
 }
 
+function replyHaptic() {
+  if (Platform.OS !== "web") Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+}
+
+function SwipeableMessage({
+  children,
+  onReply,
+  enabled,
+  accent,
+}: {
+  children: React.ReactNode;
+  onReply: () => void;
+  enabled: boolean;
+  accent: string;
+}) {
+  const tx = useSharedValue(0);
+  const fired = useSharedValue(false);
+  const pan = Gesture.Pan()
+    .enabled(enabled)
+    .activeOffsetX(16)
+    .failOffsetY([-12, 12])
+    .onUpdate((e) => {
+      tx.value = Math.max(0, Math.min(e.translationX, 84));
+      if (tx.value > 56 && !fired.value) {
+        fired.value = true;
+        runOnJS(replyHaptic)();
+        runOnJS(onReply)();
+      }
+    })
+    .onEnd(() => {
+      tx.value = withSpring(0, { damping: 18 });
+      fired.value = false;
+    });
+  const rowStyle = useAnimatedStyle(() => ({ transform: [{ translateX: tx.value }] }));
+  const iconStyle = useAnimatedStyle(() => ({ opacity: Math.min(1, tx.value / 56) }));
+  return (
+    <GestureDetector gesture={pan}>
+      <Animated.View>
+        <Animated.View style={[{ position: "absolute", left: 18, top: 0, bottom: 0, justifyContent: "center" }, iconStyle]}>
+          <Feather name="corner-up-left" size={20} color={accent} />
+        </Animated.View>
+        <Animated.View style={rowStyle}>{children}</Animated.View>
+      </Animated.View>
+    </GestureDetector>
+  );
+}
+
 function MessageText({ text, color, styles }: { text: string; color: string; styles: any }) {
   const parts = text.split(/(@\S+)/g);
   return (
@@ -94,8 +145,22 @@ export default function ChatRoomScreen() {
   const listRef = useRef<FlatList>(null);
   const { roomId } = useLocalSearchParams<{ roomId: string }>();
   const dingPlayer = useAudioPlayer(require("../../assets/ding.wav"));
+  const soundRef = useRef<ChatSound>(soundByKey(DEFAULT_CHAT_SOUND));
   const lastMsgId = useRef<string | null>(null);
   const initialized = useRef(false);
+
+  useEffect(() => {
+    storage.getItem<string>(CHAT_SOUND_STORAGE_KEY, DEFAULT_CHAT_SOUND).then((v) => {
+      const s = soundByKey(v);
+      soundRef.current = s;
+      if (s.asset) {
+        try {
+          dingPlayer.replace(s.asset);
+        } catch {}
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const { data } = useQuery({ queryKey: ["chat", roomId], queryFn: () => getChat(roomId), refetchInterval: 3000 });
   const [text, setText] = useState("");
@@ -193,10 +258,12 @@ export default function ChatRoomScreen() {
         if (Platform.OS !== "web") {
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
         }
-        try {
-          dingPlayer.seekTo(0);
-          dingPlayer.play();
-        } catch {}
+        if (soundRef.current.asset) {
+          try {
+            dingPlayer.seekTo(0);
+            dingPlayer.play();
+          } catch {}
+        }
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -254,11 +321,12 @@ export default function ChatRoomScreen() {
     const onText = mine ? colors.onBrandPrimary : colors.onSurface;
     const readByOthers = (item.read_by ?? []).length > 0;
     return (
-      <Pressable
-        style={[styles.row, mine && styles.rowMine]}
-        onLongPress={() => canChat && setActionMsg(item)}
-        testID={`chat-msg-${item.id}`}
-      >
+      <SwipeableMessage enabled={canChat} onReply={() => setReplyTo(item)} accent={colors.brandSecondary}>
+        <Pressable
+          style={[styles.row, mine && styles.rowMine]}
+          onLongPress={() => canChat && setActionMsg(item)}
+          testID={`chat-msg-${item.id}`}
+        >
         {!mine ? (
           <View style={styles.avatar}>
             {item.sender_picture ? (
@@ -293,7 +361,8 @@ export default function ChatRoomScreen() {
             ) : null}
           </View>
         </View>
-      </Pressable>
+        </Pressable>
+      </SwipeableMessage>
     );
   };
 

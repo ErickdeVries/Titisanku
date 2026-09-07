@@ -509,3 +509,17 @@ User choices: chat notif = getar + suara "ding"; kerjakan Push sekarang.
   delete_many({}) can never wipe real data again.
 - Backend verified by testing_agent 9/9 PASS (upload, chat attachments, register-push 401/500, notifications,
   read, non-blocking push, mention notif). Real trees untouched. Frontend UI (behind Google OAuth) = user device test.
+
+## Iteration 25 — Foto Grup + Swipe-to-reply + Nada Notif Chat (2026-06, fork)
+- FOTO GRUP: chat_rooms.picture. Backend GroupCreateInput/GroupUpdateInput +picture; create_group & update_group
+  persist it; get_chat returns room_picture (+members now include picture). api.ts createGroup/updateGroup take
+  picture. chat/new.tsx group mode shows circular photo picker (pick→compress512→uploadPhoto). chat/manage shows
+  editable group photo (88px + edit badge). chat list & room header already render picture.
+- SWIPE-TO-REPLY: chat/[roomId].tsx module-scope SwipeableMessage (gesture-handler Pan + reanimated). Drag a
+  message right >56px → Haptics medium + setReplyTo (WhatsApp-style), snaps back; reply arrow fades in on left.
+  Enabled only when canChat. activeOffsetX(16)/failOffsetY so vertical scroll unaffected.
+- NADA NOTIF CHAT: generated assets chime/pop/bell.wav (+ding). src/utils/chat-sounds.ts registry (ding/chime/
+  pop/bell/none) persisted key "chat_sound". New screen app/chat-sound.tsx (list + play preview + radio select,
+  expo-audio). Settings→Preferences row "Nada Notifikasi Chat". chat/[roomId].tsx loads chosen sound (soundRef +
+  dingPlayer.replace) and skips play when "none"/muted. Route registered. i18n chat_sound/chat_sound_hint (ID/EN).
+- Backend group-photo verified e2e (create+get+update picture, members carry picture). Frontend behind OAuth = device test.

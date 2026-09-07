@@ -265,11 +265,11 @@ export type ChatContact = { user_id: string; name: string; picture?: string | nu
 
 export const listChatRooms = (): Promise<{ rooms: ChatRoom[] }> => apiFetch("/chat/rooms");
 export const chatContacts = (): Promise<{ contacts: ChatContact[] }> => apiFetch("/chat/contacts");
-export const createGroup = (name: string, member_ids: string[]): Promise<ChatRoom> =>
-  apiFetch("/chat/group", { method: "POST", body: JSON.stringify({ name, member_ids }) });
+export const createGroup = (name: string, member_ids: string[], picture?: string | null): Promise<ChatRoom> =>
+  apiFetch("/chat/group", { method: "POST", body: JSON.stringify({ name, member_ids, picture }) });
 export const openDirect = (user_id: string): Promise<ChatRoom> =>
   apiFetch("/chat/direct", { method: "POST", body: JSON.stringify({ user_id }) });
-export const updateGroup = (roomId: string, data: { name?: string; member_ids?: string[] }): Promise<ChatRoom> =>
+export const updateGroup = (roomId: string, data: { name?: string; member_ids?: string[]; picture?: string | null }): Promise<ChatRoom> =>
   apiFetch(`/chat/rooms/${roomId}`, { method: "PUT", body: JSON.stringify(data) });
 export const muteRoom = (roomId: string, muted: boolean): Promise<{ ok: boolean; muted: boolean }> =>
   apiFetch(`/chat/rooms/${roomId}/mute`, { method: "POST", body: JSON.stringify({ muted }) });

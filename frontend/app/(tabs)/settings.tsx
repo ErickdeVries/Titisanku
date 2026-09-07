@@ -353,6 +353,15 @@ export default function SettingsScreen() {
               <Feather name="chevron-right" size={20} color={colors.muted} />
             </Pressable>
             <View style={styles.divider} />
+            <Pressable style={styles.rowItem} onPress={() => router.push("/chat-sound")} testID="chat-sound-row">
+              <Feather name="music" size={20} color={colors.onSurfaceSecondary} />
+              <View style={styles.rowTextWrap}>
+                <Text style={styles.rowLabel}>{t("chat_sound")}</Text>
+                <Text style={styles.rowDesc}>{t("chat_sound_hint")}</Text>
+              </View>
+              <Feather name="chevron-right" size={20} color={colors.muted} />
+            </Pressable>
+            <View style={styles.divider} />
             <View style={styles.rowItem}>
               <Feather name="bell" size={20} color={colors.onSurfaceSecondary} />
               <View style={styles.rowTextWrap}>

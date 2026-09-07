@@ -170,6 +170,7 @@ function RootNav() {
       <Stack.Screen name="explorer/[id]" />
       <Stack.Screen name="invite/[token]" />
       <Stack.Screen name="notifications" />
+      <Stack.Screen name="chat-sound" />
     </Stack>
   );
 }

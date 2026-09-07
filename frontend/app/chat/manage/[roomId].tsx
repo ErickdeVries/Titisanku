@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
 import { View, Text, Pressable, FlatList, TextInput, ActivityIndicator, Alert } from "react-native";
 import { Image } from "expo-image";
+import * as ImagePicker from "expo-image-picker";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Feather from "@react-native-vector-icons/feather";
 import { fonts, makeStyles, useTheme } from "@/src/theme";
-import { getChat, chatContacts, updateGroup, fileUrl, ChatContact } from "@/src/api";
+import { getChat, chatContacts, updateGroup, fileUrl, uploadPhoto, ChatContact } from "@/src/api";
+import { compressImage } from "@/src/utils/image";
 import { useI18n } from "@/src/i18n";
 
 const useStyles = makeStyles((c) => ({
@@ -16,6 +18,9 @@ const useStyles = makeStyles((c) => ({
   title: { fontFamily: fonts.display, fontSize: 22, color: c.onSurface },
   label: { fontFamily: fonts.medium, fontSize: 12, color: c.muted, paddingHorizontal: 16, paddingTop: 14, paddingBottom: 4, textTransform: "uppercase", letterSpacing: 0.5 },
   input: { backgroundColor: c.surfaceTertiary, marginHorizontal: 16, marginTop: 12, borderRadius: 14, paddingHorizontal: 16, paddingVertical: 14, fontFamily: fonts.regular, fontSize: 15, color: c.onSurface },
+  photoWrap: { alignItems: "center", paddingTop: 20, paddingBottom: 4 },
+  groupPhotoPick: { width: 88, height: 88, borderRadius: 999, backgroundColor: c.brandTertiary, alignItems: "center", justifyContent: "center", overflow: "hidden" },
+  photoEditBadge: { position: "absolute", bottom: 2, right: 2, width: 26, height: 26, borderRadius: 999, backgroundColor: c.brandPrimary, alignItems: "center", justifyContent: "center", borderWidth: 2, borderColor: c.surface },
   row: { flexDirection: "row", alignItems: "center", gap: 14, paddingHorizontal: 16, paddingVertical: 12 },
   avatar: { width: 46, height: 46, borderRadius: 999, backgroundColor: c.surfaceTertiary, alignItems: "center", justifyContent: "center", overflow: "hidden" },
   avatarImg: { width: "100%", height: "100%" },
@@ -43,17 +48,37 @@ export default function ManageGroupScreen() {
   const [name, setName] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [seeded, setSeeded] = useState(false);
+  const [photo, setPhoto] = useState<string | null>(null);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
 
   useEffect(() => {
     if (room && !seeded) {
       setName(room.room_name ?? "");
       setSelected(new Set((room.members ?? []).map((m: any) => m.user_id)));
+      setPhoto(room.room_picture ?? null);
       setSeeded(true);
     }
   }, [room, seeded]);
 
+  const pickPhoto = async () => {
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) return;
+    const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images"], quality: 0.8 });
+    if (res.canceled || !res.assets?.length) return;
+    setUploadingPhoto(true);
+    try {
+      const compressed = await compressImage(res.assets[0].uri, 512);
+      const path = await uploadPhoto(compressed);
+      setPhoto(path);
+    } catch (e: any) {
+      Alert.alert(t("error_generic"), e?.message || "");
+    } finally {
+      setUploadingPhoto(false);
+    }
+  };
+
   const saveMut = useMutation({
-    mutationFn: () => updateGroup(roomId, { name: name.trim(), member_ids: Array.from(selected) }),
+    mutationFn: () => updateGroup(roomId, { name: name.trim(), member_ids: Array.from(selected), picture: photo }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["chat", roomId] });
       qc.invalidateQueries({ queryKey: ["chatRooms"] });
@@ -107,6 +132,20 @@ export default function ManageGroupScreen() {
         renderItem={renderContact}
         ListHeaderComponent={
           <View>
+            <View style={styles.photoWrap}>
+              <Pressable style={styles.groupPhotoPick} onPress={pickPhoto} testID="manage-photo-pick">
+                {uploadingPhoto ? (
+                  <ActivityIndicator color={colors.brandPrimary} />
+                ) : photo ? (
+                  <Image source={{ uri: fileUrl(photo) }} style={styles.avatarImg} contentFit="cover" />
+                ) : (
+                  <Feather name="camera" size={26} color={colors.brandSecondary} />
+                )}
+                <View style={styles.photoEditBadge}>
+                  <Feather name="edit-2" size={12} color={colors.onBrandPrimary} />
+                </View>
+              </Pressable>
+            </View>
             <Text style={styles.label}>{t("group_name")}</Text>
             <TextInput
               testID="manage-name-input"

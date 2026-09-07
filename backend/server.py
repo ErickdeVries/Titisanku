@@ -951,6 +951,7 @@ class ChatInput(BaseModel):
 class GroupCreateInput(BaseModel):
     name: str
     member_ids: List[str] = []
+    picture: Optional[str] = None
 
 
 class DirectInput(BaseModel):
@@ -1149,6 +1150,7 @@ async def delete_note(note_id: str, user=Depends(get_current_user)):
 class GroupUpdateInput(BaseModel):
     name: Optional[str] = None
     member_ids: Optional[List[str]] = None
+    picture: Optional[str] = None
 
 
 class MuteInput(BaseModel):
@@ -1173,6 +1175,8 @@ async def update_group(room_id: str, body: GroupUpdateInput, tree_id: Optional[s
         members.add(room["created_by"])
         members.add(user["user_id"])
         updates["member_ids"] = list(members)
+    if body.picture is not None:
+        updates["picture"] = body.picture or None
     if updates:
         await db.chat_rooms.update_one({"id": room_id}, {"$set": updates})
     updated = await db.chat_rooms.find_one({"id": room_id}, {"_id": 0})
@@ -1276,6 +1280,7 @@ async def create_group(body: GroupCreateInput, tree_id: Optional[str] = Query(No
     members = {user["user_id"]} | {m for m in body.member_ids if m in valid}
     doc = {
         "id": str(uuid.uuid4()), "tree_id": tree["id"], "type": "group", "name": name,
+        "picture": body.picture or None,
         "member_ids": list(members), "created_by": user["user_id"], "created_at": now_utc(),
     }
     await db.chat_rooms.insert_one(doc)
@@ -1312,11 +1317,13 @@ async def get_chat(tree_id: Optional[str] = Query(None), room_id: Optional[str] 
     rid = room["id"]
     # participant display names (for mentions)
     users = {u["user_id"]: u for u in await db.users.find({}, {"_id": 0}).to_list(3000)}
-    members = [{"user_id": mid, "name": users.get(mid, {}).get("name", "?")} for mid in room.get("member_ids", [])]
+    members = [{"user_id": mid, "name": users.get(mid, {}).get("name", "?"), "picture": users.get(mid, {}).get("picture")} for mid in room.get("member_ids", [])]
     room_name = room["name"]
+    room_picture = room.get("picture")
     if room["type"] == "direct":
         other = next((m for m in room.get("member_ids", []) if m != user["user_id"]), None)
         room_name = users.get(other, {}).get("name", "?")
+        room_picture = users.get(other, {}).get("picture")
     # read receipts: mark others' messages read by me
     await db.family_chat.update_many(
         {"room_id": rid, "sender_id": {"$ne": user["user_id"]}, "read_by": {"$ne": user["user_id"]}, "deleted_at": None},
@@ -1341,7 +1348,7 @@ async def get_chat(tree_id: Optional[str] = Query(None), room_id: Optional[str] 
     is_muted = await db.chat_mutes.find_one({"user_id": user["user_id"], "room_id": rid}) is not None
     can_manage = room["type"] == "group" and (room.get("created_by") == user["user_id"] or role in ("admin", "editor"))
     return {
-        "room_id": rid, "room_name": room_name, "room_type": room["type"],
+        "room_id": rid, "room_name": room_name, "room_type": room["type"], "room_picture": room_picture,
         "messages": out, "members": members, "typing": typing_names,
         "can_send": room.get("can_send", False), "muted": is_muted, "can_manage": can_manage,
     }

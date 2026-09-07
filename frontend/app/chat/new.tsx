@@ -1,12 +1,14 @@
 import { useState } from "react";
 import { View, Text, Pressable, FlatList, TextInput, ActivityIndicator, Alert } from "react-native";
 import { Image } from "expo-image";
+import * as ImagePicker from "expo-image-picker";
 import { useRouter } from "expo-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Feather from "@react-native-vector-icons/feather";
 import { fonts, makeStyles, useTheme } from "@/src/theme";
-import { chatContacts, openDirect, createGroup, fileUrl, ChatContact } from "@/src/api";
+import { chatContacts, openDirect, createGroup, fileUrl, uploadPhoto, ChatContact } from "@/src/api";
+import { compressImage } from "@/src/utils/image";
 import { useAuth } from "@/src/auth";
 import { useTree } from "@/src/tree-context";
 import { useI18n } from "@/src/i18n";
@@ -27,6 +29,10 @@ const useStyles = makeStyles((c) => ({
   check: { width: 24, height: 24, borderRadius: 999, borderWidth: 2, borderColor: c.borderStrong, alignItems: "center", justifyContent: "center" },
   checkOn: { backgroundColor: c.brandPrimary, borderColor: c.brandPrimary },
   input: { backgroundColor: c.surfaceTertiary, marginHorizontal: 16, marginVertical: 12, borderRadius: 14, paddingHorizontal: 16, paddingVertical: 14, fontFamily: fonts.regular, fontSize: 15, color: c.onSurface },
+  groupHeadRow: { flexDirection: "row", alignItems: "center", gap: 14, paddingHorizontal: 16, paddingVertical: 12 },
+  groupPhotoPick: { width: 60, height: 60, borderRadius: 999, backgroundColor: c.brandTertiary, alignItems: "center", justifyContent: "center", overflow: "hidden" },
+  groupPhotoImg: { width: "100%", height: "100%" },
+  groupNameInput: { flex: 1, backgroundColor: c.surfaceTertiary, borderRadius: 14, paddingHorizontal: 16, paddingVertical: 14, fontFamily: fonts.regular, fontSize: 15, color: c.onSurface },
   searchBar: { flexDirection: "row", alignItems: "center", gap: 10, marginHorizontal: 16, marginTop: 8, marginBottom: 4, backgroundColor: c.surfaceTertiary, borderRadius: 12, paddingHorizontal: 14, height: 44 },
   searchInput: { flex: 1, fontFamily: fonts.regular, fontSize: 15, color: c.onSurface },
   chipsWrap: { paddingTop: 4 },
@@ -61,6 +67,25 @@ export default function NewChatScreen() {
   const [groupName, setGroupName] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState("");
+  const [groupPhoto, setGroupPhoto] = useState<string | null>(null);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+
+  const pickGroupPhoto = async () => {
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) return;
+    const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images"], quality: 0.8 });
+    if (res.canceled || !res.assets?.length) return;
+    setUploadingPhoto(true);
+    try {
+      const compressed = await compressImage(res.assets[0].uri, 512);
+      const path = await uploadPhoto(compressed);
+      setGroupPhoto(path);
+    } catch (e: any) {
+      Alert.alert(t("error_generic"), e?.message || "");
+    } finally {
+      setUploadingPhoto(false);
+    }
+  };
 
   const q = search.trim().toLowerCase();
   const filtered = q ? contacts.filter((c) => c.name.toLowerCase().includes(q)) : contacts;
@@ -76,7 +101,7 @@ export default function NewChatScreen() {
   });
 
   const groupMut = useMutation({
-    mutationFn: () => createGroup(groupName.trim(), Array.from(selected)),
+    mutationFn: () => createGroup(groupName.trim(), Array.from(selected), groupPhoto),
     onSuccess: (room) => {
       qc.invalidateQueries({ queryKey: ["chatRooms"] });
       router.replace(`/chat/${room.id}`);
@@ -137,14 +162,25 @@ export default function NewChatScreen() {
       ) : null}
 
       {groupMode ? (
-        <TextInput
-          testID="group-name-input"
-          style={styles.input}
-          placeholder={t("group_name_placeholder")}
-          placeholderTextColor={colors.muted}
-          value={groupName}
-          onChangeText={setGroupName}
-        />
+        <View style={styles.groupHeadRow}>
+          <Pressable style={styles.groupPhotoPick} onPress={pickGroupPhoto} testID="group-photo-pick">
+            {uploadingPhoto ? (
+              <ActivityIndicator color={colors.brandPrimary} />
+            ) : groupPhoto ? (
+              <Image source={{ uri: fileUrl(groupPhoto) }} style={styles.groupPhotoImg} contentFit="cover" />
+            ) : (
+              <Feather name="camera" size={22} color={colors.brandSecondary} />
+            )}
+          </Pressable>
+          <TextInput
+            testID="group-name-input"
+            style={styles.groupNameInput}
+            placeholder={t("group_name_placeholder")}
+            placeholderTextColor={colors.muted}
+            value={groupName}
+            onChangeText={setGroupName}
+          />
+        </View>
       ) : null}
 
       {groupMode && selectedContacts.length ? (
