@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "871523175336",
+    "project_id": "keturunanku-app",
+    "storage_bucket": "keturunanku-app.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:871523175336:android:58bf8c41730f994841eb9d",
+        "android_client_info": {
+          "package_name": "com.emergent.keturunanku.xhuaqr"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyA2lEkRyJiDfkeYXHFwaiKlc5__NiI5xK4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
