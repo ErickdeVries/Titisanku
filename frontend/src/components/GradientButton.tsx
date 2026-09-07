@@ -58,7 +58,7 @@ export function GradientButton({ title, onPress, loading, disabled, icon, varian
         ) : (
           <>
             {icon ? <Feather name={icon as any} size={18} color={colors.onSurface} /> : null}
-            <Text style={styles.textSecondary}>{title}</Text>
+            <Text style={[styles.textSecondary, { flexShrink: 1 }]} numberOfLines={1} adjustsFontSizeToFit>{title}</Text>
           </>
         )}
       </Pressable>
@@ -73,7 +73,7 @@ export function GradientButton({ title, onPress, loading, disabled, icon, varian
         ) : (
           <>
             {icon ? <Feather name={icon as any} size={18} color="#FFFFFF" /> : null}
-            <Text style={styles.text}>{title}</Text>
+            <Text style={[styles.text, { flexShrink: 1 }]} numberOfLines={1} adjustsFontSizeToFit>{title}</Text>
           </>
         )}
       </LinearGradient>

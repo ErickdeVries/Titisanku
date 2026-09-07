@@ -1936,7 +1936,7 @@ async def create_snap(body: PaymentInput, tree_id: Optional[str] = Query(None), 
     })
     payload = {
         "transaction_details": {"order_id": order_id, "gross_amount": amount},
-        "item_details": [{"id": body.plan, "price": amount, "quantity": 1, "name": f"KETURUNANKU {body.plan.upper()}"}],
+        "item_details": [{"id": body.plan, "price": amount, "quantity": 1, "name": f"Titisanku {body.plan.upper()}"}],
         "customer_details": {"first_name": user.get("name", "User"), "email": user.get("email", "")},
     }
     if body.finish_url:

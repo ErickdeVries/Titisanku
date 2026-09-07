@@ -535,3 +535,20 @@ User choices: chat notif = getar + suara "ding"; kerjakan Push sekarang.
   "Belum dibaca" (pending) with avatars. No backend change (read_by already tracked; members now carry picture).
 - i18n group_info/group_members/group_creator/badge_admin/badge_editor/read_by/delivered_to/message_info (ID/EN).
 - Backend verified: get_chat returns members[role,is_creator] + created_by. Frontend behind OAuth = device test.
+
+## Iteration 27 — Rebrand Titisanku + brand assets + login redesign + plan audit (2026-06, fork)
+- RENAME: all user-visible "KETURUNANKU"→"Titisanku" (login, app.json name, privacy, payment-history,
+  invite, PDF/book title+watermark, backup filename, i18n appName, Midtrans item name). Internal
+  package/slug/storage prefix/backend URL kept as keturunanku (build + google-services.json + old files safe).
+- BRAND ASSETS (AI, Gemini Nano Banana via Emergent key): generated gold family-tree emblem (royal-blue crest,
+  cream) + app icon (gold tree forming "T" on royal-blue). Post-processed w/ PIL → icon.png/adaptive-icon.png
+  (royal-blue #1E3A8A bg, tree in 66% safe zone)/favicon.png/splash-image.png/titisanku-emblem.png (bg flood-
+  filled transparent). app.json adaptiveIcon bg #1E3A8A, splash bg #FFFBF0 imageWidth 220. Temp gen files removed.
+- LOGIN REDESIGN (classic-luxury): cream bg, double gold frame, centered transparent emblem, "SILSILAH KELUARGA"
+  gold kicker, Playfair "Titisanku" royal blue, gold diamond divider, tagline, gold→blue Google button, footer.
+  Verified via screenshot.
+- PLAN/PAYMENT AUDIT: Midtrans keys set (production). Flow: createSnap→open Snap→pollUntilPaid(status poll)→
+  refreshTrees() = plan unlocks instantly, no re-login. Backend: signature-verified webhook + status-poll
+  fallback + idempotent _activate_order. Verified e2e via synthetic webhook (plan free→pro, order→paid, reverted).
+  ⚠️ OPEN COMPLIANCE ISSUE: Google Play requires digital in-app subscriptions via Play Billing (RevenueCat),
+  NOT Midtrans — flagged to user for decision before Play Store upload.
