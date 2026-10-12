@@ -1,0 +1,11 @@
+# Build context: root repo Titisanku — exclude semua kecuali backend & Dockerfile
+frontend/
+memory/
+test_reports/
+tests/
+design_guidelines.json
+*.md
+.git/
+*.apk
+*.zip
+backups/
