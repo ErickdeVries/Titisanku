@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useState } from "react";
 import { View, Text, Pressable, Modal, FlatList, TextInput } from "react-native";
 import { Image } from "expo-image";
 import { useRouter } from "expo-router";
@@ -6,7 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Feather from "@react-native-vector-icons/feather";
 import { fonts, makeStyles, useTheme } from "@/src/theme";
-import { getTree, fileUrl, Person } from "@/src/api";
+import { getTree, fileUrl } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { useI18n } from "@/src/i18n";
 import { nodeColor } from "@/src/components/PersonNode";
@@ -61,11 +61,11 @@ export default function AddScreen() {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [q, setQ] = useState("");
 
-  useEffect(() => {
-    if (!targetId && data?.root_id) setTargetId(data.root_id);
-  }, [data?.root_id, targetId]);
+  // Default the target to the tree root. `targetId === null` means "not picked
+  // yet", so the fallback is derived instead of written from an effect.
+  const effectiveTargetId = targetId ?? data?.root_id ?? null;
 
-  const target = people.find((p) => p.id === targetId);
+  const target = people.find((p) => p.id === effectiveTargetId);
   const canEdit = (data?.role ?? user?.role) === "admin" || (data?.role ?? user?.role) === "editor";
 
   const filtered = useMemo(

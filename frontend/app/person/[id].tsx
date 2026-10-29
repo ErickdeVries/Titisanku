@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { View, Text, Pressable, ActivityIndicator, TextInput, Modal, Alert } from "react-native";
 import { Image } from "expo-image";
 import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
@@ -6,11 +6,12 @@ import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, { useSharedValue, useAnimatedStyle } from "react-native-reanimated";
 import * as ImagePicker from "expo-image-picker";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import { useGoBack } from "@/src/hooks/useGoBack";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Feather from "@react-native-vector-icons/feather";
 import { fonts, makeStyles, useTheme } from "@/src/theme";
-import { getPerson, updatePerson, deletePerson, fileUrl, getTree, listPersonNotes, addPersonNote, addPersonFile, deleteNote, deleteRelation, updateRelation, uploadPhoto, addGalleryPhoto, editGalleryPhoto, removeGalleryPhoto, GalleryPhoto } from "@/src/api";
+import { getPerson, updatePerson, deletePerson, fileUrl, getTree, listPersonNotes, addPersonNote, addPersonFile, deleteNote, deleteRelation, updateRelation, uploadPhoto, addGalleryPhoto, editGalleryPhoto, removeGalleryPhoto, GalleryPhoto, setPersonPrivacy, PrivacyField } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { useI18n } from "@/src/i18n";
 import { useTree } from "@/src/tree-context";
@@ -19,6 +20,14 @@ import { PersonForm, PersonFormValue } from "@/src/components/PersonForm";
 import { compressImage } from "@/src/utils/image";
 import { DateField, isoToDisplay } from "@/src/components/DateField";
 import { GradientButton } from "@/src/components/GradientButton";
+
+const PRIVACY_FIELDS: { key: PrivacyField; label: string; icon: string }[] = [
+  { key: "birth_date", label: "Tanggal lahir", icon: "calendar" },
+  { key: "birth_place", label: "Tempat lahir", icon: "map-pin" },
+  { key: "job", label: "Pekerjaan", icon: "briefcase" },
+  { key: "death_date", label: "Tanggal wafat", icon: "star" },
+  { key: "notes", label: "Catatan", icon: "file-text" },
+];
 
 const useStyles = makeStyles((c) => ({
   root: { flex: 1, backgroundColor: c.surface },
@@ -50,6 +59,17 @@ const useStyles = makeStyles((c) => ({
   infoLabel: { fontFamily: fonts.regular, fontSize: 12, color: c.muted },
   infoValue: { fontFamily: fonts.medium, fontSize: 15, color: c.onSurface },
   divider: { height: 1, backgroundColor: c.divider, marginLeft: 14 },
+  privacyCard: { marginHorizontal: 20, marginTop: 12, backgroundColor: c.surfaceSecondary, borderRadius: 16, padding: 14, gap: 8 },
+  privacyTitle: { fontFamily: fonts.semibold, fontSize: 14, color: c.onSurface },
+  privacyHint: { fontFamily: fonts.regular, fontSize: 12, color: c.muted, lineHeight: 17 },
+  privacyRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 7 },
+  privacyLabel: { flex: 1, fontFamily: fonts.medium, fontSize: 13, color: c.onSurface },
+  privacyPill: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999, backgroundColor: c.surfaceTertiary },
+  privacyPillOn: { backgroundColor: c.brandTertiary },
+  privacyPillText: { fontFamily: fonts.medium, fontSize: 11, color: c.muted },
+  privacyPillTextOn: { color: c.onBrandTertiary },
+  privacySave: { marginTop: 6, backgroundColor: c.brandPrimary, borderRadius: 12, paddingVertical: 11, alignItems: "center" },
+  privacySaveText: { fontFamily: fonts.semibold, fontSize: 13, color: c.onBrand },
   marriageTitle: { fontFamily: fonts.semibold, fontSize: 13, color: c.muted, textTransform: "uppercase", letterSpacing: 0.5, marginHorizontal: 20, marginTop: 20, marginBottom: 8 },
   spouseSub: { fontFamily: fonts.regular, fontSize: 12, color: c.muted, marginTop: 2 },
   galleryHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginRight: 20 },
@@ -104,16 +124,18 @@ const useStyles = makeStyles((c) => ({
   confirmRow: { flexDirection: "row", gap: 12 },
 }));
 
-function InfoRow({ icon, label, value }: { icon: string; label: string; value?: string | null }) {
+function InfoRow({ icon, label, value, hidden }: { icon: string; label: string; value?: string | null; hidden?: boolean }) {
   const styles = useStyles();
   const { colors } = useTheme();
-  if (!value) return null;
+  if (!value && !hidden) return null;
   return (
     <View style={styles.infoRow}>
       <Feather name={icon as any} size={18} color={colors.muted} />
       <View>
         <Text style={styles.infoLabel}>{label}</Text>
-        <Text style={styles.infoValue}>{value}</Text>
+        <Text style={[styles.infoValue, hidden && { color: colors.muted, fontStyle: "italic" }]}>
+          {hidden ? "Disembunyikan" : value}
+        </Text>
       </View>
     </View>
   );
@@ -124,6 +146,7 @@ export default function PersonDetail() {
   const { colors } = useTheme();
   const { t } = useI18n();
   const router = useRouter();
+  const goBack = useGoBack("/");
   const insets = useSafeAreaInsets();
   const qc = useQueryClient();
   const { user } = useAuth();
@@ -297,8 +320,49 @@ export default function PersonDetail() {
   const isAdmin = (tree?.role ?? user?.role) === "admin";
   const canEdit = (tree?.role ?? user?.role) === "admin" || (tree?.role ?? user?.role) === "editor";
 
+  // Privacy: fields the backend withheld from us, plus who may change them.
+  const redacted: string[] = useMemo(() => (person as any)?.redacted_fields ?? [], [person]);
+  const canEditPrivacy = !!person && (isAdmin || ((person as any).created_by && (person as any).created_by === user?.user_id));
+  const [privacySaving, setPrivacySaving] = useState(false);
+  // Edits made in this session, keyed by person id. Saved values are rendered
+  // from the server copy, so the draft resets automatically when the person
+  // changes or the server data is refreshed (no state writes in an effect).
+  const [privacyDraft, setPrivacyDraft] = useState<{ id: string | null; values: Record<string, boolean> }>({
+    id: null,
+    values: {},
+  });
+  const privacyValues: Record<string, boolean> =
+    privacyDraft.id === person?.id ? privacyDraft.values : (person as any)?.privacy ?? {};
+  const setPrivacyField = (key: string, value: boolean) =>
+    setPrivacyDraft((prev) => ({
+      id: person?.id ?? null,
+      values: { ...(prev.id === person?.id ? prev.values : (person as any)?.privacy ?? {}), [key]: value },
+    }));
+  const privacyDirty = useMemo(() => {
+    const cur = (person as any)?.privacy ?? {};
+    const draft = privacyValues;
+    return PRIVACY_FIELDS.some((f) => !!draft[f.key] !== !!cur[f.key]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [privacyValues, person]);
+  const savePrivacy = async () => {
+    if (!person) return;
+    setPrivacySaving(true);
+    try {
+      await setPersonPrivacy(person.id, privacyValues);
+      // Saved values come from the server copy: drop the local draft.
+      setPrivacyDraft({ id: null, values: {} });
+      await qc.invalidateQueries({ queryKey: ["person", id] });
+      await qc.invalidateQueries({ queryKey: ["tree"] });
+    } catch (e: any) {
+      Alert.alert("Gagal", e?.message ?? "Tidak dapat menyimpan privasi");
+    } finally {
+      setPrivacySaving(false);
+    }
+  };
+
   const relatives = useMemo(() => {
-    if (!tree) return [] as { key: string; label: string; icon: string; person: any }[];
+    const empty: { key: string; label: string; icon: string; person: any; relId?: string }[] = [];
+    if (!tree) return empty;
     const byId = new Map(tree.people.map((p) => [p.id, p] as const));
     const PAR = ["parent", "adopted_child"];
     const parentIds = tree.relations
@@ -443,7 +507,7 @@ export default function PersonDetail() {
     try {
       await deletePerson(id);
       await qc.invalidateQueries({ queryKey: ["tree"] });
-      router.back();
+      goBack();
     } catch (e) {
       console.log("delete error", e);
       setDeleting(false);
@@ -458,6 +522,12 @@ export default function PersonDetail() {
       zSaved.value = zScale.value;
     });
   const zStyle = useAnimatedStyle(() => ({ transform: [{ scale: zScale.value }] }));
+
+  // Reset the zoom either from the UI thread (safe) or the JS thread.
+  const resetZoom = () => {
+    zScale.set(1);
+    zSaved.set(1);
+  };
 
   const goAdd = (direction: string, sib?: string) => {
     if (!person) return;
@@ -496,7 +566,7 @@ export default function PersonDetail() {
   return (
     <View style={[styles.root, { paddingTop: insets.top + 8 }]}>
       <View style={styles.header}>
-        <Pressable style={styles.iconBtn} onPress={() => (editing ? setEditing(false) : router.back())} testID="detail-back">
+        <Pressable style={styles.iconBtn} onPress={() => (editing ? setEditing(false) : goBack())} testID="detail-back">
           <Feather name={editing ? "x" : "chevron-left"} size={20} color={colors.onSurface} />
         </Pressable>
         <Text style={styles.headerTitle}>{editing ? t("edit") : t("detail")}</Text>
@@ -621,20 +691,59 @@ export default function PersonDetail() {
           {activeTab === "data" ? (
             <>
               <View style={styles.infoCard}>
-                <InfoRow icon="calendar" label={t("birth_date")} value={person.birth_date} />
+                <InfoRow icon="calendar" label={t("birth_date")} value={person.birth_date} hidden={redacted.includes("birth_date")} />
                 <View style={styles.divider} />
-                <InfoRow icon="map-pin" label={t("birth_place")} value={person.birth_place} />
+                <InfoRow icon="map-pin" label={t("birth_place")} value={person.birth_place} hidden={redacted.includes("birth_place")} />
                 <View style={styles.divider} />
-                <InfoRow icon="briefcase" label={t("job")} value={person.job} />
+                <InfoRow icon="briefcase" label={t("job")} value={person.job} hidden={redacted.includes("job")} />
                 <View style={styles.divider} />
-                <InfoRow icon="star" label={t("death_date")} value={person.death_date || t("alive")} />
-                {person.notes ? (
+                <InfoRow icon="star" label={t("death_date")} value={person.death_date || t("alive")} hidden={redacted.includes("death_date")} />
+                {person.notes || redacted.includes("notes") ? (
                   <>
                     <View style={styles.divider} />
-                    <InfoRow icon="file-text" label={t("notes")} value={person.notes} />
+                    <InfoRow icon="file-text" label={t("notes")} value={person.notes} hidden={redacted.includes("notes")} />
                   </>
                 ) : null}
               </View>
+
+              {/* Privacy controls — only for the record owner / tree admin */}
+              {canEditPrivacy ? (
+                <View style={styles.privacyCard}>
+                  <Text style={styles.privacyTitle}>Privasi kartu nama</Text>
+                  <Text style={styles.privacyHint}>
+                    Data yang disembunyikan tidak akan terlihat oleh anggota lain dalam pohon ini.
+                  </Text>
+                  {PRIVACY_FIELDS.map((f) => {
+                    const isHidden = !!privacyValues[f.key];
+                    return (
+                      <Pressable
+                        key={f.key}
+                        style={styles.privacyRow}
+                        onPress={() => setPrivacyField(f.key, !isHidden)}
+                        disabled={privacySaving}
+                        testID={`privacy-toggle-${f.key}`}
+                      >
+                        <Feather name={f.icon as any} size={16} color={colors.muted} />
+                        <Text style={styles.privacyLabel}>{f.label}</Text>
+                        <View style={[styles.privacyPill, isHidden && styles.privacyPillOn]}>
+                          <Text style={[styles.privacyPillText, isHidden && styles.privacyPillTextOn]}>
+                            {isHidden ? "Disembunyikan" : "Terlihat"}
+                          </Text>
+                        </View>
+                      </Pressable>
+                    );
+                  })}
+                  {privacyDirty ? (
+                    <Pressable style={styles.privacySave} onPress={savePrivacy} disabled={privacySaving} testID="privacy-save">
+                      {privacySaving ? (
+                        <ActivityIndicator size="small" color={colors.onBrand} />
+                      ) : (
+                        <Text style={styles.privacySaveText}>Simpan privasi</Text>
+                      )}
+                    </Pressable>
+                  ) : null}
+                </View>
+              ) : null}
 
               {/* Memory gallery */}
               <View style={styles.galleryHead}>
@@ -856,14 +965,14 @@ export default function PersonDetail() {
         </KeyboardAwareScrollView>
       )}
 
-      <Modal visible={!!viewerUri} transparent animationType="fade" onRequestClose={() => { setViewerUri(null); zScale.value = 1; zSaved.value = 1; }}>
+      <Modal visible={!!viewerUri} transparent animationType="fade" onRequestClose={() => { setViewerUri(null); resetZoom(); }}>
         <View style={styles.viewerBg}>
           <GestureDetector gesture={pinch}>
             <Animated.View style={[{ width: "100%", height: "80%" }, zStyle]}>
               {viewerUri ? <Image source={{ uri: viewerUri }} style={styles.viewerImg} contentFit="contain" /> : null}
             </Animated.View>
           </GestureDetector>
-          <Pressable style={styles.viewerClose} onPress={() => { setViewerUri(null); zScale.value = 1; zSaved.value = 1; }} testID="viewer-close">
+          <Pressable style={styles.viewerClose} onPress={() => { setViewerUri(null); resetZoom(); }} testID="viewer-close">
             <Feather name="x" size={22} color="#FFFFFF" />
           </Pressable>
         </View>

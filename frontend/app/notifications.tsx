@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import { View, Text, Pressable, FlatList } from "react-native";
 import { useRouter, useFocusEffect } from "expo-router";
+import { useGoBack } from "@/src/hooks/useGoBack";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Feather from "@react-native-vector-icons/feather";
@@ -45,6 +46,7 @@ export default function NotificationsScreen() {
   const { colors } = useTheme();
   const { t } = useI18n();
   const router = useRouter();
+  const goBack = useGoBack("/");
   const insets = useSafeAreaInsets();
   const qc = useQueryClient();
 
@@ -69,7 +71,7 @@ export default function NotificationsScreen() {
   return (
     <View style={[styles.root, { paddingTop: insets.top + 8 }]}>
       <View style={styles.header}>
-        <Pressable style={styles.back} onPress={() => router.back()} testID="notif-back">
+        <Pressable style={styles.back} onPress={() => goBack()} testID="notif-back">
           <Feather name="arrow-left" size={20} color={colors.onSurface} />
         </Pressable>
         <Text style={styles.title}>{t("notifications")}</Text>

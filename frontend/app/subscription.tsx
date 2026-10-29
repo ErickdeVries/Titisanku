@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { View, Text, Pressable, StyleSheet, ScrollView, ActivityIndicator, Alert, Platform } from "react-native";
 import { useRouter } from "expo-router";
+import { useGoBack } from "@/src/hooks/useGoBack";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import * as WebBrowser from "expo-web-browser";
@@ -23,15 +24,19 @@ export default function SubscriptionScreen() {
   const { colors, gradient } = useTheme();
   const { t } = useI18n();
   const router = useRouter();
+  const goBack = useGoBack("/");
   const insets = useSafeAreaInsets();
   const { activeTree, activeTreeId, refreshTrees } = useTree();
   const [busy, setBusy] = useState<PlanId | null>(null);
+  // Reading the clock is impure, so it is captured once per render pass instead
+  // of being called inline while rendering.
+  const [now] = useState(() => Date.now());
 
   const plan = (activeTree?.plan ?? "free") as PlanId;
   const isAdmin = activeTree?.role === "admin";
   const expIso = (activeTree as any)?.expires_at as string | undefined;
   const expDate = expIso ? new Date(expIso) : null;
-  const daysLeft = expDate ? Math.ceil((expDate.getTime() - Date.now()) / 86400000) : null;
+  const daysLeft = expDate ? Math.ceil((expDate.getTime() - now) / 86400000) : null;
   const expFmt = expDate
     ? expDate.toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" })
     : null;
@@ -87,7 +92,7 @@ export default function SubscriptionScreen() {
   return (
     <View style={[styles.root, { backgroundColor: colors.surface }]}>
       <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
-        <Pressable onPress={() => router.back()} hitSlop={10}>
+        <Pressable onPress={() => goBack()} hitSlop={10}>
           <ArrowLeft size={24} color={colors.onSurface} />
         </Pressable>
         <Text style={[styles.title, { color: colors.onSurface }]}>{t("subscription")}</Text>

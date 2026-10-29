@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { View, Text, Pressable, FlatList, TextInput, ActivityIndicator, Alert } from "react-native";
 import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import { useGoBack } from "@/src/hooks/useGoBack";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Feather from "@react-native-vector-icons/feather";
@@ -37,6 +38,7 @@ export default function ManageGroupScreen() {
   const { colors } = useTheme();
   const { t } = useI18n();
   const router = useRouter();
+  const goBack = useGoBack("/");
   const insets = useSafeAreaInsets();
   const qc = useQueryClient();
   const { roomId } = useLocalSearchParams<{ roomId: string }>();
@@ -45,20 +47,19 @@ export default function ManageGroupScreen() {
   const { data: contactsData } = useQuery({ queryKey: ["chatContacts"], queryFn: chatContacts });
   const contacts = contactsData?.contacts ?? [];
 
-  const [name, setName] = useState("");
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [seeded, setSeeded] = useState(false);
-  const [photo, setPhoto] = useState<string | null>(null);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  // Edits made in this screen. Until the user touches a field the value is
+  // derived from the loaded room, so no state has to be written from an effect.
+  const [edits, setEdits] = useState<{
+    name?: string;
+    photo?: string | null;
+    selected?: Set<string>;
+  }>({});
 
-  useEffect(() => {
-    if (room && !seeded) {
-      setName(room.room_name ?? "");
-      setSelected(new Set((room.members ?? []).map((m: any) => m.user_id)));
-      setPhoto(room.room_picture ?? null);
-      setSeeded(true);
-    }
-  }, [room, seeded]);
+  const nameValue = edits.name ?? room?.room_name ?? "";
+  const photoValue = edits.photo !== undefined ? edits.photo : room?.room_picture ?? null;
+  const selected =
+    edits.selected ?? new Set<string>((room?.members ?? []).map((m: any) => m.user_id));
 
   const pickPhoto = async () => {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -69,7 +70,7 @@ export default function ManageGroupScreen() {
     try {
       const compressed = await compressImage(res.assets[0].uri, 512);
       const path = await uploadPhoto(compressed);
-      setPhoto(path);
+      setEdits((s) => ({ ...s, photo: path }));
     } catch (e: any) {
       Alert.alert(t("error_generic"), e?.message || "");
     } finally {
@@ -78,20 +79,21 @@ export default function ManageGroupScreen() {
   };
 
   const saveMut = useMutation({
-    mutationFn: () => updateGroup(roomId, { name: name.trim(), member_ids: Array.from(selected), picture: photo }),
+    mutationFn: () => updateGroup(roomId, { name: nameValue.trim(), member_ids: Array.from(selected), picture: photoValue }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["chat", roomId] });
       qc.invalidateQueries({ queryKey: ["chatRooms"] });
-      router.back();
+      goBack();
     },
     onError: () => Alert.alert(t("error_generic")),
   });
 
   const toggle = (uid: string) =>
-    setSelected((s) => {
-      const n = new Set(s);
-      if (n.has(uid)) n.delete(uid); else n.add(uid);
-      return n;
+    setEdits((s) => {
+      const n = new Set(s.selected ?? selected);
+      if (n.has(uid)) n.delete(uid);
+      else n.add(uid);
+      return { ...s, selected: n };
     });
 
   const renderContact = ({ item }: { item: ChatContact }) => {
@@ -120,7 +122,7 @@ export default function ManageGroupScreen() {
   return (
     <View style={[styles.root, { paddingTop: insets.top + 8 }]}>
       <View style={styles.header}>
-        <Pressable style={styles.backBtn} onPress={() => router.back()} hitSlop={8} testID="manage-back">
+        <Pressable style={styles.backBtn} onPress={() => goBack()} hitSlop={8} testID="manage-back">
           <Feather name="chevron-left" size={24} color={colors.onSurface} />
         </Pressable>
         <Text style={styles.title}>{t("manage_group")}</Text>
@@ -136,8 +138,8 @@ export default function ManageGroupScreen() {
               <Pressable style={styles.groupPhotoPick} onPress={pickPhoto} testID="manage-photo-pick">
                 {uploadingPhoto ? (
                   <ActivityIndicator color={colors.brandPrimary} />
-                ) : photo ? (
-                  <Image source={{ uri: fileUrl(photo) }} style={styles.avatarImg} contentFit="cover" />
+                ) : photoValue ? (
+                  <Image source={{ uri: fileUrl(photoValue) }} style={styles.avatarImg} contentFit="cover" />
                 ) : (
                   <Feather name="camera" size={26} color={colors.brandSecondary} />
                 )}
@@ -150,8 +152,8 @@ export default function ManageGroupScreen() {
             <TextInput
               testID="manage-name-input"
               style={styles.input}
-              value={name}
-              onChangeText={setName}
+              value={nameValue}
+              onChangeText={(v) => setEdits((s) => ({ ...s, name: v }))}
               placeholder={t("group_name_placeholder")}
               placeholderTextColor={colors.muted}
             />
@@ -163,8 +165,8 @@ export default function ManageGroupScreen() {
       <View style={[styles.footer, { paddingBottom: insets.bottom + 16 }]}>
         <Pressable
           testID="manage-save"
-          style={[styles.saveBtn, { opacity: !name.trim() || saveMut.isPending ? 0.6 : 1 }]}
-          disabled={!name.trim() || saveMut.isPending}
+          style={[styles.saveBtn, { opacity: !nameValue.trim() || saveMut.isPending ? 0.6 : 1 }]}
+          disabled={!nameValue.trim() || saveMut.isPending}
           onPress={() => saveMut.mutate()}
         >
           {saveMut.isPending ? <ActivityIndicator color={colors.onBrandPrimary} /> : <Text style={styles.saveText}>{t("save_changes")}</Text>}

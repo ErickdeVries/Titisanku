@@ -7,7 +7,7 @@ import hashlib
 from collections import deque
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import httpx
 import requests
@@ -165,6 +165,7 @@ class PersonData(BaseModel):
     is_adopted: bool = False
     notes: Optional[str] = None
     is_alive: Optional[bool] = None  # override; else auto from death_date
+    privacy: Optional[Dict[str, bool]] = None  # field -> hidden from other members
 
 
 class AddRelativeInput(BaseModel):
@@ -302,6 +303,46 @@ async def resolve_tree(user, tree_id: Optional[str]):
 def require_role_t(role, roles):
     if role not in roles:
         raise HTTPException(status_code=403, detail="Permission denied")
+
+
+# ---------------------------------------------------------------------------
+# Card privacy: hide personal fields from *other* members of the same tree.
+# The owner of a record (created_by), tree admins, and superadmins always see
+# everything. Everyone else only gets fields the owner left unhidden.
+# ---------------------------------------------------------------------------
+SENSITIVE_PERSON_FIELDS = (
+    "birth_date",
+    "birth_place",
+    "job",
+    "death_date",
+    "notes",
+)
+
+
+def redact_person(p: dict, user, role: Optional[str], tree: Optional[dict] = None) -> dict:
+    """Strip hidden personal fields from a person record unless the caller is
+    allowed to see them. Mutates and returns the record."""
+    if not p:
+        return p
+    privacy = p.get("privacy") or {}
+    if not privacy:
+        return p
+    # Always allowed: the person's creator, superadmin, tree admin.
+    uid = (user or {}).get("user_id")
+    if p.get("created_by") and p.get("created_by") == uid:
+        return p
+    if is_superadmin(user or {}) or role == "admin":
+        return p
+    for field, hidden in privacy.items():
+        if hidden and field in SENSITIVE_PERSON_FIELDS:
+            p[field] = None
+    # Signal to the client that something was withheld.
+    p["redacted_fields"] = [f for f, h in privacy.items() if h and f in SENSITIVE_PERSON_FIELDS]
+    return p
+
+
+def redact_people(people: List[dict], user, role: Optional[str]) -> List[dict]:
+    return [redact_person(p, user, role) for p in people]
 
 
 async def tree_person_count(tree_id: str) -> int:
@@ -473,6 +514,7 @@ async def get_tree(tree_id: Optional[str] = Query(None), user=Depends(get_curren
         p["note_count"] = counts.get(p["id"], 0)
         if p.get("is_alive") is None:
             p["is_alive"] = not bool(p.get("death_date"))
+    people = redact_people(people, user, role)
     return {
         "people": people,
         "relations": relations,
@@ -493,7 +535,7 @@ async def list_people(q: Optional[str] = None, tree_id: Optional[str] = Query(No
     if q:
         query["name"] = {"$regex": q, "$options": "i"}
     people = await db.people.find(query, {"_id": 0}).to_list(5000)
-    return people
+    return redact_people(people, user, role)
 
 
 @api_router.get("/people/{person_id}")
@@ -504,7 +546,7 @@ async def get_person(person_id: str, tree_id: Optional[str] = Query(None), user=
     p = await db.people.find_one({"id": person_id, "tree_id": tree["id"], "deleted_at": None}, {"_id": 0})
     if not p:
         raise HTTPException(status_code=404, detail="Person not found")
-    return p
+    return redact_person(p, user, role)
 
 
 class GalleryInput(BaseModel):
@@ -574,7 +616,28 @@ async def update_person(person_id: str, data: PersonData, tree_id: Optional[str]
         is_alive = not bool(d.get("death_date"))
     d["is_alive"] = is_alive
     await db.people.update_one({"id": person_id}, {"$set": d})
-    return await db.people.find_one({"id": person_id}, {"_id": 0})
+    return redact_person(await db.people.find_one({"id": person_id}, {"_id": 0}), user, role)
+
+
+@api_router.put("/people/{person_id}/privacy")
+async def set_person_privacy(person_id: str, body: Dict[str, bool], tree_id: Optional[str] = Query(None), user=Depends(get_current_user)):
+    """Set which personal fields are hidden from other members of the tree.
+
+    Body example: {"birth_date": true, "job": true} -> hide those fields.
+    Allowed for the record's creator, tree admins and superadmins.
+    """
+    tree, role = await resolve_tree(user, tree_id)
+    if not tree:
+        raise HTTPException(status_code=404, detail="Person not found")
+    p = await db.people.find_one({"id": person_id, "tree_id": tree["id"], "deleted_at": None}, {"_id": 0})
+    if not p:
+        raise HTTPException(status_code=404, detail="Person not found")
+    is_owner = p.get("created_by") == user["user_id"]
+    if not (is_owner or is_superadmin(user) or role == "admin"):
+        raise HTTPException(status_code=403, detail="Hanya pemilik data atau admin pohon yang dapat mengubah privasi")
+    clean = {f: bool(v) for f, v in (body or {}).items() if f in SENSITIVE_PERSON_FIELDS}
+    await db.people.update_one({"id": person_id, "tree_id": tree["id"]}, {"$set": {"privacy": clean}})
+    return {"ok": True, "privacy": clean}
 
 
 @api_router.delete("/people/{person_id}")
@@ -583,7 +646,9 @@ async def delete_person(person_id: str, tree_id: Optional[str] = Query(None), us
     require_role_t(role, ["admin"])
     if tree.get("root_person_id") == person_id:
         raise HTTPException(status_code=400, detail="Cannot delete root person")
-    await db.people.update_one({"id": person_id, "tree_id": tree["id"]}, {"$set": {"deleted_at": now_utc()}})
+    res = await db.people.update_one({"id": person_id, "tree_id": tree["id"], "deleted_at": None}, {"$set": {"deleted_at": now_utc()}})
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Person not found")
     await db.relations.update_many(
         {"tree_id": tree["id"], "$or": [{"person_id": person_id}, {"related_person_id": person_id}]},
         {"$set": {"deleted_at": now_utc()}},

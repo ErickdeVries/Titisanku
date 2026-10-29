@@ -4,6 +4,7 @@ import {
 } from "react-native";
 import { Image } from "expo-image";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import { useGoBack } from "@/src/hooks/useGoBack";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { LinearGradient } from "expo-linear-gradient";
@@ -20,6 +21,7 @@ export default function ClaimBranchScreen() {
   const { colors, gradient } = useTheme();
   const { t } = useI18n();
   const router = useRouter();
+  const goBack = useGoBack("/");
   const insets = useSafeAreaInsets();
   const { activeTreeId, refreshTrees, setActive } = useTree();
   const params = useLocalSearchParams<{ person_id?: string; person_name?: string }>();
@@ -61,7 +63,7 @@ export default function ClaimBranchScreen() {
   return (
     <View style={[styles.root, { backgroundColor: colors.surface }]}>
       <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
-        <Pressable onPress={() => router.back()} hitSlop={10}>
+        <Pressable onPress={() => goBack()} hitSlop={10}>
           <ArrowLeft size={24} color={colors.onSurface} />
         </Pressable>
         <Text style={[styles.title, { color: colors.onSurface }]}>{t("claim_branch")}</Text>

@@ -194,9 +194,11 @@ export default function TreeScreen() {
   const { data, isLoading } = useQuery({ queryKey: ["tree"], queryFn: getTree });
   const { data: notif } = useQuery({ queryKey: ["notifications"], queryFn: getNotifications, refetchInterval: 8000 });
   const unreadNotif = notif?.unread ?? 0;
-  const { activeTree, activeTreeId, pendingFocusId, setPendingFocus } = useTree();
+  const { activeTree, activeTreeId, pendingFocusId } = useTree();
   const [selected, setSelected] = useState<string | null>(null);
+  // `null` means "not chosen yet" -> fall back to the tree root below.
   const [focusId, setFocusId] = useState<string | null>(null);
+  const [chipFocusId, setChipFocusId] = useState<string | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
   const [upgradeOpen, setUpgradeOpen] = useState(false);
   const [filterOpen, setFilterOpen] = useState(false);
@@ -213,17 +215,14 @@ export default function TreeScreen() {
   const personCount = data?.person_count ?? data?.people?.length ?? 0;
   const atLimit = limit != null && personCount >= limit;
 
-  useEffect(() => {
-    if (!focusId && data?.root_id) setFocusId(data.root_id);
-  }, [data?.root_id, focusId]);
-
-  useEffect(() => {
-    if (pendingFocusId) {
-      setFocusId(pendingFocusId);
-      setSelected(pendingFocusId);
-      setPendingFocus(null);
-    }
-  }, [pendingFocusId, setPendingFocus]);
+  // A focus requested by another screen (e.g. "explorer" -> "lihat garis lurus")
+  // wins until the user changes the focus themselves. Derived during render so no
+  // state is written from an effect.
+  if (pendingFocusId && pendingFocusId !== chipFocusId) {
+    setChipFocusId(pendingFocusId);
+    setFocusId(pendingFocusId);
+    setSelected(pendingFocusId);
+  }
 
   const activeFocus = focusId ?? data?.root_id ?? null;
 

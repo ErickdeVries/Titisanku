@@ -1,6 +1,7 @@
 import { View, Text, Pressable, FlatList, Switch, Alert, ActivityIndicator } from "react-native";
 import { Image } from "expo-image";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import { useGoBack } from "@/src/hooks/useGoBack";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Feather from "@react-native-vector-icons/feather";
@@ -36,6 +37,7 @@ export default function GroupInfoScreen() {
   const { colors } = useTheme();
   const { t } = useI18n();
   const router = useRouter();
+  const goBack = useGoBack("/");
   const insets = useSafeAreaInsets();
   const qc = useQueryClient();
   const { roomId } = useLocalSearchParams<{ roomId: string }>();
@@ -85,7 +87,7 @@ export default function GroupInfoScreen() {
   return (
     <View style={[styles.root, { paddingTop: insets.top + 8 }]}>
       <View style={styles.header}>
-        <Pressable style={styles.back} onPress={() => router.back()} testID="info-back">
+        <Pressable style={styles.back} onPress={() => goBack()} testID="info-back">
           <Feather name="arrow-left" size={20} color={colors.onSurface} />
         </Pressable>
         <Text style={styles.title}>{t("group_info")}</Text>

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { View, Text, Pressable, TextInput, ScrollView, ActivityIndicator, Alert } from "react-native";
 import { useRouter } from "expo-router";
+import { useGoBack } from "@/src/hooks/useGoBack";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useMutation } from "@tanstack/react-query";
 import Feather from "@react-native-vector-icons/feather";
@@ -29,6 +30,7 @@ export default function FeedbackScreen() {
   const { colors } = useTheme();
   const { t } = useI18n();
   const router = useRouter();
+  const goBack = useGoBack("/");
   const insets = useSafeAreaInsets();
   const [category, setCategory] = useState("idea");
   const [message, setMessage] = useState("");
@@ -43,7 +45,7 @@ export default function FeedbackScreen() {
     mutationFn: () => submitFeedback(message.trim(), category),
     onSuccess: () => {
       Alert.alert(t("send_feedback"), t("feedback_sent"));
-      router.back();
+      goBack();
     },
     onError: () => Alert.alert(t("error_generic")),
   });
@@ -51,7 +53,7 @@ export default function FeedbackScreen() {
   return (
     <View style={[styles.root, { paddingTop: insets.top + 8 }]}>
       <View style={styles.header}>
-        <Pressable style={styles.backBtn} onPress={() => router.back()} hitSlop={8} testID="feedback-back">
+        <Pressable style={styles.backBtn} onPress={() => goBack()} hitSlop={8} testID="feedback-back">
           <Feather name="chevron-left" size={24} color={colors.onSurface} />
         </Pressable>
         <Text style={styles.title}>{t("send_feedback")}</Text>

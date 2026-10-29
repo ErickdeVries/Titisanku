@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { View, Text, Pressable, StyleSheet, ScrollView, ActivityIndicator } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import { useGoBack } from "@/src/hooks/useGoBack";
 import { useQuery } from "@tanstack/react-query";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
@@ -30,10 +31,23 @@ function AddChip({ label, color, onPress, testID }: any) {
   );
 }
 
+// Declared at module scope: a component created inside render would remount
+// (and lose state) on every parent render.
+function Section({ label, icon }: { label: string; icon: React.ReactNode }) {
+  const { colors } = useTheme();
+  return (
+    <View style={styles.sectionHead}>
+      {icon}
+      <Text style={[styles.sectionLabel, { color: colors.muted }]}>{label}</Text>
+    </View>
+  );
+}
+
 export default function Explorer() {
   const { colors } = useTheme();
   const { t } = useI18n();
   const router = useRouter();
+  const goBack = useGoBack("/");
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
   const { activeTree } = useTree();
@@ -74,12 +88,13 @@ export default function Explorer() {
         .filter((r) => r.relation_type === "sibling" && (r.person_id === id || r.related_person_id === id))
         .forEach((r) => sibSet.add(r.person_id === id ? r.related_person_id : r.person_id));
     }
-    const siblings = [...sibSet].map((sid) => byId.get(sid)).filter(Boolean).sort(byBirth) as Person[];
-    const children = relations
-      .filter((r) => r.person_id === id && PARENT_TYPES.includes(r.relation_type))
-      .map((r) => byId.get(r.related_person_id))
-      .filter(Boolean)
-      .sort(byBirth) as Person[];
+    const siblings = ([...sibSet].map((sid) => byId.get(sid)).filter(Boolean) as Person[]).sort(byBirth);
+    const children = (
+      relations
+        .filter((r) => r.person_id === id && PARENT_TYPES.includes(r.relation_type))
+        .map((r) => byId.get(r.related_person_id))
+        .filter(Boolean) as Person[]
+    ).sort(byBirth);
     const parentsOf = (pid: string) =>
       relations.filter((r) => r.related_person_id === pid && PARENT_TYPES.includes(r.relation_type)).map((r) => byId.get(r.person_id)).filter(Boolean) as Person[];
     const childrenOf = (pid: string) =>
@@ -115,17 +130,10 @@ export default function Explorer() {
     );
   }
 
-  const Section = ({ label, icon }: { label: string; icon: any }) => (
-    <View style={styles.sectionHead}>
-      {icon}
-      <Text style={[styles.sectionLabel, { color: colors.muted }]}>{label}</Text>
-    </View>
-  );
-
   return (
     <View style={[styles.root, { backgroundColor: colors.surface, paddingTop: insets.top + 8 }]}>
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} hitSlop={10} testID="explorer-back">
+        <Pressable onPress={() => goBack()} hitSlop={10} testID="explorer-back">
           <ArrowLeft size={24} color={colors.onSurface} />
         </Pressable>
         <Text style={[styles.title, { color: colors.onSurface }]} numberOfLines={1}>{rel.center.name}</Text>

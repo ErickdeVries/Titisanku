@@ -1,5 +1,6 @@
 import { View, Text, Pressable, StyleSheet, ScrollView, ActivityIndicator, Alert, Platform, Share, Switch } from "react-native";
 import { useRouter } from "expo-router";
+import { useGoBack } from "@/src/hooks/useGoBack";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Image } from "expo-image";
 import * as Linking from "expo-linking";
@@ -21,6 +22,7 @@ export default function MembersScreen() {
   const { colors } = useTheme();
   const { t } = useI18n();
   const router = useRouter();
+  const goBack = useGoBack("/");
   const insets = useSafeAreaInsets();
   const { activeTreeId, activeTree, refreshTrees } = useTree();
   const qc = useQueryClient();
@@ -109,7 +111,7 @@ export default function MembersScreen() {
   return (
     <View style={[styles.root, { backgroundColor: colors.surface }]}>
       <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
-        <Pressable onPress={() => router.back()} hitSlop={10}>
+        <Pressable onPress={() => goBack()} hitSlop={10}>
           <ArrowLeft size={24} color={colors.onSurface} />
         </Pressable>
         <Text style={[styles.title, { color: colors.onSurface }]}>{t("manage_members")}</Text>

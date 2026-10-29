@@ -1,5 +1,6 @@
 import { View, Text, Pressable, ScrollView } from "react-native";
 import { useRouter } from "expo-router";
+import { useGoBack } from "@/src/hooks/useGoBack";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Feather from "@react-native-vector-icons/feather";
 import { fonts, makeStyles, useTheme } from "@/src/theme";
@@ -32,11 +33,12 @@ export default function PrivacyScreen() {
   const { colors } = useTheme();
   const { t } = useI18n();
   const router = useRouter();
+  const goBack = useGoBack("/");
   const insets = useSafeAreaInsets();
   return (
     <View style={[styles.root, { paddingTop: insets.top + 8 }]}>
       <View style={styles.header}>
-        <Pressable style={styles.backBtn} onPress={() => router.back()} hitSlop={8} testID="privacy-back">
+        <Pressable style={styles.backBtn} onPress={() => goBack()} hitSlop={8} testID="privacy-back">
           <Feather name="chevron-left" size={24} color={colors.onSurface} />
         </Pressable>
         <Text style={styles.title}>{t("privacy_policy")}</Text>

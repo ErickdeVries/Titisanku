@@ -335,7 +335,6 @@ const dict = {
     feedback_cat_bug: "Bug",
     feedback_cat_idea: "Ide",
     feedback_cat_other: "Lainnya",
-    send: "Kirim",
     account_section: "Akun & Privasi",
   },
   en: {
@@ -666,7 +665,6 @@ const dict = {
     feedback_cat_bug: "Bug",
     feedback_cat_idea: "Idea",
     feedback_cat_other: "Other",
-    send: "Send",
     account_section: "Account & Privacy",
   },
 };

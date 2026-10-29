@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { View, Text, Pressable } from "react-native";
 import { useRouter } from "expo-router";
+import { useGoBack } from "@/src/hooks/useGoBack";
 import { useQueryClient } from "@tanstack/react-query";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Feather from "@react-native-vector-icons/feather";
@@ -22,6 +23,7 @@ export default function AddFirstPerson() {
   const { colors } = useTheme();
   const { t } = useI18n();
   const router = useRouter();
+  const goBack = useGoBack("/");
   const insets = useSafeAreaInsets();
   const qc = useQueryClient();
   const [submitting, setSubmitting] = useState(false);
@@ -40,7 +42,7 @@ export default function AddFirstPerson() {
         notes: v.notes,
       });
       await qc.invalidateQueries({ queryKey: ["tree"] });
-      router.back();
+      goBack();
     } catch (e) {
       console.log("add first person error", e);
       setSubmitting(false);
@@ -50,7 +52,7 @@ export default function AddFirstPerson() {
   return (
     <View style={[styles.root, { paddingTop: insets.top + 8 }]}>
       <View style={styles.header}>
-        <Pressable style={styles.closeBtn} onPress={() => router.back()} testID="close-modal">
+        <Pressable style={styles.closeBtn} onPress={() => goBack()} testID="close-modal">
           <Feather name="x" size={20} color={colors.onSurface} />
         </Pressable>
         <View>

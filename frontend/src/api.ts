@@ -62,7 +62,11 @@ export type Person = {
   is_root?: boolean;
   note_count?: number;
   gallery?: GalleryPhoto[];
+  privacy?: Record<string, boolean> | null;
+  redacted_fields?: string[];
 };
+
+export type PrivacyField = "birth_date" | "birth_place" | "job" | "death_date" | "notes";
 
 export type Relation = {
   id: string;
@@ -99,11 +103,13 @@ export const adminOverview = () => apiFetch("/admin/overview");
 export const adminUsers = () => apiFetch("/admin/users");
 export const adminFeedback = () => apiFetch("/admin/feedback");
 
+export type PlanId = "free" | "pro" | "family" | "unlimited";
+
 export type Tree = {
   id: string;
   name: string;
   owner_id: string;
-  plan: "free" | "pro" | "family";
+  plan: PlanId;
   is_public?: boolean;
   root_person_id: string | null;
   role: "admin" | "editor" | "viewer";
@@ -189,6 +195,8 @@ export const addFirstPerson = (person: any): Promise<Person> =>
   apiFetch("/people/first", { method: "POST", body: JSON.stringify(person) });
 export const updatePerson = (id: string, data: any) =>
   apiFetch(`/people/${id}`, { method: "PUT", body: JSON.stringify(data) });
+export const setPersonPrivacy = (id: string, privacy: Record<string, boolean>) =>
+  apiFetch(`/people/${id}/privacy`, { method: "PUT", body: JSON.stringify(privacy) });
 export const deletePerson = (id: string) => apiFetch(`/people/${id}`, { method: "DELETE" });
 
 // ---- Backup / Invites ----
@@ -260,6 +268,7 @@ export type ChatRoom = {
   last_message: string;
   last_message_at?: string | null;
   unread: number;
+  muted?: boolean;
 };
 export type ChatContact = { user_id: string; name: string; picture?: string | null; role: string };
 

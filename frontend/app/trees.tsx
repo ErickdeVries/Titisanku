@@ -8,12 +8,14 @@ import { fonts, useTheme } from "@/src/theme";
 import { useI18n } from "@/src/i18n";
 import { useTree } from "@/src/tree-context";
 import { useAuth } from "@/src/auth";
+import { useGoBack } from "@/src/hooks/useGoBack";
 import { createTree, deleteTree } from "@/src/api";
 
 export default function TreesScreen() {
   const { colors } = useTheme();
   const { t } = useI18n();
   const router = useRouter();
+  const goBack = useGoBack("/");
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
   const { trees, activeTreeId, setActive, refreshTrees } = useTree();
@@ -28,7 +30,7 @@ export default function TreesScreen() {
       await setActive(tree.id);
       setCreateOpen(false);
       setName("");
-      router.back();
+      goBack();
     },
   });
 
@@ -47,14 +49,14 @@ export default function TreesScreen() {
 
   const pick = async (id: string) => {
     await setActive(id);
-    router.back();
+    goBack();
   };
 
   return (
     <View style={[styles.root, { backgroundColor: colors.surface, paddingTop: insets.top + 8 }]}>
       <View style={styles.header}>
         <Text style={[styles.title, { color: colors.onSurface }]}>{t("my_trees")}</Text>
-        <Pressable onPress={() => router.back()} hitSlop={10}>
+        <Pressable onPress={() => goBack()} hitSlop={10}>
           <X size={24} color={colors.muted} />
         </Pressable>
       </View>
@@ -113,7 +115,7 @@ export default function TreesScreen() {
 
         <Pressable
           testID="join-tree-button"
-          onPress={() => { router.back(); router.push("/join"); }}
+          onPress={() => router.push("/join")}
           style={[styles.createBtn, { borderColor: colors.brandSecondary }]}
         >
           <UserPlus size={20} color={colors.brandSecondary} />
