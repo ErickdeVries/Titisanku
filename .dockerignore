@@ -9,3 +9,16 @@ design_guidelines.json
 *.apk
 *.zip
 backups/
+.playwright-mcp/
+
+# Rahasia TIDAK boleh masuk image — disuntik lewat env var Helipod
+backend/.env
+backend/.env.*
+backend/firebase-service-account.json
+**/*service-account*.json
+**/google-services.json
+
+# Sisa-sisa dev
+backend/__pycache__/
+backend/.pytest_cache/
+**/*.pyc
