@@ -56,6 +56,21 @@ MIDTRANS_STATUS_BASE = "https://api.midtrans.com" if MIDTRANS_IS_PRODUCTION else
 PLAN_PRICES = {"pro": 149000, "family": 199000}
 SUPERADMIN_EMAILS = [e.strip().lower() for e in os.environ.get("SUPERADMIN_EMAILS", "").split(",") if e.strip()]
 
+# CORS — daftar origin yang diizinkan (dipisah koma) via env CORS_ORIGINS.
+# Bila kosong -> fallback "*" TANPA credentials (kombinasi "*" + credentials tidak valid
+# menurut spesifikasi CORS dan menyebabkan browser memblokir request).
+CORS_ORIGINS = [o.strip() for o in os.environ.get("CORS_ORIGINS", "").split(",") if o.strip()]
+CORS_ALLOW_ALL = "*" in CORS_ORIGINS or not CORS_ORIGINS
+# Default: izinkan dev web + domain produksi bila env tidak diisi.
+if CORS_ALLOW_ALL and not os.environ.get("CORS_ORIGINS"):
+    CORS_ORIGINS = [
+        "http://localhost:8081",
+        "http://127.0.0.1:8081",
+        "http://localhost:19006",
+        "https://titisanku.helipod.app",
+    ]
+    CORS_ALLOW_ALL = False
+
 
 def is_superadmin(user) -> bool:
     return (user.get("email") or "").lower() in SUPERADMIN_EMAILS
@@ -2300,8 +2315,11 @@ async def metrics_middleware(request, call_next):
 
 app.add_middleware(
     CORSMiddleware,
-    allow_credentials=True,
-    allow_origins=["*"],
+    # "*" + credentials tidak diizinkan browser. Bila allow-all diminta secara eksplisit
+    # lewat CORS_ORIGINS=*, kirim "*" tanpa credentials; selain itu pakai daftar origin
+    # eksplisit dengan credentials aktif.
+    allow_credentials=not CORS_ALLOW_ALL,
+    allow_origins=["*"] if CORS_ALLOW_ALL else CORS_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
