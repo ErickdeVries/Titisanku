@@ -11,11 +11,12 @@ from typing import List, Optional
 
 import httpx
 import requests
-from fastapi import FastAPI, APIRouter, HTTPException, Header, Depends, UploadFile, File, Query, Body
-from fastapi.responses import Response
+from fastapi import FastAPI, APIRouter, HTTPException, Header, Depends, Request, UploadFile, File, Query, Body
+from fastapi.responses import Response, JSONResponse
 from starlette.concurrency import run_in_threadpool
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
+from pymongo.errors import PyMongoError
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field, EmailStr
 from html import escape
@@ -39,7 +40,28 @@ api_router = APIRouter(prefix="/api")
 
 @app.get("/health")
 async def health():
-    return {"status": "ok"}
+    """Health check dengan verifikasi koneksi database.
+
+    Sebelumnya endpoint ini selalu mengembalikan "ok" meskipun MongoDB tidak
+    dapat diakses (mis. kredensial salah), sehingga masalah DB tidak terdeteksi
+    oleh monitoring maupun oleh verifikasi manual.
+    """
+    db_ok = True
+    db_error = None
+    try:
+        await client.admin.command("ping")
+    except Exception as e:
+        db_ok = False
+        db_error = type(e).__name__
+        logger.warning("Health check: ping MongoDB gagal: %s", e)
+
+    payload = {
+        "status": "ok" if db_ok else "degraded",
+        "database": "ok" if db_ok else "unavailable",
+    }
+    if db_error:
+        payload["database_error"] = db_error
+    return JSONResponse(status_code=200 if db_ok else 503, content=payload)
 
 
 # ---------------------------------------------------------------------------
@@ -70,6 +92,27 @@ if CORS_ALLOW_ALL and not os.environ.get("CORS_ORIGINS"):
         "https://titisanku.helipod.app",
     ]
     CORS_ALLOW_ALL = False
+
+
+def cors_headers_for(request: Request) -> dict:
+    """Header CORS untuk respons yang dibuat manual (mis. dari exception handler).
+
+    Respons yang diproduksi ``ServerErrorMiddleware`` berada di luar jangkauan
+    ``CORSMiddleware`` sehingga tidak otomatis mendapat header CORS. Tanpa header
+    ini, browser akan melaporkan "Failed to fetch" (CORS) alih-alih pesan error
+    yang sebenarnya, membuat masalah backend sulit didiagnosis.
+    """
+    origin = request.headers.get("origin")
+    if not origin:
+        return {}
+    if CORS_ALLOW_ALL:
+        return {"Access-Control-Allow-Origin": "*"}
+    if origin in CORS_ORIGINS:
+        return {
+            "Access-Control-Allow-Origin": origin,
+            "Access-Control-Allow-Credentials": "true",
+        }
+    return {}
 
 
 def is_superadmin(user) -> bool:
@@ -331,36 +374,45 @@ async def auth_session(body: SessionInput):
     picture = claims.get("picture")
     session_token = secrets.token_urlsafe(32)
 
-    existing = await db.users.find_one({"email": email}, {"_id": 0})
-    if existing:
-        user_id = existing["user_id"]
-    else:
-        user_count = await db.users.count_documents({})
-        is_first = user_count == 0
-        user_id = f"user_{uuid.uuid4().hex[:12]}"
-        role = "admin" if is_first else "viewer"
-        pending = await db.invites.find_one({"email": email, "accepted": False})
-        if pending and not is_first:
-            role = "editor"
-            await db.invites.update_one({"_id": pending["_id"]}, {"$set": {"accepted": True, "accepted_at": now_utc()}})
-        user_doc = {
-            "user_id": user_id,
-            "email": email,
-            "name": name,
-            "picture": picture,
-            "role": role,
-            "created_at": now_utc(),
-        }
-        await db.users.insert_one(user_doc)
-        # New users choose in onboarding whether to create or join a tree (no auto tree).
+    try:
+        existing = await db.users.find_one({"email": email}, {"_id": 0})
+        if existing:
+            user_id = existing["user_id"]
+        else:
+            user_count = await db.users.count_documents({})
+            is_first = user_count == 0
+            user_id = f"user_{uuid.uuid4().hex[:12]}"
+            role = "admin" if is_first else "viewer"
+            pending = await db.invites.find_one({"email": email, "accepted": False})
+            if pending and not is_first:
+                role = "editor"
+                await db.invites.update_one({"_id": pending["_id"]}, {"$set": {"accepted": True, "accepted_at": now_utc()}})
+            user_doc = {
+                "user_id": user_id,
+                "email": email,
+                "name": name,
+                "picture": picture,
+                "role": role,
+                "created_at": now_utc(),
+            }
+            await db.users.insert_one(user_doc)
+            # New users choose in onboarding whether to create or join a tree (no auto tree).
 
-    await db.user_sessions.insert_one({
-        "session_token": session_token,
-        "user_id": user_id,
-        "created_at": now_utc(),
-        "expires_at": now_utc() + timedelta(days=7),
-    })
-    user = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+        await db.user_sessions.insert_one({
+            "session_token": session_token,
+            "user_id": user_id,
+            "created_at": now_utc(),
+            "expires_at": now_utc() + timedelta(days=7),
+        })
+        user = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+    except PyMongoError as e:
+        # Kredensial/klaster DB bermasalah (mis. "bad auth") atau DB tak terjangkau.
+        # Balas 503 dengan pesan jelas, bukan 500 tanpa header CORS.
+        logger.error("auth/session gagal mengakses database: %s", e)
+        raise HTTPException(
+            status_code=503,
+            detail="Database tidak tersedia. Periksa konfigurasi MongoDB.",
+        )
     return {"session_token": session_token, "user": user}
 
 
@@ -2323,6 +2375,36 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ---------------------------------------------------------------------------
+# Global error handling
+# ---------------------------------------------------------------------------
+# Tanpa handler ini, exception yang tidak tertangkap akan diproses oleh
+# ServerErrorMiddleware (lapisan terluar) dan respons 500-nya TIDAK melewati
+# CORSMiddleware. Akibatnya header CORS hilang dan browser melaporkan
+# "blocked by CORS policy" / "Failed to fetch" — menutupi error 500 asli.
+# Handler di bawah mengembalikan JSONResponse yang tetap melewati CORS middleware.
+@app.exception_handler(PyMongoError)
+async def mongo_error_handler(request: Request, exc: PyMongoError):
+    logger.error("Database error pada %s %s: %s", request.method, request.url.path, exc)
+    return JSONResponse(
+        status_code=503,
+        content={"detail": "Database tidak tersedia. Silakan coba beberapa saat lagi."},
+        headers=cors_headers_for(request),
+    )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    # Jaring pengaman terakhir: selalu balas JSON + header CORS, jangan biarkan
+    # ServerErrorMiddleware mengembalikan respons tanpa header CORS.
+    logger.exception("Unhandled error pada %s %s", request.method, request.url.path)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Terjadi kesalahan pada server."},
+        headers=cors_headers_for(request),
+    )
 
 
 @app.on_event("shutdown")
