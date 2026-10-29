@@ -37,6 +37,12 @@ dist
 *service-account.json
 firebase-service-account.json
 google-services.json
+# Kunci service account hasil download Firebase Console
+# (mis. titisanku-firebase-adminsdk-fbsvc-<id>.json) — jangan pernah di-commit
+*-firebase-adminsdk-*.json
+
+# Artefak sesi browser (screenshot, snapshot, file yang ter-download)
+.playwright-mcp/
 
 # Logs and debug files
 npm-debug.log*
