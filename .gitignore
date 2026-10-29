@@ -82,6 +82,13 @@ agenthub/agents/youtube/db
 *.deb
 *.dylib
 
+# Artefak sesi browser / screenshot pratinjau (jangan di-commit)
+mobile-*.png
+preview-*.png
+admin-*.png
+helipod-*.yml
+vars.yml
+
 # Build caches
 .cache/
 
