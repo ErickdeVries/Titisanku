@@ -29,7 +29,15 @@ from dotenv import load_dotenv
 
 
 # Ensure MIDTRANS_SERVER_KEY is loaded from backend/.env
-load_dotenv("/app/backend/.env")
+_env_candidates = [
+    os.path.join(os.path.dirname(__file__), "..", ".env"),
+    "backend/.env",
+    "/app/backend/.env",
+]
+for _p in _env_candidates:
+    if os.path.exists(_p):
+        load_dotenv(_p)
+        break
 
 BASE_URL = (
     os.environ.get("EXPO_PUBLIC_BACKEND_URL")
@@ -200,7 +208,11 @@ def test_snap_admin_creates_pro_order(pay_ctx):
     assert data["order_id"].startswith("KTR-")
     assert isinstance(data["token"], str) and len(data["token"]) > 5
     assert isinstance(data["redirect_url"], str)
-    assert "app.midtrans.com" in data["redirect_url"], f"redirect_url={data['redirect_url']}"
+    # sandbox uses app.sandbox.midtrans.com, production uses app.midtrans.com
+    assert any(
+        host in data["redirect_url"]
+        for host in ("app.sandbox.midtrans.com", "app.midtrans.com")
+    ), f"redirect_url={data['redirect_url']}"
 
     order = pay_ctx["db"].payment_orders.find_one({"order_id": data["order_id"]})
     assert order is not None, "payment_orders row not created"
