@@ -1,0 +1,12 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Foto pohon keluarga harus bisa dibaca langsung oleh <Image> di aplikasi.
+    // Penulisan tetap hanya lewat backend (service account), bukan dari client.
+    match /{allPaths=**} {
+      allow read: if true;
+      allow write: if false;
+    }
+  }
+}

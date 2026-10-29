@@ -22,12 +22,13 @@ const useStyles = makeStyles((c) => ({
   subtitle: { fontFamily: fonts.regular, fontSize: 14.5, color: c.muted, textAlign: "center", lineHeight: 22, marginTop: 4 },
   footer: { width: "100%", paddingHorizontal: 40 },
   legal: { fontFamily: fonts.regular, fontSize: 11, color: c.muted, textAlign: "center", marginTop: 14, opacity: 0.8 },
+  error: { fontFamily: fonts.regular, fontSize: 12.5, color: "#B42318", textAlign: "center", marginBottom: 10, lineHeight: 18 },
 }));
 
 export default function Login() {
   const styles = useStyles();
   const insets = useSafeAreaInsets();
-  const { login, signingIn } = useAuth();
+  const { login, signingIn, authError } = useAuth();
   const { t } = useI18n();
 
   return (
@@ -48,6 +49,11 @@ export default function Login() {
       </View>
 
       <View style={[styles.footer, { paddingBottom: insets.bottom + 30 }]}>
+        {authError ? (
+          <Text style={styles.error} testID="login-error">
+            {authError}
+          </Text>
+        ) : null}
         <GradientButton
           testID="google-login-button"
           title={signingIn ? t("logging_in") : t("login_google")}

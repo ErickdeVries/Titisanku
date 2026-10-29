@@ -1,11 +1,13 @@
-import React, { createContext, useContext, useEffect, useRef, useState } from "react";
+import React, { createContext, useContext, useEffect, useState } from "react";
 import { Platform } from "react-native";
-import * as WebBrowser from "expo-web-browser";
-import * as Linking from "expo-linking";
 import { storage } from "@/src/utils/storage";
 import { authSession, getMe, logoutApi, setToken, User } from "@/src/api";
-
-WebBrowser.maybeCompleteAuthSession();
+import {
+  firebaseConfigured,
+  onIdToken,
+  signInWithGoogle,
+  signOutFirebase,
+} from "@/src/firebase";
 
 const TOKEN_KEY = "session_token";
 
@@ -13,6 +15,7 @@ type AuthCtx = {
   user: User | null;
   loading: boolean;
   signingIn: boolean;
+  authError: string | null;
   login: () => Promise<void>;
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
@@ -22,6 +25,7 @@ const Ctx = createContext<AuthCtx>({
   user: null,
   loading: true,
   signingIn: false,
+  authError: null,
   login: async () => {},
   logout: async () => {},
   refresh: async () => {},
@@ -56,105 +60,90 @@ async function clearToken() {
   }
 }
 
-function extractSessionId(url: string | null | undefined): string | null {
-  if (!url) return null;
-  const m = /[?#&]session_id=([^&#]+)/.exec(url);
-  return m ? decodeURIComponent(m[1]) : null;
+/** Pesan ramah untuk error Firebase Auth. */
+function friendlyError(e: unknown): string {
+  const code = (e as { code?: string })?.code || "";
+  if (code.includes("popup-closed-by-user") || code.includes("cancelled")) return "";
+  if (code.includes("popup-blocked")) return "Popup diblokir browser. Izinkan popup lalu coba lagi.";
+  if (code.includes("network-request-failed")) return "Tidak ada koneksi internet.";
+  if (code.includes("unauthorized-domain")) return "Domain ini belum diizinkan di Firebase Console.";
+  if (code.includes("operation-not-allowed")) return "Metode login Google belum diaktifkan di Firebase Console.";
+  return (e as Error)?.message || "Gagal masuk. Silakan coba lagi.";
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [signingIn, setSigningIn] = useState(false);
-  const processed = useRef<Set<string>>(new Set());
+  const [authError, setAuthError] = useState<string | null>(null);
 
-  const exchange = async (sessionId: string) => {
-    if (processed.current.has(sessionId)) return;
-    processed.current.add(sessionId);
-    setSigningIn(true);
+  /**
+   * Tukar Firebase ID token dengan session token aplikasi kita, lalu simpan.
+   * Dipakai saat login maupun saat token Firebase diperbarui otomatis.
+   */
+  const exchange = async (idToken: string) => {
+    const res = await authSession(idToken);
+    await storeToken(res.session_token);
+    setToken(res.session_token);
     try {
-      const res = await authSession(sessionId);
-      await storeToken(res.session_token);
-      setToken(res.session_token);
-      // Fetch the full profile (includes is_superadmin) rather than the raw
-      // session user, so superadmin-only UI shows right after first login.
-      try {
-        const me = await getMe();
-        setUser(me);
-      } catch {
-        setUser(res.user);
-      }
-    } catch (e) {
-      console.log("auth exchange error", e);
-    } finally {
-      setSigningIn(false);
+      setUser(await getMe());
+    } catch {
+      setUser(res.user);
     }
-  };
-
-  const bootstrap = async () => {
-    // web: check session_id in URL first
-    if (Platform.OS === "web") {
-      const sid = extractSessionId(window.location.hash) || extractSessionId(window.location.search);
-      if (sid) {
-        await exchange(sid);
-        try {
-          window.history.replaceState(window.history.state, "", window.location.pathname);
-        } catch {}
-        setLoading(false);
-        return;
-      }
-    } else {
-      const initial = await Linking.getInitialURL();
-      const sid = extractSessionId(initial);
-      if (sid) {
-        await exchange(sid);
-        setLoading(false);
-        return;
-      }
-    }
-    // otherwise check existing token
-    const token = await readToken();
-    if (token) {
-      setToken(token);
-      try {
-        const me = await getMe();
-        setUser(me);
-      } catch {
-        await clearToken();
-        setToken(null);
-        setUser(null);
-      }
-    }
-    setLoading(false);
   };
 
   useEffect(() => {
+    let cancelled = false;
+
+    const bootstrap = async () => {
+      if (!firebaseConfigured()) {
+        setAuthError("Konfigurasi Firebase belum lengkap (EXPO_PUBLIC_FIREBASE_*).");
+        setLoading(false);
+        return;
+      }
+      // Bila user sudah login di Firebase, pakai ID token terbaru.
+      try {
+        const idToken = await onIdToken();
+        if (idToken && !cancelled) {
+          await exchange(idToken);
+          setLoading(false);
+          return;
+        }
+      } catch (e) {
+        console.log("firebase restore gagal", e);
+      }
+      // Fallback: session token lokal yang masih valid.
+      const token = await readToken();
+      if (token && !cancelled) {
+        setToken(token);
+        try {
+          setUser(await getMe());
+        } catch {
+          await clearToken();
+          setToken(null);
+          setUser(null);
+        }
+      }
+      if (!cancelled) setLoading(false);
+    };
+
     bootstrap();
-    const sub = Linking.addEventListener("url", ({ url }) => {
-      const sid = extractSessionId(url);
-      if (sid) exchange(sid);
-    });
-    return () => sub.remove();
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const login = async () => {
-    const redirectUrl = Platform.OS === "web" ? window.location.origin + "/" : Linking.createURL("");
-    const authUrl = `https://auth.emergentagent.com/?redirect=${encodeURIComponent(redirectUrl)}`;
-    if (Platform.OS === "web") {
-      // Use replace (not href) so the auth URL is NOT kept in the browser back-history.
-      // Otherwise pressing Back returns to a consumed auth page -> "Invalid state parameter".
-      window.location.replace(authUrl);
-      return;
-    }
+    setAuthError(null);
     setSigningIn(true);
     try {
-      const result = await WebBrowser.openAuthSessionAsync(authUrl, redirectUrl);
-      let sid: string | null = null;
-      if (result.type === "success" && result.url) sid = extractSessionId(result.url);
-      if (!sid) sid = extractSessionId(await Linking.getInitialURL());
-      if (sid) await exchange(sid);
+      const idToken = await signInWithGoogle();
+      if (!idToken) return; // user menutup popup
+      await exchange(idToken);
     } catch (e) {
+      const msg = friendlyError(e);
+      if (msg) setAuthError(msg);
       console.log("login error", e);
     } finally {
       setSigningIn(false);
@@ -165,6 +154,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       await logoutApi();
     } catch {}
+    try {
+      await signOutFirebase();
+    } catch {}
     await clearToken();
     setToken(null);
     setUser(null);
@@ -172,13 +164,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const refresh = async () => {
     try {
-      const me = await getMe();
-      setUser(me);
+      setUser(await getMe());
     } catch {}
   };
 
   return (
-    <Ctx.Provider value={{ user, loading, signingIn, login, logout, refresh }}>{children}</Ctx.Provider>
+    <Ctx.Provider value={{ user, loading, signingIn, authError, login, logout, refresh }}>
+      {children}
+    </Ctx.Provider>
   );
 }
 
