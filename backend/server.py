@@ -20,6 +20,9 @@ from dotenv import load_dotenv
 from pydantic import BaseModel, Field, EmailStr
 from html import escape
 
+# Integrasi pihak ketiga pengganti Emergent (Firebase Auth/Storage, Resend, Expo Push)
+import integrations
+
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
 
@@ -40,11 +43,8 @@ async def health():
 
 
 # ---------------------------------------------------------------------------
-# Object Storage
+# Object Storage — Firebase Storage (lihat backend/integrations.py)
 # ---------------------------------------------------------------------------
-STORAGE_BASE = (os.environ.get("INTEGRATION_PROXY_URL") or "").strip() or "https://integrations.emergentagent.com"
-STORAGE_URL = STORAGE_BASE.rstrip("/") + "/objstore/api/v1/storage"
-EMERGENT_KEY = os.environ.get("EMERGENT_LLM_KEY")
 APP_NAME = "keturunanku"
 
 # Midtrans payment config
@@ -62,64 +62,30 @@ def is_superadmin(user) -> bool:
 
 
 RECENT_TIMINGS: deque = deque(maxlen=800)
-storage_key = None
-
-
-def init_storage():
-    global storage_key
-    if storage_key:
-        return storage_key
-    resp = requests.post(f"{STORAGE_URL}/init", json={"emergent_key": EMERGENT_KEY}, timeout=30)
-    resp.raise_for_status()
-    storage_key = resp.json()["storage_key"]
-    return storage_key
-
 
 def put_object(path: str, data: bytes, content_type: str) -> dict:
-    key = init_storage()
-    resp = requests.put(
-        f"{STORAGE_URL}/objects/{path}",
-        headers={"X-Storage-Key": key, "Content-Type": content_type},
-        data=data,
-        timeout=120,
-    )
-    resp.raise_for_status()
-    return resp.json()
-
+    """Unggah objek ke Firebase Storage."""
+    return integrations.storage_upload(path, data, content_type)
 
 def get_object(path: str):
-    key = init_storage()
-    resp = requests.get(f"{STORAGE_URL}/objects/{path}", headers={"X-Storage-Key": key}, timeout=60)
-    resp.raise_for_status()
-    return resp.content, resp.headers.get("Content-Type", "application/octet-stream")
-
+    """Unduh objek dari Firebase Storage."""
+    return integrations.storage_download(path)
 
 # ---------------------------------------------------------------------------
-# Email (Emergent managed Resend)
+# Email - Resend (lihat backend/integrations.py)
 # ---------------------------------------------------------------------------
-EMAIL_BASE_URL = "https://integrations.emergentagent.com"
-EMAIL_KEY = os.environ.get("EMERGENT_EMAIL_KEY")
 EMAIL_FROM_NAME = os.environ.get("EMAIL_FROM_NAME", "KETURUNANKU")
 
 
 async def send_email(*, to: str, subject: str, html: str) -> Optional[str]:
-    payload = {"to": [to], "subject": subject, "html": html, "from_name": EMAIL_FROM_NAME}
     try:
-        async with httpx.AsyncClient(timeout=30) as c:
-            resp = await c.post(
-                f"{EMAIL_BASE_URL}/api/v1/email/send",
-                headers={"X-Email-Key": EMAIL_KEY},
-                json=payload,
-            )
-        resp.raise_for_status()
-        return resp.json().get("id")
-    except Exception as e:
-        logger.error(f"Email send error: {e}")
-        raise HTTPException(status_code=502, detail="Failed to send invite email")
+        return await run_in_threadpool(
+            integrations.email_send, to=to, subject=subject, html=html, from_name=EMAIL_FROM_NAME
+        )
+    except integrations.IntegrationError as e:
+        logger.error("Email gagal: %s", e)
+        raise HTTPException(status_code=502, detail=f"Gagal mengirim email: {e}")
 
-
-# ---------------------------------------------------------------------------
-# Models
 # ---------------------------------------------------------------------------
 def now_utc():
     return datetime.now(timezone.utc)
@@ -336,18 +302,19 @@ async def create_tree_for_user(user, name: str, make_root: bool = True) -> dict:
 # ---------------------------------------------------------------------------
 @api_router.post("/auth/session")
 async def auth_session(body: SessionInput):
-    async with httpx.AsyncClient(timeout=30) as c:
-        resp = await c.get(
-            "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data",
-            headers={"X-Session-ID": body.session_id},
-        )
-    if resp.status_code != 200:
+    """Tukar ID token Firebase dengan session token milik aplikasi."""
+    try:
+        # `session_id` kini membawa Firebase ID Token (JWT) dari client SDK.
+        claims = integrations.verify_firebase_id_token(body.session_id)
+    except integrations.IntegrationError as e:
+        logger.warning("auth/session ditolak: %s", e)
         raise HTTPException(status_code=401, detail="Invalid session")
-    data = resp.json()
-    email = data["email"]
-    name = data.get("name") or email.split("@")[0]
-    picture = data.get("picture")
-    session_token = data["session_token"]
+    email = claims.get("email")
+    if not email:
+        raise HTTPException(status_code=401, detail="Token tidak memiliki email")
+    name = claims.get("name") or email.split("@")[0]
+    picture = claims.get("picture")
+    session_token = secrets.token_urlsafe(32)
 
     existing = await db.users.find_one({"email": email}, {"_id": 0})
     if existing:
@@ -827,9 +794,14 @@ async def upload_file(file: UploadFile = File(...), tree_id: Optional[str] = Que
     content = await file.read()
     ext = (file.filename or "photo.jpg").split(".")[-1].lower()
     path = f"{APP_NAME}/uploads/{user['user_id']}/{uuid.uuid4().hex}.{ext}"
-    result = await run_in_threadpool(put_object, path, content, file.content_type or "image/jpeg")
+    try:
+        result = await run_in_threadpool(put_object, path, content, file.content_type or "image/jpeg")
+    except integrations.IntegrationError as e:
+        logger.error("Upload gagal: %s", e)
+        raise HTTPException(status_code=503, detail=f"Penyimpanan file belum siap: {e}")
     stored = result["path"]
-    return {"path": stored, "url": f"/api/files/{stored}"}
+    # `url` memakai URL publik Firebase Storage bila tersedia, fallback ke proxy /api/files.
+    return {"path": stored, "url": result.get("url") or f"/api/files/{stored}"}
 
 
 async def _validate_token(token: str):
@@ -920,12 +892,25 @@ async def create_invite(body: InviteInput, user=Depends(get_current_user)):
         f'Kami tidak pernah meminta kata sandi Anda melalui email.</p>'
         f'</td></tr></table>'
     )
+    # Email yang gagal TIDAK boleh dilaporkan sebagai sukses: kode tetap dibuat,
+    # tetapi respons menandai bahwa email belum terkirim lengkap dengan alasannya.
     email_id = None
+    email_error = None
     try:
         email_id = await send_email(to=body.email, subject=subject, html=html)
-    except HTTPException:
-        pass
-    return {"code": code, "email_id": email_id, "email": body.email}
+    except HTTPException as e:
+        email_error = e.detail
+        logger.warning("Undangan %s dibuat, tetapi email gagal: %s", code, e.detail)
+    if email_error:
+        return {
+            "code": code,
+            "email_id": None,
+            "email": body.email,
+            "email_sent": False,
+            "error": email_error,
+            "hint": "Bagikan kode undangan di atas secara manual.",
+        }
+    return {"code": code, "email_id": email_id, "email": body.email, "email_sent": True}
 
 
 @api_router.post("/invite/accept")
@@ -1087,40 +1072,50 @@ async def _check_plan_expiry(tree):
             pass
     return tree
 # ---------------------------------------------------------------------------
-PUSH_BASE_URL = "https://integrations.emergentagent.com"
-PUSH_KEY = os.environ.get("EMERGENT_PUSH_KEY", "placeholder")
-_push_client = httpx.AsyncClient(base_url=PUSH_BASE_URL, headers={"X-Push-Key": PUSH_KEY}, timeout=10.0)
-
-
 class RegisterPushBody(BaseModel):
     platform: str
     device_token: str
 
-
 @api_router.post("/register-push", status_code=201)
 async def register_push(body: RegisterPushBody, user=Depends(get_current_user)):
-    resp = await _push_client.post(
-        "/api/v1/push/users/register",
-        json={"user_id": user["user_id"], "platform": body.platform, "device_token": body.device_token},
+    """Simpan token perangkat untuk notifikasi via Expo Push."""
+    await db.push_tokens.update_one(
+        {"user_id": user["user_id"], "device_token": body.device_token},
+        {"$set": {
+            "user_id": user["user_id"],
+            "platform": body.platform,
+            "device_token": body.device_token,
+            "updated_at": now_utc(),
+        }},
+        upsert=True,
     )
-    if resp.status_code == 401:
-        raise HTTPException(500, "EMERGENT_PUSH_KEY missing or invalid")
-    if resp.status_code >= 500:
-        raise HTTPException(502, "Push provider unavailable")
-    resp.raise_for_status()
     return {"status": "registered"}
 
-
 async def send_push(recipients: list, data: dict, idempotency_key: Optional[str] = None):
-    """Relay a push via the Emergent managed service. Never let failures block the caller."""
+    """Kirim notifikasi via Expo Push API. Kegagalan tidak memblokir pemanggil."""
     recipients = list(dict.fromkeys([r for r in recipients if r]))[:100]
     if not recipients or "title" not in data or "message" not in data:
         return
-    payload = {"recipients": recipients, "data": data}
-    if idempotency_key:
-        payload["$idempotency_key"] = idempotency_key
-    resp = await _push_client.post("/api/v1/push/trigger", json=payload)
-    resp.raise_for_status()
+    # recipients berisi user_id internal; terjemahkan ke Expo push token.
+    tokens = await db.push_tokens.find(
+        {"user_id": {"$in": recipients}}, {"_id": 0, "device_token": 1}
+    ).to_list(500)
+    if not tokens:
+        return
+    messages = [
+        {
+            "to": t["device_token"],
+            "title": data["title"],
+            "body": data["message"],
+            "sound": "default",
+            "data": {**{k: v for k, v in data.items() if k not in ("title", "message")},
+                     **({"idempotency_key": idempotency_key} if idempotency_key else {})},
+        }
+        for t in tokens
+        if str(t.get("device_token", "")).startswith(("ExponentPushToken[", "ExpoPushToken["))
+    ]
+    if messages:
+        await integrations.push_send(messages)
 
 
 @api_router.get("/people/{person_id}/notes")
@@ -2251,15 +2246,23 @@ async def startup():
         await migrate_multitenant()
     except Exception as e:
         logger.warning(f"Multitenant migration: {e}")
-    try:
-        await run_in_threadpool(init_storage)
-    except Exception as e:
-        logger.warning(f"Storage init failed: {e}")
-
+    # Status integrasi (bukan lagi bergantung pada Emergent).
+    status = integrations.describe_config()
+    missing = [k for k, ok in status.items() if not ok]
+    if missing:
+        logger.warning("Integrasi belum dikonfigurasi: %s", ", ".join(missing))
+    else:
+        logger.info("Semua integrasi terkonfigurasi: %s", ", ".join(status))
 
 @api_router.get("/")
 async def root():
     return {"message": "KETURUNANKU API"}
+
+@api_router.get("/integrations/status")
+async def integrations_status():
+    """Diagnostik: layanan pihak ketiga mana yang sudah aktif."""
+    return integrations.describe_config()
+
 
 
 app.include_router(api_router)
