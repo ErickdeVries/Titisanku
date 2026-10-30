@@ -142,7 +142,12 @@ export type Tree = {
   member_count?: number;
   editor_count?: number;
   photo_count?: number;
-  plan_limits?: { people: number | null; editors: number | null; photos: number | null };
+  /** Batas orang & editor. Kuota foto memakai `storage_limit` (byte). */
+  plan_limits?: { people: number | null; editors: number | null };
+  /** Pemakaian penyimpanan pohon dalam byte (foto, lampiran, galeri). */
+  storage_used?: number;
+  /** Kuota penyimpanan dalam byte; null = tak terbatas. */
+  storage_limit?: number | null;
   limit: number | null;
 };
 

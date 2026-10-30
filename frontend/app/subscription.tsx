@@ -10,12 +10,13 @@ import { fonts, useTheme } from "@/src/theme";
 import { useI18n } from "@/src/i18n";
 import { useTree } from "@/src/tree-context";
 import { createSnap, paymentStatus } from "@/src/api";
+import { formatBytes } from "@/src/utils/format";
 
 type PlanId = "free" | "pro" | "family";
 const PLANS: { id: PlanId; name: string; price: string; perks: string[] }[] = [
-  { id: "free", name: "Free", price: "Gratis", perks: ["1 Pohon Keluarga", "50 Orang", "20 Foto", "3 Editor", "PDF dengan watermark"] },
-  { id: "pro", name: "Pro", price: "Rp149.000/tahun", perks: ["Pohon tak terbatas", "Orang tak terbatas", "5GB Foto", "10 Editor", "PDF tanpa watermark", "Backup Google Drive", "Tema Premium"] },
-  { id: "family", name: "Keluarga", price: "Rp199.000/tahun", perks: ["Semua fitur Pro", "50 Editor", "Cetak Buku Silsilah"] },
+  { id: "free", name: "Free", price: "Gratis", perks: ["1 Pohon Keluarga", "50 Orang", "500 MB Foto", "3 Editor", "PDF dengan watermark"] },
+  { id: "pro", name: "Pro", price: "Rp149.000/tahun", perks: ["Orang tak terbatas", "10 GB Foto", "10 Editor", "PDF tanpa watermark", "Backup Google Drive", "Tema Premium"] },
+  { id: "family", name: "Keluarga", price: "Rp199.000/tahun", perks: ["Semua fitur Pro", "25 GB Foto", "50 Editor", "Cetak Buku Silsilah"] },
 ];
 const RANK: Record<PlanId, number> = { free: 0, pro: 1, family: 2 };
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -41,10 +42,14 @@ export default function SubscriptionScreen() {
     ? expDate.toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" })
     : null;
   const limits = activeTree?.plan_limits;
+  // Kuota foto kini berbasis byte (bukan jumlah foto), mengikuti harga asli
+  // penyimpanan. Batas ini datang dari backend sebagai storage_limit.
+  const storageUsed = activeTree?.storage_used ?? 0;
+  const storageMax = activeTree?.storage_limit ?? null;
   const usage = [
-    { icon: <Users size={16} color={colors.brandSecondary} />, label: "Orang", used: activeTree?.person_count ?? 0, max: limits?.people ?? null },
-    { icon: <GitBranch size={16} color={colors.brandSecondary} />, label: "Editor", used: activeTree?.editor_count ?? 0, max: limits?.editors ?? null },
-    { icon: <ImageIcon size={16} color={colors.brandSecondary} />, label: "Foto", used: activeTree?.photo_count ?? 0, max: limits?.photos ?? null },
+    { icon: <Users size={16} color={colors.brandSecondary} />, label: "Orang", value: `${activeTree?.person_count ?? 0}${limits?.people != null ? `/${limits.people}` : ""}`, unlimited: limits?.people == null },
+    { icon: <GitBranch size={16} color={colors.brandSecondary} />, label: "Editor", value: `${activeTree?.editor_count ?? 0}${limits?.editors != null ? `/${limits.editors}` : ""}`, unlimited: limits?.editors == null },
+    { icon: <ImageIcon size={16} color={colors.brandSecondary} />, label: "Penyimpanan", value: `${formatBytes(storageUsed)}${storageMax != null ? `/${formatBytes(storageMax)}` : ""}`, unlimited: storageMax == null },
   ];
 
   const pollUntilPaid = async (orderId: string) => {
@@ -116,8 +121,8 @@ export default function SubscriptionScreen() {
             <View style={styles.usageRow}>
               {usage.map((u) => (
                 <View key={u.label} style={styles.usageItem}>
-                  <Text style={styles.usageVal}>{u.used}{u.max != null ? `/${u.max}` : ""}</Text>
-                  <Text style={styles.usageLabel}>{u.label}{u.max == null ? " ∞" : ""}</Text>
+                  <Text style={styles.usageVal}>{u.value}</Text>
+                  <Text style={styles.usageLabel}>{u.label}{u.unlimited ? " ∞" : ""}</Text>
                 </View>
               ))}
             </View>

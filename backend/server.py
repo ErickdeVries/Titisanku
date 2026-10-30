@@ -270,11 +270,18 @@ def plan_limits(plan: str) -> dict:
 def effective_plan(tree: dict) -> str:
     """Plan yang benar-benar berlaku. Plan berbayar otomatis turun ke `free`
     setelah lewat `expires_at`, supaya langganan tidak bisa dipakai selamanya
-    hanya karena frontend yang menampilkan batas waktunya."""
+    hanya karena frontend yang menampilkan batas waktunya.
+
+    PENTING: motor mengembalikan datetime NAIVE (UTC) dari MongoDB. Membandingkan
+    nilai naive dengan `now_utc()` (aware) melempar TypeError dan membuat
+    GET /trees crash 500 begitu ada pohon berbayar — yaitu tepat pada pelanggan
+    yang sudah membayar. Karena itu `expires_at` selalu dinormalkan lewat
+    `_aware()` sebelum dibandingkan.
+    """
     plan = (tree or {}).get("plan") or "free"
     if plan == "free":
         return "free"
-    exp = (tree or {}).get("expires_at")
+    exp = _aware((tree or {}).get("expires_at"))
     if exp and exp < now_utc():
         return "free"
     return plan
@@ -2046,8 +2053,14 @@ async def create_tree(body: TreeCreateInput, user=Depends(get_current_user)):
         )
     name = (body.name or "").strip() or f"Keluarga {user['name']}"
     tree = await create_tree_for_user(user, name)
+    # Payload harus identik dengan item GET /trees supaya klien bisa memakai
+    # respons ini langsung (kuota storage juga wajib ada, bukan hanya plan_limits).
+    limits = plan_limits(effective_plan(tree))
     return {**tree, "role": "admin", "person_count": 1, "member_count": 1,
-            "editor_count": 0, "photo_count": 0, "plan_limits": plan_limits("free"), "limit": 50}
+            "editor_count": 0, "photo_count": 0, "plan_limits": limits,
+            "limit": limits.get("people"),
+            "storage_used": await storage_used(tree["id"]),
+            "storage_limit": storage_limit(effective_plan(tree))}
 
 
 @api_router.post("/trees/{tid}/claim-branch")
@@ -2454,18 +2467,27 @@ async def admin_feedback(user=Depends(get_current_user)):
 
 
 @api_router.post("/trees/{tid}/upgrade")
-async def upgrade_tree(tid: str, body: UpgradeInput, user=Depends(get_current_user)):
+async def upgrade_tree(tid: str, user=Depends(get_current_user), body: Optional[UpgradeInput] = None):
     """Aktifkan plan berbayar TANPA pembayaran. Hanya untuk superadmin (uji coba
     internal / kompensasi). Upgrade berbayar wajib lewat POST /payments/snap agar
-    setiap pohon berbayar benar-benar menghasilkan pendapatan, bukan gratis."""
-    tree, role = await resolve_tree(user, tid)
+    setiap pohon berbayar benar-benar menghasilkan pendapatan, bukan gratis.
+
+    `body` dibuat OPSIONAL (default None) supaya otorisasi diperiksa LEBIH DULU:
+    dengan body wajib, FastAPI membalas 422 sebelum handler jalan, sehingga
+    non-member menerima 422 (bocor info validasi) alih-alih 403.
+    """
+    # 1) Otorisasi dulu, baru validasi input.
     if not is_superadmin(user):
         raise HTTPException(
             status_code=403,
             detail="Upgrade plan hanya dapat dilakukan melalui pembayaran",
         )
+    tree, role = await resolve_tree(user, tid)
     require_role_t(role, ["admin"])
-    plan = body.plan if body.plan in ("free", "pro", "family") else "pro"
+
+    # 2) Validasi input setelah otorisasi lolos.
+    plan = (body.plan if body else None) or "pro"
+    plan = plan if plan in ("free", "pro", "family") else "pro"
     if plan == "free":
         await db.trees.update_one({"id": tid}, {"$set": {"plan": "free"}, "$unset": {"expires_at": "", "expiry_reminder_7": "", "expiry_reminder_1": ""}})
     else:

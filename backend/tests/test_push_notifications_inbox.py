@@ -173,7 +173,11 @@ class TestUploadAndChatPhoto:
         assert r.status_code == 200, f"Upload failed: {r.status_code} {r.text}"
         data = r.json()
         assert "path" in data and data["path"], data
-        assert "url" in data and data["url"].startswith("/api/files/"), data
+        # `path` selalu path API yang bisa dipakai ulang oleh klien; `url` boleh
+        # berupa URL absolut (Firebase Storage) atau path relatif /api/files/.
+        assert data["path"].startswith("/api/files/"), data
+        assert "url" in data and data["url"], data
+        assert data["url"].startswith(("http://", "https://", "/api/files/")), data
         # Save for chat test
         pytest.uploaded_path = data["path"]
 
