@@ -9,7 +9,8 @@ import { ArrowLeft, Crown, Check, Users, Image as ImageIcon, GitBranch, Receipt,
 import { fonts, useTheme } from "@/src/theme";
 import { useI18n } from "@/src/i18n";
 import { useTree } from "@/src/tree-context";
-import { createSnap, paymentStatus } from "@/src/api";
+import { createSnap, paymentStatus, playVerify } from "@/src/api";
+import { purchasePlan, finishPlayPurchase, billingSupported } from "@/src/billing";
 import { formatBytes } from "@/src/utils/format";
 
 type PlanId = "free" | "pro" | "family";
@@ -76,8 +77,19 @@ export default function SubscriptionScreen() {
 
   const doUpgrade = async (target: PlanId) => {
     if (!activeTreeId) return;
+    if (target !== "pro" && target !== "family") return;
     setBusy(target);
     try {
+      if (billingSupported) {
+        // Android: wajib pakai Google Play Billing untuk produk digital.
+        const purchase = await purchasePlan(target);
+        const res = await playVerify(purchase.productId, purchase.purchaseToken, activeTreeId);
+        await finishPlayPurchase(purchase.purchaseToken, purchase.productId);
+        await refreshTrees();
+        Alert.alert(t("payment_success_title"), `${t("payment_success_msg")} (${res.plan})`);
+        return;
+      }
+      // Web: tetap Midtrans (Play Billing tidak berlaku di luar aplikasi Android).
       const finishUrl = Platform.OS === "web" ? window.location.origin + "/" : undefined;
       const res = await createSnap(target, finishUrl);
       if (Platform.OS === "web") {
@@ -87,8 +99,15 @@ export default function SubscriptionScreen() {
       }
       await pollUntilPaid(res.order_id);
     } catch (e) {
-      console.log("payment error", e);
-      Alert.alert(t("payment_failed_title"), t("payment_failed_msg"));
+      const msg = (e as Error)?.message;
+      if (msg === "cancelled") {
+        // pengguna membatalkan pembelian; jangan tampilkan error keras
+      } else if (msg === "unsupported") {
+        Alert.alert(t("payment_failed_title"), t("payment_failed_msg"));
+      } else {
+        console.log("payment error", e);
+        Alert.alert(t("payment_failed_title"), t("payment_failed_msg"));
+      }
     } finally {
       setBusy(null);
     }
@@ -179,6 +198,8 @@ export default function SubscriptionScreen() {
 
           {!isAdmin ? (
             <Text style={[styles.note, { color: colors.muted }]}>Hanya admin pohon yang dapat mengubah paket. Editor tetap menikmati fitur paket ini.</Text>
+          ) : billingSupported ? (
+            <Text style={[styles.note, { color: colors.muted }]}>Langganan diproses oleh Google Play. Paket aktif otomatis setelah pembayaran berhasil, dan dapat dikelola di Play Store &gt; Pembayaran &amp; langganan.</Text>
           ) : (
             <Text style={[styles.note, { color: colors.muted }]}>Pembayaran aman diproses oleh Midtrans. Paket aktif otomatis setelah pembayaran berhasil.</Text>
           )}

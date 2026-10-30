@@ -13,7 +13,7 @@ from typing import Dict, List, Optional
 import httpx
 import requests
 from fastapi import FastAPI, APIRouter, HTTPException, Header, Depends, Request, UploadFile, File, Query, Body
-from fastapi.responses import Response, JSONResponse
+from fastapi.responses import Response, JSONResponse, HTMLResponse
 from starlette.concurrency import run_in_threadpool
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -22,7 +22,9 @@ from dotenv import load_dotenv
 from pydantic import BaseModel, Field, EmailStr
 from html import escape
 
-# Integrasi pihak ketiga pengganti Emergent (Firebase Auth/Storage, Resend, Expo Push)
+import bcrypt
+
+# Integrasi pihak ketiga mandiri (Firebase Auth/Storage, Resend, Expo Push)
 import integrations
 
 ROOT_DIR = Path(__file__).parent
@@ -63,6 +65,43 @@ async def health():
     if db_error:
         payload["database_error"] = db_error
     return JSONResponse(status_code=200 if db_ok else 503, content=payload)
+
+
+_PRIVACY_SECTIONS = [
+    ("1. Data yang Kami Kumpulkan", "Kami mengumpulkan nama, alamat email, dan foto profil dari akun Google Anda saat login. Kami juga menyimpan data silsilah yang Anda buat (nama anggota keluarga, tanggal, foto, catatan, relasi) dan pesan obrolan di dalam aplikasi."),
+    ("2. Bagaimana Data Digunakan", "Data digunakan untuk menyediakan fitur pohon keluarga, kolaborasi antar anggota, obrolan, notifikasi, dan pemrosesan pembayaran langganan. Kami tidak menjual data pribadi Anda kepada pihak ketiga."),
+    ("3. Berbagi Data", "Data pohon Anda hanya dibagikan kepada anggota yang Anda undang atau setujui. Pembayaran diproses secara aman melalui Google Play Billing dan/atau Midtrans; kami tidak menyimpan detail kartu Anda."),
+    ("4. Penyimpanan Foto", "Foto yang Anda unggah disimpan pada penyimpanan objek yang aman dan hanya dapat diakses melalui aplikasi oleh anggota pohon terkait."),
+    ("5. Hak & Penghapusan Akun", "Anda dapat menghapus akun kapan saja melalui Setelan -> Hapus Akun. Menghapus akun akan menghapus permanen akun Anda beserta seluruh pohon yang Anda miliki dan datanya. Anda juga dapat keluar dari grup atau pohon yang Anda ikuti."),
+    ("6. Keamanan", "Kami menerapkan langkah keamanan yang wajar untuk melindungi data Anda. Namun, tidak ada sistem yang sepenuhnya aman; gunakan aplikasi dengan bijak."),
+    ("7. Anak-anak", "Aplikasi ini tidak ditujukan untuk anak di bawah 13 tahun tanpa pengawasan orang tua/wali."),
+    ("8. Perubahan Kebijakan", "Kebijakan ini dapat diperbarui sewaktu-waktu. Perubahan akan ditampilkan di halaman ini."),
+    ("9. Kontak", "Untuk pertanyaan terkait privasi atau permintaan data, hubungi kami di emmusic.indonesia@gmail.com."),
+]
+
+
+@app.get("/privacy", response_class=HTMLResponse, include_in_schema=False)
+async def privacy_policy():
+    """Kebijakan privasi publik (HTML) — dipakai sebagai URL wajib Play Console."""
+    sections_html = "".join(
+        f"<h2>{h}</h2><p>{p}</p>" for h, p in _PRIVACY_SECTIONS
+    )
+    html = (
+        "<!DOCTYPE html><html lang=\"id\"><head><meta charset=\"utf-8\">"
+        "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
+        "<title>Kebijakan Privasi - Titisanku</title>"
+        "<style>body{font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;max-width:760px;"
+        "margin:0 auto;padding:24px 20px 64px;line-height:1.6;color:#1f2937;background:#fff}"
+        "h1{color:#12275C;font-size:28px}h2{color:#12275C;font-size:18px;margin-top:24px}"
+        ".updated{color:#6b7280;font-size:13px;margin-top:8px}</style></head><body>"
+        "<h1>Kebijakan Privasi Titisanku</h1>"
+        "<p>Titisanku menghargai privasi Anda. Kebijakan ini menjelaskan bagaimana kami "
+        "mengumpulkan, menggunakan, dan melindungi data Anda saat menggunakan aplikasi.</p>"
+        f"{sections_html}"
+        "<p class=\"updated\">Terakhir diperbarui: Juni 2026</p>"
+        "</body></html>"
+    )
+    return HTMLResponse(content=html, status_code=200)
 
 
 # ---------------------------------------------------------------------------
@@ -194,6 +233,34 @@ class AcceptInviteInput(BaseModel):
 
 class SessionInput(BaseModel):
     session_id: str
+
+
+class RegisterInput(BaseModel):
+    username: str
+    password: str
+    name: str = ""
+
+
+class LoginInput(BaseModel):
+    username: str
+    password: str
+
+
+# Email palsu untuk akun username/password (dipakai sebagai identitas unik user).
+def _username_email(username: str) -> str:
+    return f"{username.lower()}@user.titisanku.app"
+
+
+def _hash_password(password: str) -> str:
+    salt = bcrypt.gensalt(rounds=12)
+    return bcrypt.hashpw(password.encode("utf-8")[:72], salt).decode("utf-8")
+
+
+def _verify_password(password: str, password_hash: str) -> bool:
+    try:
+        return bcrypt.checkpw(password.encode("utf-8")[:72], password_hash.encode("utf-8"))
+    except (ValueError, TypeError):
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -727,6 +794,187 @@ async def auth_session(body: SessionInput):
             detail="Database tidak tersedia. Periksa konfigurasi MongoDB.",
         )
     return {"session_token": session_token, "user": user}
+
+
+def _issue_session(user_id: str) -> str:
+    """Buat session_token aplikasi untuk user_id (dipakai login username/password & demo)."""
+    return secrets.token_urlsafe(32)
+
+
+async def _create_user_session(user_id: str) -> str:
+    token = _issue_session(user_id)
+    await db.user_sessions.insert_one({
+        "session_token": token,
+        "user_id": user_id,
+        "created_at": now_utc(),
+        "expires_at": now_utc() + timedelta(days=7),
+    })
+    return token
+
+
+@api_router.post("/auth/register")
+async def auth_register(body: RegisterInput):
+    """Daftar akun dengan username + password (tanpa layanan OAuth eksternal)."""
+    username = (body.username or "").strip().lower()
+    password = body.password or ""
+    if not (3 <= len(username) <= 32):
+        raise HTTPException(status_code=400, detail="Username harus 3-32 karakter")
+    if not username.replace("_", "").replace(".", "").isalnum():
+        raise HTTPException(status_code=400, detail="Username hanya huruf, angka, titik, garis bawah")
+    if len(password) < 8:
+        raise HTTPException(status_code=400, detail="Password minimal 8 karakter")
+    email = _username_email(username)
+    if await db.users.find_one({"username": username}):
+        raise HTTPException(status_code=409, detail="Username sudah dipakai")
+    user_count = await db.users.count_documents({})
+    role = "admin" if user_count == 0 else "viewer"
+    user_id = f"user_{uuid.uuid4().hex[:12]}"
+    doc = {
+        "user_id": user_id,
+        "username": username,
+        "email": email,
+        "name": (body.name or username).strip() or username,
+        "picture": None,
+        "role": role,
+        "password_hash": _hash_password(password),
+        "created_at": now_utc(),
+    }
+    await db.users.insert_one(doc)
+    token = await _create_user_session(user_id)
+    user = await db.users.find_one({"user_id": user_id}, {"_id": 0, "password_hash": 0})
+    return {"session_token": token, "user": user}
+
+
+@api_router.post("/auth/login")
+async def auth_login(body: LoginInput):
+    """Masuk dengan username + password."""
+    username = (body.username or "").strip().lower()
+    password = body.password or ""
+    user = await db.users.find_one({"username": username})
+    if not user or not user.get("password_hash"):
+        raise HTTPException(status_code=401, detail="Username atau password salah")
+    if not _verify_password(password, user["password_hash"]):
+        raise HTTPException(status_code=401, detail="Username atau password salah")
+    token = await _create_user_session(user["user_id"])
+    out = {k: v for k, v in user.items() if k not in ("_id", "password_hash")}
+    return {"session_token": token, "user": out}
+
+
+@api_router.post("/auth/demo")
+async def auth_demo():
+    """Login cepat ke akun demo (untuk reviewer Play) + seed data contoh bila belum ada.
+
+    Dimatikan secara default; aktifkan dengan DEMO_LOGIN_ENABLED=true di env.
+    """
+    if os.environ.get("DEMO_LOGIN_ENABLED", "false").lower() != "true":
+        raise HTTPException(status_code=404, detail="Demo login tidak aktif")
+    demo_user = await db.users.find_one({"username": "demo"}, {"_id": 0})
+    if not demo_user:
+        demo_password = os.environ.get("DEMO_PASSWORD", "titisanku-demo")
+        user_id = f"user_{uuid.uuid4().hex[:12]}"
+        await db.users.insert_one({
+            "user_id": user_id,
+            "username": "demo",
+            "email": _username_email("demo"),
+            "name": "Keluarga Contoh",
+            "picture": None,
+            "role": "admin",
+            "password_hash": _hash_password(demo_password),
+            "demo": True,
+            "created_at": now_utc(),
+        })
+        demo_user = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+        await seed_demo_tree(demo_user)
+    token = await _create_user_session(demo_user["user_id"])
+    out = {k: v for k, v in demo_user.items() if k not in ("_id", "password_hash")}
+    return {"session_token": token, "user": out}
+
+
+async def seed_demo_tree(user: dict) -> None:
+    """Buat pohon "Keluarga Contoh" 3 generasi agar reviewer langsung melihat isi."""
+    try:
+        existing = await db.trees.find_one({"owner_id": user["user_id"], "demo": True})
+        if existing:
+            return
+        tree_id = str(uuid.uuid4())
+
+        def person(name, gender, birth, is_root=False):
+            return {
+                "id": str(uuid.uuid4()),
+                "tree_id": tree_id,
+                "name": name,
+                "gender": gender,
+                "birth_date": birth,
+                "photo_url": None,
+                "is_alive": True,
+                "is_root": is_root,
+                "created_by": user["user_id"],
+                "created_at": now_utc(),
+                "deleted_at": None,
+            }
+
+        # Generasi 1 (kakek-nenek)
+        grandfather = person("Sutrisno Hartono", "male", "1945-08-17", is_root=True)
+        grandmother = person("Sri Wahyuni", "female", "1948-03-02")
+        # Generasi 2
+        father = person("Budi Hartono", "male", "1972-05-21")
+        mother = person("Ratna Dewi", "female", "1975-11-09")
+        uncle = person("Agus Hartono", "male", "1976-01-15")
+        # Generasi 3
+        child1 = person("Dewi Hartono", "female", "2001-02-14")
+        child2 = person("Rian Hartono", "male", "2004-06-30")
+        # Generasi 4
+        grandchild = person("Aisyah Putri", "female", "2022-10-05")
+
+        people = [grandfather, grandmother, father, mother, uncle, child1, child2, grandchild]
+        await db.people.insert_many(people)
+
+        def rel(person_id, related_person_id, relation_type):
+            return {
+                "id": str(uuid.uuid4()),
+                "tree_id": tree_id,
+                "person_id": person_id,
+                "related_person_id": related_person_id,
+                "relation_type": relation_type,
+                "created_at": now_utc(),
+                "deleted_at": None,
+            }
+
+        # relation_type "parent" = person_id adalah orang tua dari related_person_id
+        rels = [
+            rel(grandfather["id"], grandmother["id"], "spouse"),
+            rel(grandfather["id"], father["id"], "parent"),
+            rel(grandmother["id"], father["id"], "parent"),
+            rel(grandfather["id"], uncle["id"], "parent"),
+            rel(grandmother["id"], uncle["id"], "parent"),
+            rel(father["id"], mother["id"], "spouse"),
+            rel(father["id"], child1["id"], "parent"),
+            rel(mother["id"], child1["id"], "parent"),
+            rel(father["id"], child2["id"], "parent"),
+            rel(mother["id"], child2["id"], "parent"),
+            rel(child1["id"], grandchild["id"], "parent"),
+        ]
+        await db.relations.insert_many(rels)
+
+        await db.trees.insert_one({
+            "id": tree_id,
+            "name": "Keluarga Contoh",
+            "owner_id": user["user_id"],
+            "plan": "family",
+            "is_public": False,
+            "root_person_id": grandfather["id"],
+            "demo": True,
+            "created_at": now_utc(),
+        })
+        await db.tree_members.insert_one({
+            "id": str(uuid.uuid4()),
+            "tree_id": tree_id,
+            "user_id": user["user_id"],
+            "role": "admin",
+            "joined_at": now_utc(),
+        })
+    except PyMongoError as e:
+        logger.error("seed demo tree gagal: %s", e)
 
 
 @api_router.get("/auth/me")
@@ -2511,6 +2759,81 @@ async def _activate_order(order):
     await db.payment_orders.update_one({"order_id": order["order_id"]}, {"$set": {"status": "paid", "paid_at": now_utc()}})
 
 
+# ---------------------------------------------------------------------------
+# Google Play Billing — verifikasi pembelian langganan (Android)
+# ---------------------------------------------------------------------------
+# Pemetaan product ID Play -> plan internal. Sesuaikan bila ID produk berbeda
+# (lihat PLAY_BILLING_SETUP.md). Produk dibuat sebagai langganan tahunan.
+PLAY_PRODUCTS = {
+    "titisanku_pro_yearly": "pro",
+    "titisanku_family_yearly": "family",
+}
+
+
+class PlayVerifyInput(BaseModel):
+    product_id: str
+    purchase_token: str
+    tree_id: Optional[str] = None
+
+
+@api_router.get("/payments/play/products")
+async def play_products():
+    """Daftar product ID + plan agar frontend bisa memetakan produk Play."""
+    return {"products": [{"product_id": k, "plan": v} for k, v in PLAY_PRODUCTS.items()],
+            "package": os.environ.get("PLAY_PACKAGE_NAME", "")}
+
+
+@api_router.post("/payments/play/verify")
+async def play_verify(body: PlayVerifyInput, tree_id: Optional[str] = Query(None), user=Depends(get_current_user)):
+    """Verifikasi pembelian Play lalu aktifkan plan pohon. Idempoten per order_id Play."""
+    plan = PLAY_PRODUCTS.get(body.product_id)
+    if not plan:
+        raise HTTPException(status_code=400, detail="Produk tidak dikenal")
+    tid = body.tree_id or tree_id
+    tree, role = await resolve_tree(user, tid)
+    require_role_t(role, ["admin"])
+
+    try:
+        sub = integrations.verify_play_subscription(body.purchase_token, body.product_id)
+    except integrations.IntegrationError as e:
+        logger.warning("play/verify gagal: %s", e)
+        raise HTTPException(status_code=400, detail="Pembelian tidak dapat diverifikasi")
+
+    # Status pembayaran harus aktif (0 = aktif, 1 = dibatalkan, 2 = ditunda, 3 = tertunda).
+    payment_state = sub.get("paymentState")
+    if payment_state not in (0, 1, 2):
+        raise HTTPException(status_code=402, detail="Pembayaran belum selesai")
+
+    order_id = sub.get("orderId") or f"PLAY-{secrets.token_hex(6)}"
+    existing = await db.payment_orders.find_one({"order_id": order_id}, {"_id": 0})
+    if existing and existing.get("status") == "paid":
+        return {"ok": True, "plan": plan, "already": True}
+
+    await db.payment_orders.update_one(
+        {"order_id": order_id},
+        {"$set": {
+            "order_id": order_id, "user_id": user["user_id"], "tree_id": tree["id"],
+            "plan": plan, "amount": 0, "provider": "play",
+            "product_id": body.product_id, "purchase_token": body.purchase_token,
+            "status": "paid", "paid_at": now_utc(), "created_at": existing.get("created_at", now_utc()) if existing else now_utc(),
+        }},
+        upsert=True,
+    )
+    await db.trees.update_one(
+        {"id": tree["id"]},
+        {"$set": {"plan": plan, "upgraded_at": now_utc(), "expires_at": now_utc() + timedelta(days=365)},
+         "$unset": {"expiry_reminder_7": "", "expiry_reminder_1": ""}},
+    )
+
+    # Acknowledge agar Play tidak membatalkan otomatis (best-effort).
+    try:
+        await run_in_threadpool(integrations.acknowledge_play_purchase, body.product_id, body.purchase_token)
+    except Exception as e:  # pragma: no cover - hanya peringatan
+        logger.warning("acknowledge Play gagal: %s", e)
+
+    return {"ok": True, "plan": plan}
+
+
 @api_router.post("/payments/snap")
 async def create_snap(body: PaymentInput, tree_id: Optional[str] = Query(None), user=Depends(get_current_user)):
     if not MIDTRANS_SERVER_KEY:
@@ -2792,7 +3115,7 @@ async def startup():
         await migrate_multitenant()
     except Exception as e:
         logger.warning(f"Multitenant migration: {e}")
-    # Status integrasi (bukan lagi bergantung pada Emergent).
+    # Status integrasi eksternal (Firebase/Resend/Expo Push/Midtrans).
     status = integrations.describe_config()
     missing = [k for k, ok in status.items() if not ok]
     if missing:

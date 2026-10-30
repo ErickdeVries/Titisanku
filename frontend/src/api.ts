@@ -114,6 +114,11 @@ export type User = {
 // ---- Auth ----
 export const authSession = (session_id: string) =>
   apiFetch("/auth/session", { method: "POST", body: JSON.stringify({ session_id }) });
+export const loginWithPassword = (username: string, password: string) =>
+  apiFetch("/auth/login", { method: "POST", body: JSON.stringify({ username, password }) });
+export const registerWithPassword = (username: string, password: string, name: string) =>
+  apiFetch("/auth/register", { method: "POST", body: JSON.stringify({ username, password, name }) });
+export const demoLogin = () => apiFetch("/auth/demo", { method: "POST" });
 export const getMe = () => apiFetch("/auth/me");
 export const updateProfile = (data: { name?: string; picture?: string }) =>
   apiFetch("/users/me", { method: "PUT", body: JSON.stringify(data) });
@@ -193,6 +198,11 @@ export const createSnap = (plan: string, finishUrl?: string): Promise<{ order_id
   apiFetch("/payments/snap", { method: "POST", body: JSON.stringify({ plan, finish_url: finishUrl }) });
 export const paymentStatus = (orderId: string): Promise<{ status: string; plan: string }> =>
   apiFetch(`/payments/status/${orderId}`);
+export const playVerify = (productId: string, purchaseToken: string, treeId?: string): Promise<{ ok: boolean; plan: string; already?: boolean }> =>
+  apiFetch("/payments/play/verify", {
+    method: "POST",
+    body: JSON.stringify({ product_id: productId, purchase_token: purchaseToken, tree_id: treeId }),
+  });
 export type PaymentOrder = { order_id: string; plan: string; amount: number; status: string; created_at: string; paid_at?: string; tree_name?: string };
 export const paymentHistory = (): Promise<{ orders: PaymentOrder[] }> =>
   apiFetch("/payments/history");

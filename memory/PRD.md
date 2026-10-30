@@ -8,12 +8,21 @@ JSON backup, and email collaboration invites. Google login; first user = admin +
 
 ## Architecture
 - Backend: FastAPI (`/app/backend/server.py`), MongoDB (motor).
-  Collections: `users`, `people`, `relations`, `user_sessions`, `invites`, `meta`.
-- Auth: Emergent-managed Google OAuth (session_token, 7-day). First user → admin + root person.
-- Storage: Emergent Object Storage for person photos (`/api/upload`, `/api/files/{path}`).
-- Email: Emergent-managed Resend for collaboration invites.
+  Collections: `users`, `people`, `relations`, `user_sessions`, `invites`, `meta` (+ chat/tree/app_notifications).
+- Auth: **Firebase Auth — Google Sign-In langsung dari Firebase SDK client** (`src/firebase.ts`,
+  `EXPO_PUBLIC_FIREBASE_*` + `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID`). Backend memverifikasi Firebase ID token
+  via `integrations.verify_firebase_id_token` → menerbitkan `session_token` milik aplikasi (7 hari).
+- Storage: **Firebase Storage** (foto profil, galeri, lampiran chat) via `integrations.py`.
+- Email: **Resend** (`RESEND_API_KEY`) untuk undangan kolaborasi.
+- Push: **Expo Push** (`expo-notifications` + backend `send_push`).
+- Pembayaran: **Midtrans Snap** (PRO/FAMILY, tahunan) — lihat catatan risiko Play di `docs/play-review/REVIEW_AUDIT.md`.
 - Frontend: Expo Router. Tabs: Tree / Search / Add / Settings. Poppins font, white bg,
   gradient CTAs. Tree canvas uses react-native-gesture-handler + reanimated + react-native-svg.
+
+> STATUS MIGRASI (2026-10-30): Ketergantungan ke **Emergent SUDAH DILEPAS total** — tidak ada lagi
+> OAuth `auth.emergentagent.com`, objstore, email, maupun push dari Emergent di kode aktif. Entri-entri
+> historis di bawah yang menyebut "Emergent" adalah catatan masa lalu (arsip), bukan arsitektur saat ini.
+> Sisa yang sudah dibersihkan: komentar kode, `.emergent/`, `.env.example`.
 
 ## User Personas
 - Family historian (admin): builds and maintains the tree, invites relatives.
