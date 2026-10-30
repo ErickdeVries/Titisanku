@@ -8,7 +8,7 @@ import hashlib
 from collections import deque
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import httpx
 import requests
@@ -2769,6 +2769,27 @@ PLAY_PRODUCTS = {
     "titisanku_family_yearly": "family",
 }
 
+# paymentState menurut Google Play Developer API:
+#   0 = Payment pending (belum dibayar)      -> JANGAN aktifkan
+#   1 = Payment received (berhasil)          -> aktifkan
+#   2 = Free trial                            -> aktifkan
+#   3 = Pending deferred upgrade/downgrade   -> JANGAN aktifkan
+PLAY_ACTIVE_PAYMENT_STATES = (1, 2)
+
+
+def play_payment_is_active(subscription: Dict[str, Any]) -> bool:
+    """True hanya bila pembayaran Play sukses (1) atau free trial (2).
+
+    Nilai pending (0/3), hilang, atau tak dikenal dianggap belum aktif.
+    """
+    raw = subscription.get("paymentState")
+    try:
+        state = int(raw)
+    except (TypeError, ValueError):
+        return False
+    return state in PLAY_ACTIVE_PAYMENT_STATES
+
+
 
 class PlayVerifyInput(BaseModel):
     product_id: str
@@ -2799,15 +2820,28 @@ async def play_verify(body: PlayVerifyInput, tree_id: Optional[str] = Query(None
         logger.warning("play/verify gagal: %s", e)
         raise HTTPException(status_code=400, detail="Pembelian tidak dapat diverifikasi")
 
-    # Status pembayaran harus aktif (0 = aktif, 1 = dibatalkan, 2 = ditunda, 3 = tertunda).
-    payment_state = sub.get("paymentState")
-    if payment_state not in (0, 1, 2):
+    # paymentState menurut Google Play Developer API:
+    #   0 = Payment pending (belum dibayar)  -> JANGAN aktifkan
+    #   1 = Payment received (berhasil)      -> aktifkan
+    #   2 = Free trial                        -> aktifkan
+    #   3 = Pending deferred upgrade/downgrade -> JANGAN aktifkan
+    # Hanya 1 & 2 (lihat play_payment_is_active) yang boleh mengaktifkan plan.
+    if not play_payment_is_active(sub):
+        logger.info(
+            "play/verify: paymentState=%s tidak aktif untuk order=%s (user=%s)",
+            sub.get("paymentState"), sub.get("orderId"), user.get("user_id"),
+        )
         raise HTTPException(status_code=402, detail="Pembayaran belum selesai")
 
-    order_id = sub.get("orderId") or f"PLAY-{secrets.token_hex(6)}"
-    existing = await db.payment_orders.find_one({"order_id": order_id}, {"_id": 0})
+    # Idempotensi berbasis purchase_token: token Play unik per pembelian, jadi
+    # verifikasi ulang token yang sama tidak boleh membuat order baru / membuka
+    # plan berkali-kali. orderId dipakai sebagai kunci utama tampilan.
+    existing = await db.payment_orders.find_one({"purchase_token": body.purchase_token}, {"_id": 0})
     if existing and existing.get("status") == "paid":
-        return {"ok": True, "plan": plan, "already": True}
+        return {"ok": True, "plan": existing.get("plan", plan), "already": True}
+
+    # Prioritas order_id: order lama (bila ada) -> orderId Play -> generate.
+    order_id = (existing or {}).get("order_id") or sub.get("orderId") or f"PLAY-{secrets.token_hex(6)}"
 
     await db.payment_orders.update_one(
         {"order_id": order_id},
