@@ -8,7 +8,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Feather from "@react-native-vector-icons/feather";
 import { fonts, makeStyles, useTheme } from "@/src/theme";
-import { chatContacts, openDirect, createGroup, fileUrl, uploadPhoto, ChatContact } from "@/src/api";
+import { chatContacts, openDirect, createGroup, fileUrl, uploadPhoto, ChatContact, limitMessage } from "@/src/api";
 import { compressImage } from "@/src/utils/image";
 import { useTree } from "@/src/tree-context";
 import { useI18n } from "@/src/i18n";
@@ -81,7 +81,7 @@ export default function NewChatScreen() {
       const path = await uploadPhoto(compressed);
       setGroupPhoto(path);
     } catch (e: any) {
-      Alert.alert(t("error_generic"), e?.message || "");
+      Alert.alert(t("error_generic"), limitMessage(e) || e?.message || "");
     } finally {
       setUploadingPhoto(false);
     }

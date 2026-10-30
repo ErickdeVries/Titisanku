@@ -41,10 +41,30 @@ async function apiFetch(path: string, opts: RequestInit = {}) {
     } catch {}
     const err: any = new Error(detail);
     err.status = res.status;
+    err.detail = detail;
     throw err;
   }
   const text = await res.text();
   return text ? JSON.parse(text) : null;
+}
+
+/**
+ * Ubah error API menjadi pesan yang bisa ditampilkan ke pengguna.
+ * Backend mengirim detail berprefix (STORAGE_LIMIT:/MEMBER_LIMIT:/EDITOR_LIMIT:)
+ * agar frontend tahu ini batas paket, bukan kerusakan sistem.
+ */
+export function limitMessage(e: any): string | null {
+  const detail = typeof e?.detail === "string" ? e.detail
+    : typeof e?.message === "string" ? e.message : "";
+  const clean = detail.replace(/^[A-Z_]+:/, "").trim();
+  if (e?.status === 402) {
+    return clean || "Kuota paket Anda sudah penuh. Upgrade plan untuk melanjutkan.";
+  }
+  return null;
+}
+
+export function isLimitError(e: any): boolean {
+  return e?.status === 402;
 }
 
 export type Person = {
@@ -62,11 +82,16 @@ export type Person = {
   is_root?: boolean;
   note_count?: number;
   gallery?: GalleryPhoto[];
-  privacy?: Record<string, boolean> | null;
+  privacy?: Record<string, PrivacyEntry> | null;
   redacted_fields?: string[];
 };
 
 export type PrivacyField = "birth_date" | "birth_place" | "job" | "death_date" | "notes";
+
+/** One field's visibility. `hidden` with an empty `allow` means "nobody else";
+ *  `allow` lists the members who may still see it. The API always returns this
+ *  shape, even for records saved before allow-lists existed. */
+export type PrivacyEntry = { hidden: boolean; allow: string[] };
 
 export type Relation = {
   id: string;
@@ -195,8 +220,10 @@ export const addFirstPerson = (person: any): Promise<Person> =>
   apiFetch("/people/first", { method: "POST", body: JSON.stringify(person) });
 export const updatePerson = (id: string, data: any) =>
   apiFetch(`/people/${id}`, { method: "PUT", body: JSON.stringify(data) });
-export const setPersonPrivacy = (id: string, privacy: Record<string, boolean>) =>
-  apiFetch(`/people/${id}/privacy`, { method: "PUT", body: JSON.stringify(privacy) });
+export const setPersonPrivacy = (
+  id: string,
+  privacy: Record<string, PrivacyEntry | boolean>,
+) => apiFetch(`/people/${id}/privacy`, { method: "PUT", body: JSON.stringify(privacy) });
 export const deletePerson = (id: string) => apiFetch(`/people/${id}`, { method: "DELETE" });
 
 // ---- Backup / Invites ----

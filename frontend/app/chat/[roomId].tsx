@@ -13,7 +13,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Feather from "@react-native-vector-icons/feather";
 import { fonts, makeStyles, useTheme, usePremiumTheme, bgColor } from "@/src/theme";
-import { getChat, sendChat, deleteChat, setTyping, uploadPhoto, fileUrl, markNotificationsRead, muteRoom, leaveGroup } from "@/src/api";
+import { getChat, sendChat, deleteChat, setTyping, uploadPhoto, fileUrl, markNotificationsRead, muteRoom, leaveGroup, limitMessage } from "@/src/api";
 import { compressImage } from "@/src/utils/image";
 import { storage } from "@/src/utils/storage";
 import { CHAT_SOUND_STORAGE_KEY, ChatSound, DEFAULT_CHAT_SOUND, soundByKey } from "@/src/utils/chat-sounds";
@@ -316,7 +316,7 @@ export default function ChatRoomScreen() {
       await qc.invalidateQueries({ queryKey: ["chat", roomId] });
     } catch (e: any) {
       console.log("photo send error", e);
-      Alert.alert(t("photo"), e?.message || "Upload failed");
+      Alert.alert(t("photo"), limitMessage(e) || e?.message || "Upload failed");
     } finally {
       setSending(false);
     }

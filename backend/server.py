@@ -1,4 +1,5 @@
 import os
+import io
 import uuid
 import time
 import logging
@@ -129,6 +130,11 @@ def get_object(path: str):
     """Unduh objek dari Firebase Storage."""
     return integrations.storage_download(path)
 
+
+def object_size(path: str):
+    """Ukuran objek (byte) dari metadata storage, atau None bila tak ditemukan."""
+    return integrations.storage_size(path)
+
 # ---------------------------------------------------------------------------
 # Email - Resend (lihat backend/integrations.py)
 # ---------------------------------------------------------------------------
@@ -221,12 +227,39 @@ def require_role(user, roles):
 # ---------------------------------------------------------------------------
 FREE_PERSON_LIMIT = 50
 
+# Kuota penyimpanan per pohon dalam BYTE. Dibatasi berdasarkan total ukuran file,
+# bukan jumlah foto, karena biaya server mengikuti ukuran (satu foto ponsel bisa
+# 4-8 MB, sedangkan foto terkompresi hanya ~300 KB).
+MB = 1024 * 1024
+GB = 1024 * MB
+
+
+def _storage_limit_mb(env_key: str, default_mb: int) -> int:
+    """Kuota storage dalam byte, bisa ditimpa lewat env (memudahkan tes).
+
+    Nilai default tetap seperti semula (free 500 MB, pro 10 GB, ...). Override
+    hanya dipakai bila env diisi angka > 0.
+    """
+    raw = (os.environ.get(env_key) or "").strip()
+    if raw.isdigit() and int(raw) > 0:
+        return int(raw) * MB
+    return default_mb * MB
+
+
+STORAGE_LIMITS = {
+    "free": _storage_limit_mb("STORAGE_LIMIT_FREE_MB", 500),
+    "pro": _storage_limit_mb("STORAGE_LIMIT_PRO_MB", 10 * 1024),
+    "family": _storage_limit_mb("STORAGE_LIMIT_FAMILY_MB", 25 * 1024),
+    "unlimited": None,  # None = tak terbatas
+}
+
 # Subscription plan limits. None = unlimited.
+# Kuota penyimpanan file TIDAK di sini — lihat STORAGE_LIMITS (berbasis byte).
 PLAN_LIMITS = {
-    "free": {"people": 50, "editors": 3, "photos": 20},
-    "pro": {"people": None, "editors": 10, "photos": None},
-    "family": {"people": None, "editors": 50, "photos": None},
-    "unlimited": {"people": None, "editors": None, "photos": None},
+    "free": {"people": 50, "editors": 3},
+    "pro": {"people": None, "editors": 10},
+    "family": {"people": None, "editors": 50},
+    "unlimited": {"people": None, "editors": None},
 }
 
 
@@ -234,14 +267,205 @@ def plan_limits(plan: str) -> dict:
     return PLAN_LIMITS.get(plan or "free", PLAN_LIMITS["free"])
 
 
+def effective_plan(tree: dict) -> str:
+    """Plan yang benar-benar berlaku. Plan berbayar otomatis turun ke `free`
+    setelah lewat `expires_at`, supaya langganan tidak bisa dipakai selamanya
+    hanya karena frontend yang menampilkan batas waktunya."""
+    plan = (tree or {}).get("plan") or "free"
+    if plan == "free":
+        return "free"
+    exp = (tree or {}).get("expires_at")
+    if exp and exp < now_utc():
+        return "free"
+    return plan
+
+
 async def editor_count(tree_id: str) -> int:
     return await db.tree_members.count_documents({"tree_id": tree_id, "role": "editor"})
 
 
+async def member_count(tree_id: str) -> int:
+    """Jumlah akun yang bergabung ke pohon (semua role, termasuk admin)."""
+    return await db.tree_members.count_documents({"tree_id": tree_id})
+
+
+async def owned_tree_count(user_id: str) -> int:
+    """Jumlah pohon AKTIF milik user. delete_tree melakukan hard delete, jadi
+    setiap baris di db.trees adalah pohon yang masih ada."""
+    return await db.trees.count_documents({"owner_id": user_id})
+
+
+def member_limit(plan: str) -> Optional[int]:
+    """Kuota anggota yang boleh bergabung ke satu pohon = kuota editor plan.
+
+    Anggota login tidak pernah melebihi editor karena hanya admin & editor yang
+    dihitung sebagai kolaborator aktif; viewer tetap terikat batas yang sama
+    agar jumlah akun di dalam satu pohon tidak tak terbatas."""
+    return plan_limits(plan).get("editors")
+
+async def ensure_can_join(tree: dict) -> None:
+    """Tolak penambahan anggota bila kuota anggota plan pohon sudah penuh."""
+    lim = member_limit(effective_plan(tree))
+    if lim is not None and await member_count(tree["id"]) >= lim:
+        raise HTTPException(
+            status_code=402,
+            detail=f"MEMBER_LIMIT:Batas {lim} anggota untuk paket ini sudah tercapai. "
+                   f"Upgrade plan untuk menambah anggota.",
+        )
+
+
+# --- Penyimpanan: kuota ukuran & kompresi foto -------------------------------
+
+def storage_limit(plan: str) -> Optional[int]:
+    """Kuota penyimpanan (byte) untuk plan tsb. None = tak terbatas."""
+    return STORAGE_LIMITS.get(plan or "free", STORAGE_LIMITS["free"])
+
+
+def fmt_size(num_bytes: int) -> str:
+    if num_bytes >= GB:
+        return f"{num_bytes / GB:.1f} GB"
+    return f"{num_bytes / MB:.0f} MB"
+
+
+async def storage_used(tree_id: str) -> int:
+    """Total byte yang dipakai pohon. Disimpan di koleksi `tree_usage` agar tidak
+    perlu menjumlah ulang seluruh lampiran pada setiap upload."""
+    row = await db.tree_usage.find_one({"tree_id": tree_id}, {"_id": 0, "bytes": 1})
+    return int((row or {}).get("bytes", 0) or 0)
+
+
+async def add_storage_usage(tree_id: str, delta: int) -> None:
+    if delta == 0:
+        return
+    row = await db.tree_usage.update_one(
+        {"tree_id": tree_id}, {"$inc": {"bytes": delta}, "$set": {"updated_at": now_utc()}}, upsert=True
+    )
+    # Jangan biarkan penghitung turun di bawah nol karena data lama/penghapusan ganda.
+    if delta < 0:
+        await db.tree_usage.update_one({"tree_id": tree_id, "bytes": {"$lt": 0}}, {"$set": {"bytes": 0}})
+
+
+async def ensure_storage_room(tree: dict, incoming: int) -> None:
+    """Tolak upload bila kuota penyimpanan pohon akan terlampaui."""
+    lim = storage_limit(effective_plan(tree))
+    if lim is None:
+        return
+    used = await storage_used(tree["id"])
+    if used + incoming > lim:
+        sisa = max(0, lim - used)
+        raise HTTPException(
+            status_code=402,
+            detail=f"STORAGE_LIMIT:Kuota penyimpanan paket ini {fmt_size(lim)} sudah hampir penuh "
+                   f"(tersisa {fmt_size(sisa)}). Upgrade plan untuk menambah ruang.",
+        )
+
+
+def _normalize_photo_path(raw) -> Optional[str]:
+    """Samakan bentuk rujukan foto agar path yang sama tidak dihitung dua kali."""
+    if not raw or not isinstance(raw, str):
+        return None
+    p = raw.strip()
+    if not p:
+        return None
+    if p.startswith("/api/files/"):
+        p = p[len("/api/files/"):]
+    p = p.split("?")[0]
+    if p.startswith(("http://", "https://")):
+        marker = "/o/"
+        if marker in p:
+            from urllib.parse import unquote
+            p = unquote(p.split(marker, 1)[1])
+        else:
+            return None
+    # Skema lain (gs://, ftp://, data:, dsb.) bukan path storage yang bisa ditaksir.
+    if "://" in p or p.startswith("data:"):
+        return None
+    return p.lstrip("/") or None
+
+
+async def _sum_storage_bytes(paths) -> int:
+    """Total ukuran file dari metadata storage. Path tak ditemukan dihitung 0."""
+    total = 0
+    for path in paths:
+        try:
+            size = await run_in_threadpool(object_size, path)
+        except FileNotFoundError:
+            continue
+        except Exception as exc:  # konfigurasi/jaringan: jangan gagalkan claim
+            logger.warning("claim-branch: gagal membaca ukuran %s: %s", path, exc)
+            continue
+        if size:
+            total += size
+    return total
+
+
+MAX_IMAGE_DIMENSION = 1920
+JPEG_QUALITY = 85
+# Lewat batas ini kompresi dijalankan di thread pool agar event loop tetap responsif.
+COMPRESS_IN_THREAD_THRESHOLD = 512 * 1024
+
+_COMPRESSIBLE_EXTS = {"jpg", "jpeg", "png", "webp", "heic", "heif", "bmp", "tif", "tiff"}
+
+
+def _compress_image_sync(data: bytes) -> tuple:
+    """Kecilkan foto ke maks 1920px sisi terpanjang & re-encode JPEG kualitas 85.
+
+    Mengembalikan (bytes_baru, ext, content_type). Bila hasil kompresi tidak lebih
+    kecil, atau file bukan gambar yang bisa dibaca, data asli dikembalikan utuh.
+    """
+    try:
+        from PIL import Image, ImageOps
+    except ImportError:  # pragma: no cover - Pillow wajib ada di requirements
+        return data, None, None
+
+    with io.BytesIO(data) as raw:
+        try:
+            img = Image.open(raw)
+            img.load()
+        except Exception:
+            return data, None, None
+
+        # Terapkan rotasi EXIF agar foto potret dari ponsel tidak tampil miring
+        # setelah diratakan ke JPEG (orientasi EXIF hilang saat re-encode).
+        img = ImageOps.exif_transpose(img)
+
+        if img.mode in ("RGBA", "LA", "P"):
+            # Latar putih untuk transparansi agar tidak jadi hitam saat JPEG.
+            img = img.convert("RGBA")
+            canvas = Image.new("RGB", img.size, (255, 255, 255))
+            canvas.paste(img, mask=img.split()[-1])
+            img = canvas
+        elif img.mode != "RGB":
+            img = img.convert("RGB")
+
+        w, h = img.size
+        if max(w, h) > MAX_IMAGE_DIMENSION:
+            img.thumbnail((MAX_IMAGE_DIMENSION, MAX_IMAGE_DIMENSION), Image.LANCZOS)
+
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=JPEG_QUALITY, optimize=True, progressive=True)
+        out = buf.getvalue()
+
+    if len(out) >= len(data):
+        return data, None, None
+    return out, "jpg", "image/jpeg"
+
+
+async def compress_image(data: bytes, ext: str) -> tuple:
+    """Kompres foto bila memungkinkan. Return (bytes, ext, content_type)."""
+    if ext not in _COMPRESSIBLE_EXTS or not data:
+        return data, ext, None
+    if len(data) < COMPRESS_IN_THREAD_THRESHOLD:
+        new_data, new_ext, ctype = _compress_image_sync(data)
+    else:
+        new_data, new_ext, ctype = await run_in_threadpool(_compress_image_sync, data)
+    if new_ext is None:
+        return data, ext, None
+    return new_data, new_ext, ctype
+
+
 async def photo_count(tree_id: str) -> int:
     return await db.person_notes.count_documents({"tree_id": tree_id, "attachments": {"$ne": []}, "deleted_at": None})
-
-
 async def gallery_count(tree_id: str) -> int:
     pipeline = [
         {"$match": {"tree_id": tree_id, "deleted_at": None}},
@@ -301,6 +525,12 @@ async def resolve_tree(user, tree_id: Optional[str]):
 
 
 def require_role_t(role, roles):
+    # `resolve_tree` returns (None, None) when the caller is signed in but does
+    # not belong to any tree yet (e.g. a brand-new user). Endpoints below use
+    # tree["id"] right after this check, so reject early with a 403 instead of
+    # letting a `None` tree blow up into a 500 further down.
+    if role is None:
+        raise HTTPException(status_code=403, detail="Anda belum tergabung dalam pohon keluarga mana pun")
     if role not in roles:
         raise HTTPException(status_code=403, detail="Permission denied")
 
@@ -319,25 +549,60 @@ SENSITIVE_PERSON_FIELDS = (
 )
 
 
+def _privacy_entry(value) -> dict:
+    """Normalise one privacy entry to {"hidden": bool, "allow": [user_id, ...]}.
+
+    Two shapes are accepted so old records keep working:
+      - bool            -> {"hidden": value, "allow": []}   (legacy, hide from all)
+      - {"hidden": .., "allow": [..]}                      (current)
+    """
+    if isinstance(value, dict):
+        return {
+            "hidden": bool(value.get("hidden")),
+            "allow": [str(u) for u in (value.get("allow") or []) if u],
+        }
+    return {"hidden": bool(value), "allow": []}
+
+
+def _entry_visible_to(entry: dict, uid: Optional[str]) -> bool:
+    """A field is visible when it is not hidden, or when an allow-list exists
+    and the caller is on it. `hidden` alone means "nobody else"."""
+    if not entry.get("hidden"):
+        return True
+    if uid and uid in entry.get("allow", []):
+        return True
+    return False
+
+
 def redact_person(p: dict, user, role: Optional[str], tree: Optional[dict] = None) -> dict:
-    """Strip hidden personal fields from a person record unless the caller is
-    allowed to see them. Mutates and returns the record."""
+    """Strip personal fields the caller may not see. Mutates and returns the
+    record. `privacy` is always rewritten to the normalised shape so the client
+    only has to understand one format."""
     if not p:
         return p
-    privacy = p.get("privacy") or {}
-    if not privacy:
+    raw = p.get("privacy") or {}
+    if not raw:
         return p
+    # Always hand the client the normalised map, even to people who may see
+    # everything, so the UI never has to parse legacy bare booleans.
+    p["privacy"] = {f: _privacy_entry(v) for f, v in raw.items()
+                    if f in SENSITIVE_PERSON_FIELDS}
     # Always allowed: the person's creator, superadmin, tree admin.
     uid = (user or {}).get("user_id")
     if p.get("created_by") and p.get("created_by") == uid:
         return p
     if is_superadmin(user or {}) or role == "admin":
         return p
-    for field, hidden in privacy.items():
-        if hidden and field in SENSITIVE_PERSON_FIELDS:
+
+    redacted = []
+    for field, entry in p["privacy"].items():
+        if not _entry_visible_to(entry, uid):
             p[field] = None
+            redacted.append(field)
+
     # Signal to the client that something was withheld.
-    p["redacted_fields"] = [f for f, h in privacy.items() if h and f in SENSITIVE_PERSON_FIELDS]
+    if redacted:
+        p["redacted_fields"] = redacted
     return p
 
 
@@ -522,7 +787,9 @@ async def get_tree(tree_id: Optional[str] = Query(None), user=Depends(get_curren
         "tree": tree,
         "role": role,
         "person_count": len(people),
-        "limit": plan_limits(tree.get("plan")).get("people"),
+        "limit": plan_limits(effective_plan(tree)).get("people"),
+        "storage_used": await storage_used(tree["id"]),
+        "storage_limit": storage_limit(effective_plan(tree)),
     }
 
 
@@ -568,9 +835,9 @@ async def add_gallery_photo(person_id: str, body: GalleryInput, tree_id: Optiona
     person = await db.people.find_one({"id": person_id, "tree_id": tree["id"], "deleted_at": None}, {"_id": 0})
     if not person:
         raise HTTPException(status_code=404, detail="Person not found")
-    lim_photos = plan_limits(tree.get("plan")).get("photos")
-    if lim_photos is not None and (await photo_count(tree["id"]) + await gallery_count(tree["id"])) >= lim_photos:
-        raise HTTPException(status_code=402, detail=f"PHOTO_LIMIT:Batas {lim_photos} foto untuk paket gratis sudah tercapai. Upgrade untuk galeri tak terbatas.")
+    # Kuota penyimpanan sudah ditegakkan di endpoint /upload (foto ini diunggah
+    # lebih dulu dan ukurannya sudah dicatat). Jangan dicek ulang di sini agar
+    # tidak menghitung ganda dan tidak memblokir penambahan galeri tanpa upload.
     if not body.path:
         raise HTTPException(status_code=400, detail="path wajib diisi")
     item = {"id": str(uuid.uuid4()), "path": body.path, "caption": body.caption or "", "date": body.date or "", "created_at": now_utc()}
@@ -611,6 +878,10 @@ async def update_person(person_id: str, data: PersonData, tree_id: Optional[str]
     if not p:
         raise HTTPException(status_code=404, detail="Person not found")
     d = data.model_dump()
+    # Privacy is managed only via PUT /people/{id}/privacy. Drop it here so a
+    # normal edit (the app's form does not send `privacy`) cannot wipe the map
+    # and silently un-hide fields for every other member of the tree.
+    d.pop("privacy", None)
     is_alive = d.pop("is_alive", None)
     if is_alive is None:
         is_alive = not bool(d.get("death_date"))
@@ -620,11 +891,18 @@ async def update_person(person_id: str, data: PersonData, tree_id: Optional[str]
 
 
 @api_router.put("/people/{person_id}/privacy")
-async def set_person_privacy(person_id: str, body: Dict[str, bool], tree_id: Optional[str] = Query(None), user=Depends(get_current_user)):
-    """Set which personal fields are hidden from other members of the tree.
+async def set_person_privacy(person_id: str, body: Dict[str, object], tree_id: Optional[str] = Query(None), user=Depends(get_current_user)):
+    """Set which personal fields are hidden, and optionally open them to
+    specific members.
 
-    Body example: {"birth_date": true, "job": true} -> hide those fields.
-    Allowed for the record's creator, tree admins and superadmins.
+    Body accepts either legacy booleans or the richer per-field object:
+      {"job": true}                                   -> hide from everyone else
+      {"job": {"hidden": true, "allow": [user_id]}}   -> hidden except those users
+      {"job": {"hidden": false}}                      -> visible to all members
+
+    Keys not present in the body are left untouched, so the client can update
+    one field without clobbering the rest. Allowed for the record's creator,
+    tree admins and superadmins.
     """
     tree, role = await resolve_tree(user, tree_id)
     if not tree:
@@ -635,9 +913,29 @@ async def set_person_privacy(person_id: str, body: Dict[str, bool], tree_id: Opt
     is_owner = p.get("created_by") == user["user_id"]
     if not (is_owner or is_superadmin(user) or role == "admin"):
         raise HTTPException(status_code=403, detail="Hanya pemilik data atau admin pohon yang dapat mengubah privasi")
-    clean = {f: bool(v) for f, v in (body or {}).items() if f in SENSITIVE_PERSON_FIELDS}
-    await db.people.update_one({"id": person_id, "tree_id": tree["id"]}, {"$set": {"privacy": clean}})
-    return {"ok": True, "privacy": clean}
+
+    # Only members of this tree may be granted access - otherwise a record could
+    # be exposed to a user from another family.
+    member_ids = {
+        m["user_id"]
+        async for m in db.tree_members.find({"tree_id": tree["id"]}, {"user_id": 1})
+    }
+
+    existing = {f: _privacy_entry(v) for f, v in (p.get("privacy") or {}).items()
+                if f in SENSITIVE_PERSON_FIELDS}
+    updates = {}
+    for field, value in (body or {}).items():
+        if field not in SENSITIVE_PERSON_FIELDS:
+            continue
+        entry = _privacy_entry(value)
+        entry["allow"] = [u for u in entry["allow"] if u in member_ids]
+        updates[field] = entry
+
+    merged = {**existing, **updates}
+    # Drop fields that are effectively public so the stored map stays small.
+    merged = {f: e for f, e in merged.items() if e["hidden"] or e["allow"]}
+    await db.people.update_one({"id": person_id, "tree_id": tree["id"]}, {"$set": {"privacy": merged}})
+    return {"ok": True, "privacy": merged}
 
 
 @api_router.delete("/people/{person_id}")
@@ -771,7 +1069,7 @@ async def add_relative(body: AddRelativeInput, tree_id: Optional[str] = Query(No
     tree, role = await resolve_tree(user, tree_id)
     require_role_t(role, ["admin", "editor"])
     # Subscription limit for people
-    lim_people = plan_limits(tree.get("plan")).get("people")
+    lim_people = plan_limits(effective_plan(tree)).get("people")
     if lim_people is not None:
         count = await tree_person_count(tree["id"])
         if count >= lim_people:
@@ -925,12 +1223,17 @@ async def upload_file(file: UploadFile = File(...), tree_id: Optional[str] = Que
     require_role_t(role, ["admin", "editor"])
     content = await file.read()
     ext = (file.filename or "photo.jpg").split(".")[-1].lower()
+    # Kompres foto sebelum cek kuota, supaya yang ditolak/diterima adalah ukuran
+    # yang benar-benar disimpan (bukan ukuran asli ponsel).
+    content, ext, ctype = await compress_image(content, ext)
+    await ensure_storage_room(tree, len(content))
     path = f"{APP_NAME}/uploads/{user['user_id']}/{uuid.uuid4().hex}.{ext}"
     try:
-        result = await run_in_threadpool(put_object, path, content, file.content_type or "image/jpeg")
+        result = await run_in_threadpool(put_object, path, content, ctype or file.content_type or "image/jpeg")
     except integrations.IntegrationError as e:
         logger.error("Upload gagal: %s", e)
         raise HTTPException(status_code=503, detail=f"Penyimpanan file belum siap: {e}")
+    await add_storage_usage(tree["id"], len(content))
     stored = result["path"]
     # `url` memakai URL publik Firebase Storage bila tersedia, fallback ke proxy /api/files.
     return {"path": stored, "url": result.get("url") or f"/api/files/{stored}"}
@@ -1096,6 +1399,8 @@ async def is_user_deceased(tree_id: str, user) -> bool:
 
 async def resolve_room(tree, user, room_id: Optional[str]):
     """Return a room dict {id,type,name,member_ids,tree_id,can_send} or raise."""
+    if not tree:
+        raise HTTPException(status_code=403, detail="Anda belum tergabung dalam pohon keluarga mana pun")
     tid = tree["id"]
     rows = await db.tree_members.find({"tree_id": tid}, {"_id": 0, "user_id": 1, "role": 1}).to_list(2000)
     all_ids = [r["user_id"] for r in rows]
@@ -1253,6 +1558,8 @@ async def send_push(recipients: list, data: dict, idempotency_key: Optional[str]
 @api_router.get("/people/{person_id}/notes")
 async def list_person_notes(person_id: str, tree_id: Optional[str] = Query(None), user=Depends(get_current_user)):
     tree, role = await resolve_tree(user, tree_id)
+    if not tree:
+        return []
     notes = await db.person_notes.find({"person_id": person_id, "tree_id": tree["id"], "deleted_at": None}, {"_id": 0}).sort("created_at", -1).to_list(2000)
     return _serialize(notes)
 
@@ -1287,13 +1594,13 @@ async def add_person_file(person_id: str, file: UploadFile = File(...), tree_id:
     person = await db.people.find_one({"id": person_id, "tree_id": tree["id"], "deleted_at": None}, {"_id": 0})
     if not person:
         raise HTTPException(status_code=404, detail="Person not found")
-    lim_photos = plan_limits(tree.get("plan")).get("photos")
-    if lim_photos is not None and await photo_count(tree["id"]) >= lim_photos:
-        raise HTTPException(status_code=402, detail=f"PHOTO_LIMIT:Batas {lim_photos} foto/file untuk paket gratis sudah tercapai. Upgrade untuk penyimpanan lebih besar.")
     content = await file.read()
     ext = (file.filename or "file").split(".")[-1].lower()
+    content, ext, ctype = await compress_image(content, ext)
+    await ensure_storage_room(tree, len(content))
     path = f"{APP_NAME}/uploads/{user['user_id']}/{uuid.uuid4().hex}.{ext}"
-    result = await run_in_threadpool(put_object, path, content, file.content_type or "application/octet-stream")
+    result = await run_in_threadpool(put_object, path, content, ctype or file.content_type or "application/octet-stream")
+    await add_storage_usage(tree["id"], len(content))
     doc = {
         "id": str(uuid.uuid4()),
         "person_id": person_id,
@@ -1335,6 +1642,8 @@ class MuteInput(BaseModel):
 @api_router.put("/chat/rooms/{room_id}")
 async def update_group(room_id: str, body: GroupUpdateInput, tree_id: Optional[str] = Query(None), user=Depends(get_current_user)):
     tree, role = await resolve_tree(user, tree_id)
+    if not tree:
+        raise HTTPException(status_code=403, detail="Anda belum tergabung dalam pohon keluarga mana pun")
     room = await db.chat_rooms.find_one({"id": room_id, "tree_id": tree["id"]}, {"_id": 0})
     if not room or room.get("type") != "group":
         raise HTTPException(status_code=404, detail="Grup tidak ditemukan")
@@ -1467,6 +1776,8 @@ async def create_group(body: GroupCreateInput, tree_id: Optional[str] = Query(No
 @api_router.post("/chat/direct")
 async def open_direct(body: DirectInput, tree_id: Optional[str] = Query(None), user=Depends(get_current_user)):
     tree, role = await resolve_tree(user, tree_id)
+    if not tree:
+        raise HTTPException(status_code=403, detail="Anda belum tergabung dalam pohon keluarga mana pun")
     other = body.user_id
     if other == user["user_id"]:
         raise HTTPException(status_code=400, detail="Tidak bisa chat dengan diri sendiri")
@@ -1704,7 +2015,7 @@ async def list_trees(user=Depends(get_current_user)):
             tree = await _check_plan_expiry(tree)
         count = await tree_person_count(tree["id"])
         member_count = await db.tree_members.count_documents({"tree_id": tree["id"]})
-        limits = plan_limits(tree.get("plan"))
+        limits = plan_limits(effective_plan(tree))
         out.append({
             **tree,
             "role": m["role"],
@@ -1714,12 +2025,25 @@ async def list_trees(user=Depends(get_current_user)):
             "photo_count": await photo_count(tree["id"]),
             "plan_limits": limits,
             "limit": limits.get("people"),
+            "storage_used": await storage_used(tree["id"]),
+            "storage_limit": storage_limit(effective_plan(tree)),
         })
     return out
 
 
 @api_router.post("/trees")
 async def create_tree(body: TreeCreateInput, user=Depends(get_current_user)):
+    # Setiap pengguna hanya boleh memiliki SATU pohon aktif miliknya sendiri.
+    # Bergabung ke pohon orang lain (undangan / join-request) tidak dihitung,
+    # jadi user whitelist tetap bisa ikut pohon pengundang DAN punya pohon sendiri.
+    # Pohon yang sudah dihapus (hard delete) tidak dihitung, sehingga user boleh
+    # membuat pohon baru setelah menghapus pohon lamanya.
+    if await owned_tree_count(user["user_id"]) >= 1:
+        raise HTTPException(
+            status_code=409,
+            detail="Anda sudah memiliki satu pohon. Hapus pohon tersebut terlebih dahulu "
+                   "untuk membuat pohon baru.",
+        )
     name = (body.name or "").strip() or f"Keluarga {user['name']}"
     tree = await create_tree_for_user(user, name)
     return {**tree, "role": "admin", "person_count": 1, "member_count": 1,
@@ -1731,6 +2055,8 @@ async def claim_branch(tid: str, body: ClaimBranchInput, user=Depends(get_curren
     """Copy a person (and, per scope, their family) into a NEW tree owned by the
     caller. The source tree stays intact. New tree is always plan=free."""
     tree, role = await resolve_tree(user, tid)  # any member may claim
+    if not tree:
+        raise HTTPException(status_code=403, detail="Anda bukan anggota pohon ini")
     scope = body.scope if body.scope in ("descendants", "children", "whole") else "descendants"
 
     people = await db.people.find({"tree_id": tid, "deleted_at": None}, {"_id": 0}).to_list(5000)
@@ -1774,6 +2100,43 @@ async def claim_branch(tid: str, body: ClaimBranchInput, user=Depends(get_curren
     # Create the new tree (free) owned by the caller, without an auto root person.
     default_name = next((p["name"] for p in people if p["id"] == body.person_id), user["name"])
     new_name = (body.name or "").strip() or f"Cabang {default_name}"
+
+    # Kuota orang: pohon baru selalu plan=free. Tanpa cek ini, cabang berisi
+    # 300 orang bisa disalin dari pohon pro dan langsung menembus batas 50.
+    lim_people = plan_limits("free").get("people")
+    if lim_people is not None and len(selected) > lim_people:
+        raise HTTPException(
+            status_code=402,
+            detail=f"LIMIT_REACHED:Cabang ini berisi {len(selected)} orang, melebihi batas "
+                   f"{lim_people} orang untuk paket free. Pilih cabang yang lebih kecil "
+                   f"(mis. scope 'children').",
+        )
+
+    # Kuota penyimpanan: foto orang TIDAK disalin, hanya `photo_url`/`path` yang
+    # dirujuk ulang. File di storage dipakai bersama, tetapi biayanya tetap nyata,
+    # jadi pohon hasil claim harus menanggung porsi byte-nya.
+    photo_paths = set()
+    for p in people:
+        if p["id"] not in selected:
+            continue
+        for raw in [p.get("photo_url")] + [
+            (g or {}).get("path") for g in (p.get("gallery") or [])
+        ]:
+            norm = _normalize_photo_path(raw)
+            if norm:
+                photo_paths.add(norm)
+    inherited_bytes = 0
+    if photo_paths:
+        inherited_bytes = await _sum_storage_bytes(photo_paths)
+    lim_storage = storage_limit("free")
+    if lim_storage is not None and inherited_bytes > lim_storage:
+        raise HTTPException(
+            status_code=402,
+            detail=f"STORAGE_LIMIT:Foto pada cabang ini ({fmt_size(inherited_bytes)}) melebihi "
+                   f"kuota penyimpanan paket free ({fmt_size(lim_storage)}). "
+                   f"Pilih cabang yang lebih kecil atau upgrade setelah dibuat.",
+        )
+
     new_tree = await create_tree_for_user(user, new_name, make_root=False)
     new_tid = new_tree["id"]
 
@@ -1816,11 +2179,17 @@ async def claim_branch(tid: str, body: ClaimBranchInput, user=Depends(get_curren
     root_new_id = id_map.get(body.person_id)
     await db.trees.update_one({"id": new_tid}, {"$set": {"root_person_id": root_new_id}})
 
+    # Catat byte warisan foto. Tanpa ini pohon hasil claim tampak 0 MB dan
+    # pengguna bisa terus mengunggah melewati kuota free.
+    if inherited_bytes:
+        await add_storage_usage(new_tid, inherited_bytes)
+
     count = len(new_people)
     return {
         **new_tree, "root_person_id": root_new_id, "role": "admin",
         "person_count": count, "member_count": 1, "editor_count": 0, "photo_count": 0,
         "plan_limits": plan_limits("free"), "limit": FREE_PERSON_LIMIT, "copied": count,
+        "storage_used": inherited_bytes,
     }
 
 
@@ -1884,6 +2253,7 @@ async def act_join_request(req_id: str, action: str, user=Depends(get_current_us
     require_role_t(role, ["admin"])
     if action == "approve":
         if not await db.tree_members.find_one({"tree_id": req["tree_id"], "user_id": req["user_id"]}):
+            await ensure_can_join(tree)
             await db.tree_members.insert_one({
                 "id": str(uuid.uuid4()), "tree_id": req["tree_id"], "user_id": req["user_id"],
                 "role": "editor", "joined_at": now_utc(),
@@ -1917,6 +2287,7 @@ async def _purge_tree(tid: str):
     await db.family_chat.delete_many({"room_id": {"$in": room_ids}})
     await db.chat_typing.delete_many({"room_id": {"$in": room_ids}})
     await db.chat_mutes.delete_many({"room_id": {"$in": room_ids}})
+    await db.tree_usage.delete_one({"tree_id": tid})
 
 
 @api_router.delete("/trees/{tid}")
@@ -1934,6 +2305,8 @@ async def delete_tree(tid: str, user=Depends(get_current_user)):
 @api_router.post("/chat/rooms/{room_id}/leave")
 async def leave_group(room_id: str, tree_id: Optional[str] = Query(None), user=Depends(get_current_user)):
     tree, role = await resolve_tree(user, tree_id)
+    if not tree:
+        raise HTTPException(status_code=403, detail="Anda belum tergabung dalam pohon keluarga mana pun")
     room = await db.chat_rooms.find_one({"id": room_id, "tree_id": tree["id"]}, {"_id": 0})
     if not room or room.get("type") != "group":
         raise HTTPException(status_code=404, detail="Grup tidak ditemukan")
@@ -2082,9 +2455,15 @@ async def admin_feedback(user=Depends(get_current_user)):
 
 @api_router.post("/trees/{tid}/upgrade")
 async def upgrade_tree(tid: str, body: UpgradeInput, user=Depends(get_current_user)):
-    """Activate a paid plan for a tree (admin only). Payment via Midtrans is
-    handled separately; in simulation mode this activates the plan directly."""
+    """Aktifkan plan berbayar TANPA pembayaran. Hanya untuk superadmin (uji coba
+    internal / kompensasi). Upgrade berbayar wajib lewat POST /payments/snap agar
+    setiap pohon berbayar benar-benar menghasilkan pendapatan, bukan gratis."""
     tree, role = await resolve_tree(user, tid)
+    if not is_superadmin(user):
+        raise HTTPException(
+            status_code=403,
+            detail="Upgrade plan hanya dapat dilakukan melalui pembayaran",
+        )
     require_role_t(role, ["admin"])
     plan = body.plan if body.plan in ("free", "pro", "family") else "pro"
     if plan == "free":
@@ -2157,6 +2536,16 @@ async def midtrans_notification(payload: dict = Body(...)):
     tstatus = payload.get("transaction_status")
     fraud = payload.get("fraud_status")
     if tstatus in ("capture", "settlement") and fraud in (None, "accept"):
+        # Pastikan uang yang dibayar sesuai harga paket yang dibeli. Tanpa cek ini
+        # notifikasi dengan gross_amount lebih kecil tetap mengaktifkan plan penuh.
+        try:
+            paid = int(round(float(gross_amount)))
+        except (TypeError, ValueError):
+            paid = -1
+        if paid != int(order.get("amount", -1)):
+            logger.warning("midtrans: nominal tidak cocok untuk %s (bayar=%s, tagihan=%s)",
+                           order_id, gross_amount, order.get("amount"))
+            return {"ok": True}
         await _activate_order(order)
     elif tstatus in ("cancel", "deny", "expire"):
         await db.payment_orders.update_one({"order_id": order_id}, {"$set": {"status": "failed"}})
@@ -2200,6 +2589,8 @@ async def payment_history(user=Depends(get_current_user)):
 @api_router.get("/trees/{tid}/members")
 async def list_members(tid: str, user=Depends(get_current_user)):
     tree, role = await resolve_tree(user, tid)
+    if not tree:
+        raise HTTPException(status_code=403, detail="Anda bukan anggota pohon ini")
     members = await db.tree_members.find({"tree_id": tid}, {"_id": 0}).to_list(2000)
     out = []
     for m in members:
@@ -2225,7 +2616,7 @@ async def change_member_role(tid: str, body: MemberRoleInput, user=Depends(get_c
         raise HTTPException(status_code=400, detail="Peran tidak valid")
     current = await db.tree_members.find_one({"tree_id": tid, "user_id": body.user_id}, {"_id": 0})
     if body.role == "editor" and (not current or current.get("role") != "editor"):
-        lim_ed = plan_limits(tree.get("plan")).get("editors")
+        lim_ed = plan_limits(effective_plan(tree)).get("editors")
         if lim_ed is not None and await editor_count(tid) >= lim_ed:
             raise HTTPException(status_code=402, detail=f"EDITOR_LIMIT:Batas {lim_ed} editor untuk paket ini sudah tercapai.")
     await db.tree_members.update_one({"tree_id": tid, "user_id": body.user_id}, {"$set": {"role": body.role}})
@@ -2292,7 +2683,8 @@ async def invite_accept(token: str, user=Depends(get_current_user)):
         raise HTTPException(status_code=404, detail="Pohon tidak ditemukan")
     existing = await db.tree_members.find_one({"tree_id": inv["tree_id"], "user_id": user["user_id"]})
     if not existing:
-        lim_ed = plan_limits(tree.get("plan")).get("editors")
+        await ensure_can_join(tree)
+        lim_ed = plan_limits(effective_plan(tree)).get("editors")
         if lim_ed is not None and await editor_count(inv["tree_id"]) >= lim_ed:
             raise HTTPException(status_code=402, detail=f"EDITOR_LIMIT:Batas {lim_ed} editor untuk paket ini sudah tercapai. Upgrade untuk menambah editor.")
         await db.tree_members.insert_one({

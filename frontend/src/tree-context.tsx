@@ -90,6 +90,11 @@ export function TreeProvider({ children }: { children: React.ReactNode }) {
     loadedFor.current = userId;
     clearTree();
     if (userId) {
+      // Stay in the loading state until bootstrap finishes. Without this the
+      // provider momentarily renders with loading=false AND trees=[], which
+      // makes the root guard think the user owns no tree and redirects them
+      // to /welcome even though their trees are about to load.
+      setLoading(true);
       setTimeout(bootstrap, 0);
     } else {
       setLoading(false);

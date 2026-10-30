@@ -345,6 +345,39 @@ def storage_download(path: str) -> tuple[bytes, str]:
     return resp.content, resp.headers.get("Content-Type", "application/octet-stream")
 
 
+def storage_size(path: str) -> Optional[int]:
+    """Ukuran objek dalam byte, dibaca dari metadata GCS (tanpa mengunduh isinya).
+
+    Mengembalikan None bila objek tidak ada. Dipakai skrip backfill kuota
+    penyimpanan agar tidak perlu mengunduh seluruh file lama.
+    """
+    bucket = env("FIREBASE_STORAGE_BUCKET")
+    if not bucket:
+        raise IntegrationError("Firebase Storage belum dikonfigurasi: set FIREBASE_STORAGE_BUCKET.")
+
+    token = firebase_access_token()
+    url = f"https://storage.googleapis.com/storage/v1/b/{bucket}/o/{requests.utils.quote(path, safe='')}"
+    resp = requests.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=30)
+    if resp.status_code == 404:
+        return None
+    if resp.status_code == 200:
+        size = resp.json().get("size")
+        return int(size) if size is not None else None
+    # Fallback: ambil metadata lewat HEAD pada media (beberapa konfigurasi
+    # bucket membatasi JSON API metadata tetapi mengizinkan media).
+    url_media = f"https://storage.googleapis.com/download/storage/v1/b/{bucket}/o/{requests.utils.quote(path, safe='')}"
+    r2 = requests.get(url_media, params={"alt": "media"},
+                      headers={"Authorization": f"Bearer {token}", "Range": "bytes=0-0"}, timeout=30)
+    if r2.status_code in (200, 206):
+        cr = r2.headers.get("Content-Range") or ""
+        if "/" in cr:
+            try:
+                return int(cr.rsplit("/", 1)[1])
+            except ValueError:
+                return None
+    raise IntegrationError(f"Gagal membaca metadata Firebase Storage: {resp.status_code}")
+
+
 # ---------------------------------------------------------------------------
 # Resend — email transaksional
 # ---------------------------------------------------------------------------

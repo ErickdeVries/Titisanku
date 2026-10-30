@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { View, Text, Pressable, StyleSheet, ScrollView, TextInput, ActivityIndicator, Modal } from "react-native";
+import { View, Text, Pressable, StyleSheet, ScrollView, TextInput, ActivityIndicator, Modal, Alert } from "react-native";
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useMutation } from "@tanstack/react-query";
@@ -31,6 +31,17 @@ export default function TreesScreen() {
       setCreateOpen(false);
       setName("");
       goBack();
+    },
+    onError: (e: any) => {
+      // 409 = pengguna sudah punya satu pohon aktif. Satu pohon per pengguna;
+      // untuk pohon lain, bergabung lewat undangan dari pemiliknya.
+      setCreateOpen(false);
+      Alert.alert(
+        "Sudah punya pohon",
+        e?.status === 409
+          ? "Anda sudah memiliki satu pohon. Hapus pohon tersebut terlebih dahulu untuk membuat pohon baru."
+          : "Gagal membuat pohon. Silakan coba lagi."
+      );
     },
   });
 

@@ -11,7 +11,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Feather from "@react-native-vector-icons/feather";
 import { fonts, makeStyles, useTheme } from "@/src/theme";
-import { getPerson, updatePerson, deletePerson, fileUrl, getTree, listPersonNotes, addPersonNote, addPersonFile, deleteNote, deleteRelation, updateRelation, uploadPhoto, addGalleryPhoto, editGalleryPhoto, removeGalleryPhoto, GalleryPhoto, setPersonPrivacy, PrivacyField } from "@/src/api";
+import { getPerson, updatePerson, deletePerson, fileUrl, getTree, listPersonNotes, addPersonNote, addPersonFile, deleteNote, deleteRelation, updateRelation, uploadPhoto, addGalleryPhoto, editGalleryPhoto, removeGalleryPhoto, GalleryPhoto, setPersonPrivacy, PrivacyField, PrivacyEntry, getMembers, limitMessage } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { useI18n } from "@/src/i18n";
 import { useTree } from "@/src/tree-context";
@@ -68,6 +68,10 @@ const useStyles = makeStyles((c) => ({
   privacyPillOn: { backgroundColor: c.brandTertiary },
   privacyPillText: { fontFamily: fonts.medium, fontSize: 11, color: c.muted },
   privacyPillTextOn: { color: c.onBrandTertiary },
+  privacyAllowList: { paddingLeft: 28, paddingRight: 8, paddingBottom: 8, gap: 6 },
+  privacyAllowHint: { fontFamily: fonts.regular, fontSize: 11, color: c.muted },
+  privacyAllowRow: { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 3 },
+  privacyAllowName: { fontFamily: fonts.regular, fontSize: 12, color: c.onSurface, flex: 1 },
   privacySave: { marginTop: 6, backgroundColor: c.brandPrimary, borderRadius: 12, paddingVertical: 11, alignItems: "center" },
   privacySaveText: { fontFamily: fonts.semibold, fontSize: 13, color: c.onBrand },
   marriageTitle: { fontFamily: fonts.semibold, fontSize: 13, color: c.muted, textTransform: "uppercase", letterSpacing: 0.5, marginHorizontal: 20, marginTop: 20, marginBottom: 8 },
@@ -207,6 +211,8 @@ export default function PersonDetail() {
       await qc.invalidateQueries({ queryKey: ["tree"] });
     } catch (e) {
       console.log("file error", e);
+      const msg = limitMessage(e);
+      if (msg) Alert.alert("Penyimpanan penuh", msg);
     } finally {
       setFileBusy(false);
     }
@@ -249,6 +255,8 @@ export default function PersonDetail() {
       if (added) openCaption(added);
     } catch (e) {
       console.log("gallery add error", e);
+      const msg = limitMessage(e);
+      if (msg) Alert.alert("Penyimpanan penuh", msg);
     } finally {
       setGalleryBusy(false);
     }
@@ -324,26 +332,51 @@ export default function PersonDetail() {
   const redacted: string[] = useMemo(() => (person as any)?.redacted_fields ?? [], [person]);
   const canEditPrivacy = !!person && (isAdmin || ((person as any).created_by && (person as any).created_by === user?.user_id));
   const [privacySaving, setPrivacySaving] = useState(false);
+  // Members who could be granted access to a hidden field.
+  const { data: membersData } = useQuery({
+    queryKey: ["members", tree?.tree?.id],
+    queryFn: () => getMembers(tree!.tree.id),
+    enabled: !!tree?.tree?.id && canEditPrivacy,
+  });
+  const grantableMembers = useMemo(
+    () => (membersData?.members ?? []).filter((m) => m.user_id !== user?.user_id),
+    [membersData, user?.user_id],
+  );
   // Edits made in this session, keyed by person id. Saved values are rendered
   // from the server copy, so the draft resets automatically when the person
   // changes or the server data is refreshed (no state writes in an effect).
-  const [privacyDraft, setPrivacyDraft] = useState<{ id: string | null; values: Record<string, boolean> }>({
+  const [privacyDraft, setPrivacyDraft] = useState<{ id: string | null; values: Record<string, PrivacyEntry> }>({
     id: null,
     values: {},
   });
-  const privacyValues: Record<string, boolean> =
-    privacyDraft.id === person?.id ? privacyDraft.values : (person as any)?.privacy ?? {};
-  const setPrivacyField = (key: string, value: boolean) =>
-    setPrivacyDraft((prev) => ({
-      id: person?.id ?? null,
-      values: { ...(prev.id === person?.id ? prev.values : (person as any)?.privacy ?? {}), [key]: value },
-    }));
-  const privacyDirty = useMemo(() => {
-    const cur = (person as any)?.privacy ?? {};
-    const draft = privacyValues;
-    return PRIVACY_FIELDS.some((f) => !!draft[f.key] !== !!cur[f.key]);
+  const savedPrivacy: Record<string, PrivacyEntry> = (person as any)?.privacy ?? {};
+  const privacyValues: Record<string, PrivacyEntry> =
+    privacyDraft.id === person?.id ? privacyDraft.values : savedPrivacy;
+  const entryOf = (key: string): PrivacyEntry => privacyValues[key] ?? { hidden: false, allow: [] };
+  const setPrivacyField = (key: string, patch: Partial<PrivacyEntry>) =>
+    setPrivacyDraft((prev) => {
+      const base = prev.id === person?.id ? prev.values : savedPrivacy;
+      return {
+        id: person?.id ?? null,
+        values: { ...base, [key]: { ...(base[key] ?? { hidden: false, allow: [] }), ...patch } },
+      };
+    });
+  /** Toggle a member's access to a hidden field. */
+  const toggleAllow = (key: string, userId: string) => {
+    const cur = entryOf(key);
+    const allow = cur.allow.includes(userId)
+      ? cur.allow.filter((u) => u !== userId)
+      : [...cur.allow, userId];
+    setPrivacyField(key, { allow });
+  };
+  const entryEquals = (a?: PrivacyEntry, b?: PrivacyEntry) =>
+    (a?.hidden ?? false) === (b?.hidden ?? false) &&
+    [...(a?.allow ?? [])].sort().join() === [...(b?.allow ?? [])].sort().join();
+  const privacyDirty = useMemo(
+    () => PRIVACY_FIELDS.some((f) => !entryEquals(privacyValues[f.key], savedPrivacy[f.key])),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [privacyValues, person]);
+    [privacyValues, person],
+  );
   const savePrivacy = async () => {
     if (!person) return;
     setPrivacySaving(true);
@@ -714,23 +747,56 @@ export default function PersonDetail() {
                     Data yang disembunyikan tidak akan terlihat oleh anggota lain dalam pohon ini.
                   </Text>
                   {PRIVACY_FIELDS.map((f) => {
-                    const isHidden = !!privacyValues[f.key];
+                    const entry = entryOf(f.key);
+                    const isHidden = entry.hidden;
                     return (
-                      <Pressable
-                        key={f.key}
-                        style={styles.privacyRow}
-                        onPress={() => setPrivacyField(f.key, !isHidden)}
-                        disabled={privacySaving}
-                        testID={`privacy-toggle-${f.key}`}
-                      >
-                        <Feather name={f.icon as any} size={16} color={colors.muted} />
-                        <Text style={styles.privacyLabel}>{f.label}</Text>
-                        <View style={[styles.privacyPill, isHidden && styles.privacyPillOn]}>
-                          <Text style={[styles.privacyPillText, isHidden && styles.privacyPillTextOn]}>
-                            {isHidden ? "Disembunyikan" : "Terlihat"}
-                          </Text>
-                        </View>
-                      </Pressable>
+                      <View key={f.key}>
+                        <Pressable
+                          style={styles.privacyRow}
+                          onPress={() => setPrivacyField(f.key, { hidden: !isHidden })}
+                          disabled={privacySaving}
+                          testID={`privacy-toggle-${f.key}`}
+                        >
+                          <Feather name={f.icon as any} size={16} color={colors.muted} />
+                          <Text style={styles.privacyLabel}>{f.label}</Text>
+                          <View style={[styles.privacyPill, isHidden && styles.privacyPillOn]}>
+                            <Text style={[styles.privacyPillText, isHidden && styles.privacyPillTextOn]}>
+                              {isHidden
+                                ? entry.allow.length
+                                  ? `Dibuka untuk ${entry.allow.length}`
+                                  : "Disembunyikan"
+                                : "Terlihat"}
+                            </Text>
+                          </View>
+                        </Pressable>
+                        {/* Who may still see this field - only matters when hidden. */}
+                        {isHidden && grantableMembers.length ? (
+                          <View style={styles.privacyAllowList} testID={`privacy-allow-${f.key}`}>
+                            <Text style={styles.privacyAllowHint}>Kecualikan untuk:</Text>
+                            {grantableMembers.map((m) => {
+                              const on = entry.allow.includes(m.user_id);
+                              return (
+                                <Pressable
+                                  key={m.user_id}
+                                  style={styles.privacyAllowRow}
+                                  onPress={() => toggleAllow(f.key, m.user_id)}
+                                  disabled={privacySaving}
+                                  testID={`privacy-allow-${f.key}-${m.user_id}`}
+                                >
+                                  <Feather
+                                    name={on ? "check-square" : "square"}
+                                    size={15}
+                                    color={on ? colors.brandSecondary : colors.muted}
+                                  />
+                                  <Text style={styles.privacyAllowName} numberOfLines={1}>
+                                    {m.name || m.email || "Anggota"}
+                                  </Text>
+                                </Pressable>
+                              );
+                            })}
+                          </View>
+                        ) : null}
+                      </View>
                     );
                   })}
                   {privacyDirty ? (

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { View, Text, Pressable, StyleSheet, TextInput, ActivityIndicator, Modal } from "react-native";
+import { View, Text, Pressable, StyleSheet, TextInput, ActivityIndicator, Modal, Alert } from "react-native";
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useMutation } from "@tanstack/react-query";
@@ -29,6 +29,16 @@ export default function WelcomeScreen() {
       setCreateOpen(false);
       setName("");
       router.replace("/(tabs)");
+    },
+    onError: (e: any) => {
+      // 409 = sudah punya pohon aktif (mis. login ulang saat onboarding belum
+      // selesai). Arahkan ke daftar pohon, jangan biarkan layar ini menggantung.
+      setCreateOpen(false);
+      if (e?.status === 409) {
+        router.replace("/trees");
+      } else {
+        Alert.alert("Gagal membuat pohon", "Terjadi kesalahan. Silakan coba lagi.");
+      }
     },
   });
 
