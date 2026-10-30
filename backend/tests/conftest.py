@@ -19,6 +19,24 @@ BASE_URL = (
 MONGO_URL = os.environ.get("MONGO_URL", "mongodb://localhost:27017")
 DB_NAME = os.environ.get("DB_NAME", "test_database")
 
+# Host yang dianggap lokal. Fixture `seeded` menghapus SELURUH koleksi
+# (`delete_many({})`), jadi ia hanya boleh menyentuh database sekali pakai.
+_LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
+
+
+def _mongo_host(uri: str) -> str:
+    """Ambil hostname dari URI MongoDB, termasuk bentuk mongodb+srv://."""
+    rest = uri.split("://", 1)[-1]
+    netloc = rest.split("/", 1)[0]
+    netloc = netloc.rsplit("@", 1)[-1]  # buang user:pass@
+    if netloc.startswith("["):  # IPv6 literal
+        return netloc[1 : netloc.find("]")] if "]" in netloc else netloc[1:]
+    return netloc.split(":", 1)[0].lower()
+
+
+def _is_local_mongo(uri: str) -> bool:
+    return _mongo_host(uri) in _LOCAL_HOSTS
+
 
 def now_utc():
     return datetime.now(timezone.utc)
@@ -71,11 +89,20 @@ def _has_real_data(db):
 def seeded(mongo_db):
     """Wipe target collections and seed admin/editor/viewer + root person.
 
-    SAFETY: refuses to run (skips) when the DB contains real (non-TEST_) users so
-    the destructive whole-collection wipe can NEVER touch real family data. Only
-    runs the wipe against a purely synthetic/empty DB.
+    SAFETY (berlapis):
+    1. Kunci host: fixture ini hanya jalan bila MONGO_URL menunjuk ke database
+       lokal (localhost/127.0.0.1/::1). Database Atlas/remote ditolak mentah-
+       mentah, sehingga salah set env tidak bisa menghapus data produksi.
+    2. Kunci data: hanya jalan bila DB murni sintetis (semua user berawalan
+       TEST_) atau kosong.
     """
     db = mongo_db
+    if not _is_local_mongo(MONGO_URL):
+        pytest.skip(
+            "Refusing destructive seed: MONGO_URL tidak menunjuk ke database lokal "
+            f"(host={_mongo_host(MONGO_URL)!r}). Fixture ini menghapus seluruh koleksi, "
+            "jadi hanya diizinkan untuk localhost guna melindungi data produksi."
+        )
     if _has_real_data(db):
         pytest.skip(
             "Refusing destructive seed: DB contains non-synthetic users. "

@@ -1,5 +1,6 @@
 import { View, Text, Pressable, ScrollView } from "react-native";
 import { useRouter } from "expo-router";
+import { useGoBack } from "@/src/hooks/useGoBack";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import { ArrowLeft, Check, Lock, Crown } from "lucide-react-native";
@@ -42,6 +43,7 @@ export default function ThemesScreen() {
   const { activeTree } = useTree();
   const { user } = useAuth();
   const router = useRouter();
+  const goBack = useGoBack("/");
   const insets = useSafeAreaInsets();
 
   const isPro =
@@ -84,7 +86,7 @@ export default function ThemesScreen() {
   return (
     <View style={[styles.root, { paddingTop: insets.top + 8 }]}>
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} hitSlop={10} testID="themes-back">
+        <Pressable onPress={() => goBack()} hitSlop={10} testID="themes-back">
           <ArrowLeft size={24} color={colors.onSurface} />
         </Pressable>
         <Text style={styles.title}>{t("premium_themes")}</Text>

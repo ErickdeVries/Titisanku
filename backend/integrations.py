@@ -1,13 +1,11 @@
-"""Integrasi pihak ketiga pengganti Emergent.
+"""Integrasi pihak ketiga Titisanku (mandiri, tanpa Emergent).
 
-Modul ini menyediakan tiga layanan yang sebelumnya dibundel oleh Emergent:
+Modul ini menyediakan empat layanan eksternal yang dipakai aplikasi:
 
-1. **Firebase Auth** — verifikasi ID token dari Firebase (menggantikan
-   OAuth ``auth.emergentagent.com`` + ``demobackend.emergentagent.com``).
-2. **Firebase Storage** — unggah/unduh objek binari (menggantikan
-   ``objstore`` Emergent).
-3. **Resend** — kirim email undangan (menggantikan email Emergent).
-4. **Expo Push** — notifikasi push (menggantikan push Emergent).
+1. **Firebase Auth** — verifikasi ID token Google Sign-In dari Firebase SDK client.
+2. **Firebase Storage** — unggah/unduh objek binari (foto profil, galeri, lampiran).
+3. **Resend** — kirim email undangan kolaborasi.
+4. **Expo Push** — notifikasi push ke perangkat.
 
 Semua integrasi bersifat *opsional* saat boot: bila environment variable belum
 diisi, modul tidak gagal saat import, tetapi setiap pemanggilan akan melempar
@@ -52,6 +50,7 @@ def describe_config() -> Dict[str, bool]:
         "resend_email": bool(env("RESEND_API_KEY")),
         "expo_push": True,  # Expo Push API gratis, tanpa key
         "midtrans": bool(env("MIDTRANS_SERVER_KEY")),
+        "play_billing": play_api_configured(),
     }
 
 
@@ -64,7 +63,7 @@ _FIREBASE_SCOPES = [
     "https://www.googleapis.com/auth/devstorage.full_control",
 ]
 
-_service_token_cache: Dict[str, Any] = {"token": None, "expires_at": 0.0}
+_service_token_cache: Dict[str, Dict[str, Any]] = {}
 
 
 def firebase_credentials_path() -> Optional[Path]:
@@ -112,11 +111,18 @@ def _sign_jwt(claims: Dict[str, Any], private_key: str, key_id: Optional[str]) -
     return f"{signing_input}.{b64(signature)}"
 
 
-def firebase_access_token() -> str:
-    """Ambil OAuth2 access token dari service account (di-cache sampai ~50 menit)."""
+def firebase_access_token(scopes: Optional[list[str]] = None) -> str:
+    """Ambil OAuth2 access token dari service account (di-cache sampai ~50 menit).
+
+    ``scopes`` opsional: bila diisi (mis. scope Google Play Developer API), token
+    yang dikembalikan berlaku untuk scope tersebut dan di-cache terpisah.
+    """
     now = time.time()
-    if _service_token_cache["token"] and now < _service_token_cache["expires_at"]:
-        return _service_token_cache["token"]
+    scope_list = scopes or _FIREBASE_SCOPES
+    cache_key = " ".join(sorted(scope_list))
+    cached = _service_token_cache.get(cache_key)
+    if cached and now < cached["expires_at"]:
+        return cached["token"]
 
     creds = firebase_credentials_dict()
     if not creds:
@@ -127,7 +133,7 @@ def firebase_access_token() -> str:
 
     claims = {
         "iss": creds["client_email"],
-        "scope": " ".join(_FIREBASE_SCOPES),
+        "scope": " ".join(scope_list),
         "aud": creds.get("token_uri", "https://oauth2.googleapis.com/token"),
         "iat": int(now),
         "exp": int(now) + 3600,
@@ -144,10 +150,61 @@ def firebase_access_token() -> str:
 
     payload = resp.json()
     token = payload["access_token"]
-    _service_token_cache["token"] = token
-    # Refresh lebih awal 10 menit agar tidak kedaluwarsa di tengah permintaan.
-    _service_token_cache["expires_at"] = now + payload.get("expires_in", 3600) - 600
+    _service_token_cache[cache_key] = {
+        "token": token,
+        "expires_at": now + payload.get("expires_in", 3600) - 600,
+    }
     return token
+
+
+# ---------------------------------------------------------------------------
+# Google Play Developer API — verifikasi pembelian (Play Billing)
+# ---------------------------------------------------------------------------
+_PLAY_SCOPE = "https://www.googleapis.com/auth/androidpublisher"
+_PLAY_API_BASE = "https://androidpublisher.googleapis.com/androidpublisher/v3/applications"
+
+
+def play_api_configured() -> bool:
+    """Konfigurasi minimal untuk memverifikasi pembelian Play sudah ada."""
+    return bool(env("PLAY_PACKAGE_NAME") and firebase_credentials_available())
+
+
+def verify_play_subscription(purchase_token: str, subscription_id: str) -> Dict[str, Any]:
+    """Verifikasi & ambil status langganan dari Google Play Developer API.
+
+    Mengembalikan dict ``subscriptionPurchase`` bila pembelian valid. Pembelian
+    yang tidak valid, kedaluwarsa, atau token palsu akan melempar
+    ``IntegrationError``.
+    """
+    package = env("PLAY_PACKAGE_NAME") or env("ANDROID_PACKAGE_NAME")
+    if not package:
+        raise IntegrationError("PLAY_PACKAGE_NAME belum diset.")
+    try:
+        token = firebase_access_token([_PLAY_SCOPE])
+    except IntegrationError as e:
+        logger.error("Gagal ambil token Play API: %s", e)
+        raise
+
+    url = f"{_PLAY_API_BASE}/{package}/purchases/subscriptions/{subscription_id}/tokens/{purchase_token}"
+    resp = requests.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=30)
+    if resp.status_code == 404:
+        raise IntegrationError("Pembelian tidak ditemukan (token/produk tidak valid).")
+    if resp.status_code != 200:
+        raise IntegrationError(f"Verifikasi Play gagal: {resp.status_code} {resp.text[:200]}")
+    return resp.json()
+
+
+def acknowledge_play_purchase(subscription_id: str, purchase_token: str) -> None:
+    """Acknowledge pembelian agar Play tidak mengembalikan dana setelah 3 hari."""
+    package = env("PLAY_PACKAGE_NAME") or env("ANDROID_PACKAGE_NAME")
+    if not package:
+        raise IntegrationError("PLAY_PACKAGE_NAME belum diset.")
+    token = firebase_access_token([_PLAY_SCOPE])
+    url = f"{_PLAY_API_BASE}/{package}/purchases/subscriptions/{subscription_id}/tokens/{purchase_token}:acknowledge"
+    resp = requests.post(url, headers={"Authorization": f"Bearer {token}"}, timeout=30)
+    if resp.status_code not in (200, 204):
+        raise IntegrationError(f"Acknowledge Play gagal: {resp.status_code} {resp.text[:200]}")
+
 
 
 # ---------------------------------------------------------------------------
@@ -343,6 +400,39 @@ def storage_download(path: str) -> tuple[bytes, str]:
         raise IntegrationError(f"Unduh dari Firebase Storage gagal: {resp.status_code}")
 
     return resp.content, resp.headers.get("Content-Type", "application/octet-stream")
+
+
+def storage_size(path: str) -> Optional[int]:
+    """Ukuran objek dalam byte, dibaca dari metadata GCS (tanpa mengunduh isinya).
+
+    Mengembalikan None bila objek tidak ada. Dipakai skrip backfill kuota
+    penyimpanan agar tidak perlu mengunduh seluruh file lama.
+    """
+    bucket = env("FIREBASE_STORAGE_BUCKET")
+    if not bucket:
+        raise IntegrationError("Firebase Storage belum dikonfigurasi: set FIREBASE_STORAGE_BUCKET.")
+
+    token = firebase_access_token()
+    url = f"https://storage.googleapis.com/storage/v1/b/{bucket}/o/{requests.utils.quote(path, safe='')}"
+    resp = requests.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=30)
+    if resp.status_code == 404:
+        return None
+    if resp.status_code == 200:
+        size = resp.json().get("size")
+        return int(size) if size is not None else None
+    # Fallback: ambil metadata lewat HEAD pada media (beberapa konfigurasi
+    # bucket membatasi JSON API metadata tetapi mengizinkan media).
+    url_media = f"https://storage.googleapis.com/download/storage/v1/b/{bucket}/o/{requests.utils.quote(path, safe='')}"
+    r2 = requests.get(url_media, params={"alt": "media"},
+                      headers={"Authorization": f"Bearer {token}", "Range": "bytes=0-0"}, timeout=30)
+    if r2.status_code in (200, 206):
+        cr = r2.headers.get("Content-Range") or ""
+        if "/" in cr:
+            try:
+                return int(cr.rsplit("/", 1)[1])
+            except ValueError:
+                return None
+    raise IntegrationError(f"Gagal membaca metadata Firebase Storage: {resp.status_code}")
 
 
 # ---------------------------------------------------------------------------

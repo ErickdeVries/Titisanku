@@ -1,5 +1,5 @@
 /**
- * Firebase Auth (pengganti OAuth Emergent).
+ * Firebase Auth — Google Sign-In langsung via Firebase SDK (mandiri, tanpa proxy OAuth pihak ketiga).
  *
  * Konfigurasi lewat env Expo (prefix `EXPO_PUBLIC_` agar ikut ter-bundle):
  *   EXPO_PUBLIC_FIREBASE_API_KEY

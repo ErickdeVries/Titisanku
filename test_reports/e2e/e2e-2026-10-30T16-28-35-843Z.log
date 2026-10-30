@@ -1,0 +1,9 @@
+PASS  A1. App memuat & login otomatis via session token
+PASS  B1. Semua request API diarahkan ke backend test (8002)
+PASS  C1. Layar pohon (home) tampil dengan data seed
+FAIL  D1. Tambah anggota baru (ibu) & tersimpan  -> page.click: Timeout 30000ms exceeded.
+PASS  E1. Tab Chat terbuka tanpa error
+PASS  F1. Settings menampilkan baris kunci (privasi/subscription/members)
+PASS  G1. Layar subscription menampilkan info kuota
+PASS  H1. Halaman privasi terbuka
+PASS  I1. Tidak ada JS error fatal di halaman

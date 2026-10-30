@@ -19,6 +19,7 @@ Cleanup: ONLY our synthetic docs are removed (tracked ids); never
 delete_many({}). Real family data in shared preview DB is preserved.
 """
 import os
+import sys
 import uuid
 import secrets
 from datetime import datetime, timezone, timedelta
@@ -56,6 +57,7 @@ CREATED = {
     "tree_ids": set(),      # trees we (or claim-branch) created
     "person_ids": set(),    # people we insert directly into the source tree
     "relation_ids": set(),  # relations we insert directly
+    "storage_paths": set(), # objects we uploaded for quota tests
 }
 
 
@@ -86,6 +88,82 @@ def _seed_user(db, name="TEST_CLAIM_User"):
     CREATED["user_ids"].add(uid)
     CREATED["session_tokens"].add(token)
     return uid, token, email
+
+
+def _seed_tree_owner(db, name):
+    """Seed user pemilik pohon sumber dan kembalikan dict {id, token}.
+
+    Aturan API "1 user = 1 pohon" berarti user yang akan melakukan claim
+    tidak boleh sudah punya pohon sendiri. Jadi pohon sumber dimiliki user
+    terpisah, dan user yang diuji cukup ditambahkan sebagai anggota.
+    """
+    uid, token, _email = _seed_user(db, name=name)
+    return {"id": uid, "token": token}
+
+
+def _add_member(db, tree_id, user_id, role="viewer"):
+    """Jadikan user_id anggota tree_id (claim butuh akses ke pohon sumber)."""
+    db.tree_members.insert_one({
+        "tree_id": tree_id,
+        "user_id": user_id,
+        "role": role,
+        "joined_at": now_utc(),
+    })
+
+
+def _backend_module():
+    """Impor modul server backend (dependency relatifnya butuh dir backend
+    di sys.path, yang tidak selalu ada di worker pytest-xdist)."""
+    backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if backend_dir not in sys.path:
+        sys.path.insert(0, backend_dir)
+    import server as backend_server
+    return backend_server
+
+
+def _upload_test_objects(names, data):
+    """Unggah objek uji ke storage sungguhan dan kembalikan {name: url}.
+
+    Server membaca ukuran foto dari metadata storage, jadi tes kuota butuh
+    objek nyata (bukan path fiktif yang selalu dihitung 0).
+    """
+    srv = _backend_module()
+    out = {}
+    for name in names:
+        path = f"test_claim_branch/{uuid.uuid4().hex}_{name}"
+        res = srv.integrations.storage_upload(path, data, "image/jpeg")
+        CREATED["storage_paths"].add(path)
+        out[name] = res["path"]  # "/api/files/<path>"
+    return out
+
+
+def _storage_limit_bytes():
+    """Kuota penyimpanan plan free menurut modul backend (None = tanpa batas)."""
+    return _backend_module().storage_limit("free")
+
+
+def _delete_test_objects(paths):
+    """Hapus objek uji dari Firebase Storage (best effort).
+
+    integrations.py belum punya helper delete, jadi pakai GCS JSON API
+    langsung dengan kredensial yang sama.
+    """
+    srv = _backend_module()
+    integ = srv.integrations
+    bucket = integ.env("FIREBASE_STORAGE_BUCKET")
+    if not bucket:
+        return
+    token = integ.firebase_access_token()
+    for path in paths:
+        try:
+            requests.delete(
+                "https://storage.googleapis.com/storage/v1/b/"
+                f"{bucket}/o/{requests.utils.quote(path, safe='')}",
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=20,
+            )
+        except Exception:
+            pass
 
 
 def _insert_person(db, tree_id, name, gender=None, is_root=False, created_by=None):
@@ -167,6 +245,12 @@ def users(mongo_db):
     mongo_db.tree_members.delete_many({"user_id": {"$in": user_ids}})
     mongo_db.user_sessions.delete_many({"session_token": {"$in": tokens}})
     mongo_db.users.delete_many({"user_id": {"$in": user_ids}})
+    # Hapus objek storage yang diunggah tes kuota (best effort).
+    if CREATED["storage_paths"]:
+        try:
+            _delete_test_objects(CREATED["storage_paths"])
+        except Exception:
+            pass
 
 
 # Shared state across the family-tree tests
@@ -190,12 +274,14 @@ def family_tree(mongo_db, users):
     the 'whole' scope).
     """
     # Create tree via API so tree_members/root are set up correctly.
+    owner = _seed_tree_owner(mongo_db, name="TEST_CLAIM_SRC_Owner")
     r = requests.post(f"{API}/trees", json={"name": NAME_TAG},
-                      headers=auth(users["A"]["token"]))
+                      headers=auth(owner["token"]))
     assert r.status_code == 200, r.text
     tree = r.json()
     tid = tree["id"]
     CREATED["tree_ids"].add(tid)
+    _add_member(mongo_db, tid, users["A"]["id"])
 
     # The API created a root person for user A already — grab & keep it as Z
     # so we don't have to delete it (whole-scope test accounts for it).
@@ -434,12 +520,16 @@ class TestFreePlanLimit:
         # Create a dedicated tree via API (already free), then bulk-insert
         # people directly to reach exactly 50 (root counts as 1 -> need 49
         # more).
+        # Pohon ini harus dimiliki user yang belum punya pohon (aturan
+        # "1 user = 1 pohon"), sedangkan users["A"] sudah punya pohon sumber.
+        owner = _seed_tree_owner(mongo_db, name="TEST_CLAIM_LIMIT_Owner")
         r = requests.post(f"{API}/trees",
                           json={"name": f"TEST_CLAIM_LIMIT_{uuid.uuid4().hex[:6]}"},
-                          headers=auth(users["A"]["token"]))
-        assert r.status_code == 200
+                          headers=auth(owner["token"]))
+        assert r.status_code == 200, r.text
         tid = r.json()["id"]
         CREATED["tree_ids"].add(tid)
+        _add_member(mongo_db, tid, users["A"]["id"], role="admin")
 
         root_doc = mongo_db.people.find_one({"tree_id": tid}, {"_id": 0})
         assert root_doc is not None
@@ -477,3 +567,143 @@ class TestFreePlanLimit:
         assert rr.status_code == 402, rr.text
         body = rr.json()
         assert body.get("detail", "").startswith("LIMIT_REACHED"), body
+
+
+# ---------------------------------------------------------------------------
+# 6. Pohon hasil claim selalu plan=free -> wajib tunduk pada kuota free:
+#    batas 50 orang dan kuota penyimpanan 500 MB (foto yang dirujuk ulang).
+# ---------------------------------------------------------------------------
+class TestClaimBranchQuota:
+    def test_claim_whole_over_person_limit_returns_402(self, users, mongo_db):
+        """Pohon sumber (plan berbayar) berisi 60 orang: claim 'whole' harus
+        ditolak 402, bukan menghasilkan pohon free berisi 60 orang."""
+        owner = _seed_tree_owner(mongo_db, name="TEST_CLAIM_WIDE_Owner")
+        r = requests.post(f"{API}/trees",
+                          json={"name": f"TEST_CLAIM_WIDE_{uuid.uuid4().hex[:6]}"},
+                          headers=auth(owner["token"]))
+        assert r.status_code == 200, r.text
+        src_tid = r.json()["id"]
+        CREATED["tree_ids"].add(src_tid)
+        _add_member(mongo_db, src_tid, users["A"]["id"])
+
+        # Plan berbayar agar seeding >50 orang tidak tertahan batas free.
+        mongo_db.trees.update_one({"id": src_tid}, {"$set": {"plan": "pro"}})
+        root = mongo_db.people.find_one({"tree_id": src_tid}, {"_id": 0})
+        assert root is not None
+        focus_id = root["id"]
+
+        docs = []
+        for i in range(59):
+            pid = str(uuid.uuid4())
+            CREATED["person_ids"].add(pid)
+            docs.append({
+                "id": pid, "tree_id": src_tid, "name": f"TEST_CLAIM_WIDE_{i}",
+                "email": None, "gender": None, "birth_date": None,
+                "birth_place": None, "death_date": None, "photo_url": None,
+                "job": None, "is_adopted": False, "notes": None,
+                "is_alive": True, "is_root": False,
+                "created_by": owner["id"], "created_at": now_utc(),
+                "deleted_at": None,
+            })
+        mongo_db.people.insert_many(docs)
+        assert mongo_db.people.count_documents(
+            {"tree_id": src_tid, "deleted_at": None}) == 60
+
+        before = mongo_db.trees.count_documents({"owner_id": users["A"]["id"]})
+        rr = requests.post(f"{API}/trees/{src_tid}/claim-branch",
+                           json={"person_id": focus_id, "scope": "whole"},
+                           headers=auth(users["A"]["token"]))
+        assert rr.status_code == 402, rr.text
+        assert rr.json().get("detail", "").startswith("LIMIT_REACHED"), rr.json()
+        # Claim yang ditolak tidak boleh meninggalkan pohon setengah jadi.
+        after = mongo_db.trees.count_documents({"owner_id": users["A"]["id"]})
+        assert after == before
+
+    def test_claim_under_person_limit_succeeds_and_records_storage(
+            self, users, mongo_db):
+        """Cabang kecil tetap berhasil, dan pohon baru mencatat byte foto
+        yang diwarisi (bukan 0).
+
+        Ukuran file dibaca server dari metadata storage, sehingga tes ini
+        benar-benar mengunggah objek kecil ke storage (lalu menghapusnya).
+        """
+        owner = _seed_tree_owner(mongo_db, name="TEST_CLAIM_SMALL_Owner")
+        r = requests.post(f"{API}/trees",
+                          json={"name": f"TEST_CLAIM_SMALL_{uuid.uuid4().hex[:6]}"},
+                          headers=auth(owner["token"]))
+        assert r.status_code == 200, r.text
+        src_tid = r.json()["id"]
+        CREATED["tree_ids"].add(src_tid)
+        _add_member(mongo_db, src_tid, users["A"]["id"])
+
+        root = mongo_db.people.find_one({"tree_id": src_tid}, {"_id": 0})
+        focus_id = root["id"]
+        child = _insert_person(mongo_db, src_tid, "TEST_CLAIM_SMALL_C",
+                               created_by=owner["id"])
+        _insert_relation(mongo_db, src_tid, focus_id, child, "parent",
+                         created_by=owner["id"])
+
+        # Unggah 2 objek kecil nyata dan rujuk sebagai foto kedua orang.
+        photo_bytes = b"\xff\xd8\xff\xe0" + b"T" * 2048 + b"\xff\xd9"
+        uploaded = _upload_test_objects(["tc_small.jpg", "tc_small2.jpg"],
+                                        photo_bytes)
+        mongo_db.people.update_one(
+            {"id": focus_id}, {"$set": {"photo_url": uploaded["tc_small.jpg"]}})
+        mongo_db.people.update_one(
+            {"id": child}, {"$set": {"photo_url": uploaded["tc_small2.jpg"]}})
+
+        rr = requests.post(
+            f"{API}/trees/{src_tid}/claim-branch",
+            json={"person_id": focus_id, "scope": "descendants"},
+            headers=auth(users["A"]["token"]))
+        assert rr.status_code == 200, rr.text
+        new_tid = rr.json()["id"]
+        CREATED["tree_ids"].add(new_tid)
+
+        # Respons endpoint melaporkan byte yang diwarisi.
+        assert rr.json().get("storage_used", 0) > 0, rr.json()
+        # Dan nilainya benar-benar tercatat di koleksi tree_usage.
+        usage = mongo_db.tree_usage.find_one({"tree_id": new_tid}, {"_id": 0})
+        assert usage is not None, "tree_usage pohon hasil claim harus ada"
+        assert usage.get("bytes", 0) >= 2 * len(photo_bytes), usage
+
+    def test_claim_storage_over_quota_returns_402(self, users, mongo_db):
+        """Bila foto yang diwarisi melebihi kuota penyimpanan, claim ditolak
+        402 dengan detail STORAGE_LIMIT.
+
+        Ukuran dibaca server dari metadata storage sungguhan, jadi tes ini
+        mengunggah objek nyata. Agar tidak perlu mengunggah 500 MB, kuota
+        free bisa dikecilkan lewat env STORAGE_LIMIT_FREE_MB saat server
+        dijalankan. Bila kuota masih besar, tes dilewati (bukan gagal palsu).
+        """
+        photo_bytes = b"\xff\xd8\xff\xe0" + b"H" * (1024 * 1024) + b"\xff\xd9"
+        lim = _storage_limit_bytes()
+        if lim is None or len(photo_bytes) <= lim:
+            pytest.skip("Kuota free masih lebih besar dari file uji; jalankan server "
+                        "dengan STORAGE_LIMIT_FREE_MB kecil untuk menguji jalur ini.")
+
+        uploaded = _upload_test_objects(["tc_heavy.jpg"], photo_bytes)
+
+        owner = _seed_tree_owner(mongo_db, name="TEST_CLAIM_HEAVY_Owner")
+        r = requests.post(f"{API}/trees",
+                          json={"name": f"TEST_CLAIM_HEAVY_{uuid.uuid4().hex[:6]}"},
+                          headers=auth(owner["token"]))
+        assert r.status_code == 200, r.text
+        src_tid = r.json()["id"]
+        CREATED["tree_ids"].add(src_tid)
+        _add_member(mongo_db, src_tid, users["A"]["id"])
+
+        root = mongo_db.people.find_one({"tree_id": src_tid}, {"_id": 0})
+        focus_id = root["id"]
+        mongo_db.people.update_one(
+            {"id": focus_id}, {"$set": {"photo_url": uploaded["tc_heavy.jpg"]}})
+
+        before = mongo_db.trees.count_documents({"owner_id": users["A"]["id"]})
+        rr = requests.post(
+            f"{API}/trees/{src_tid}/claim-branch",
+            json={"person_id": focus_id, "scope": "descendants"},
+            headers=auth(users["A"]["token"]))
+        assert rr.status_code == 402, rr.text
+        assert rr.json().get("detail", "").startswith("STORAGE_LIMIT"), rr.json()
+        after = mongo_db.trees.count_documents({"owner_id": users["A"]["id"]})
+        assert after == before

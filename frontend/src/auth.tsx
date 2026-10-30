@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useState } from "react";
 import { Platform } from "react-native";
 import { storage } from "@/src/utils/storage";
-import { authSession, getMe, logoutApi, setToken, User } from "@/src/api";
+import { authSession, getMe, logoutApi, setToken, User, loginWithPassword as apiLogin, registerWithPassword as apiRegister, demoLogin as apiDemoLogin } from "@/src/api";
 import {
   firebaseConfigured,
   onIdToken,
@@ -17,6 +17,9 @@ type AuthCtx = {
   signingIn: boolean;
   authError: string | null;
   login: () => Promise<void>;
+  loginWithPassword: (username: string, password: string) => Promise<boolean>;
+  register: (username: string, password: string, name: string) => Promise<boolean>;
+  loginDemo: () => Promise<boolean>;
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
 };
@@ -27,6 +30,9 @@ const Ctx = createContext<AuthCtx>({
   signingIn: false,
   authError: null,
   login: async () => {},
+  loginWithPassword: async () => false,
+  register: async () => false,
+  loginDemo: async () => false,
   logout: async () => {},
   refresh: async () => {},
 });
@@ -96,23 +102,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     let cancelled = false;
 
     const bootstrap = async () => {
-      if (!firebaseConfigured()) {
-        setAuthError("Konfigurasi Firebase belum lengkap (EXPO_PUBLIC_FIREBASE_*).");
-        setLoading(false);
-        return;
-      }
-      // Bila user sudah login di Firebase, pakai ID token terbaru.
-      try {
-        const idToken = await onIdToken();
-        if (idToken && !cancelled) {
-          await exchange(idToken);
-          setLoading(false);
-          return;
+      // Bila Firebase terkonfigurasi & user sudah login di Firebase, pakai ID token terbaru.
+      if (firebaseConfigured()) {
+        try {
+          const idToken = await onIdToken();
+          if (idToken && !cancelled) {
+            await exchange(idToken);
+            setLoading(false);
+            return;
+          }
+        } catch (e) {
+          console.log("firebase restore gagal", e);
         }
-      } catch (e) {
-        console.log("firebase restore gagal", e);
       }
-      // Fallback: session token lokal yang masih valid.
+      // Fallback: session token lokal yang masih valid (username/password & demo login).
       const token = await readToken();
       if (token && !cancelled) {
         setToken(token);
@@ -168,8 +171,87 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } catch {}
   };
 
+  const applySession = async (res: { session_token: string; user: User }) => {
+    await storeToken(res.session_token);
+    setToken(res.session_token);
+    try {
+      setUser(await getMe());
+    } catch {
+      setUser(res.user);
+    }
+  };
+
+  const credentialsError = (e: unknown): string => {
+    const err = e as { status?: number; detail?: string; message?: string };
+    if (err?.status === 401) return err.detail || "Username atau password salah.";
+    if (err?.status === 409) return "Username sudah dipakai. Pilih yang lain.";
+    if (err?.status === 400) return err.detail || "Periksa kembali data yang diisi.";
+    if (err?.status === 404) return "Fitur akun demo tidak aktif.";
+    const msg = err?.message || "";
+    if (msg.includes("Failed to fetch") || msg.includes("Network")) return "Tidak ada koneksi internet.";
+    return "Gagal masuk. Silakan coba lagi.";
+  };
+
+  const doPasswordLogin = async (username: string, password: string) => {
+    setAuthError(null);
+    setSigningIn(true);
+    try {
+      const res = await apiLogin(username.trim(), password);
+      await applySession(res);
+      return true;
+    } catch (e) {
+      setAuthError(credentialsError(e));
+      return false;
+    } finally {
+      setSigningIn(false);
+    }
+  };
+
+  const doRegister = async (username: string, password: string, name: string) => {
+    setAuthError(null);
+    setSigningIn(true);
+    try {
+      const res = await apiRegister(username.trim(), password, name.trim());
+      await applySession(res);
+      return true;
+    } catch (e) {
+      setAuthError(credentialsError(e));
+      return false;
+    } finally {
+      setSigningIn(false);
+    }
+  };
+
+  const doDemoLogin = async () => {
+    setAuthError(null);
+    setSigningIn(true);
+    try {
+      const res = await apiDemoLogin();
+      await applySession(res);
+      return true;
+    } catch (e) {
+      setAuthError(credentialsError(e));
+      return false;
+    } finally {
+      setSigningIn(false);
+    }
+  };
+
   return (
-    <Ctx.Provider value={{ user, loading, signingIn, authError, login, logout, refresh }}>
+    <Ctx.Provider
+      value={{
+        user,
+        loading,
+        signingIn,
+        authError,
+        login,
+        loginWithPassword: doPasswordLogin,
+        register: doRegister,
+        loginDemo: doDemoLogin,
+        logout,
+        refresh,
+      }}
+    >
       {children}
     </Ctx.Provider>
   );

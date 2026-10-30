@@ -41,10 +41,30 @@ async function apiFetch(path: string, opts: RequestInit = {}) {
     } catch {}
     const err: any = new Error(detail);
     err.status = res.status;
+    err.detail = detail;
     throw err;
   }
   const text = await res.text();
   return text ? JSON.parse(text) : null;
+}
+
+/**
+ * Ubah error API menjadi pesan yang bisa ditampilkan ke pengguna.
+ * Backend mengirim detail berprefix (STORAGE_LIMIT:/MEMBER_LIMIT:/EDITOR_LIMIT:)
+ * agar frontend tahu ini batas paket, bukan kerusakan sistem.
+ */
+export function limitMessage(e: any): string | null {
+  const detail = typeof e?.detail === "string" ? e.detail
+    : typeof e?.message === "string" ? e.message : "";
+  const clean = detail.replace(/^[A-Z_]+:/, "").trim();
+  if (e?.status === 402) {
+    return clean || "Kuota paket Anda sudah penuh. Upgrade plan untuk melanjutkan.";
+  }
+  return null;
+}
+
+export function isLimitError(e: any): boolean {
+  return e?.status === 402;
 }
 
 export type Person = {
@@ -62,7 +82,16 @@ export type Person = {
   is_root?: boolean;
   note_count?: number;
   gallery?: GalleryPhoto[];
+  privacy?: Record<string, PrivacyEntry> | null;
+  redacted_fields?: string[];
 };
+
+export type PrivacyField = "birth_date" | "birth_place" | "job" | "death_date" | "notes";
+
+/** One field's visibility. `hidden` with an empty `allow` means "nobody else";
+ *  `allow` lists the members who may still see it. The API always returns this
+ *  shape, even for records saved before allow-lists existed. */
+export type PrivacyEntry = { hidden: boolean; allow: string[] };
 
 export type Relation = {
   id: string;
@@ -85,6 +114,11 @@ export type User = {
 // ---- Auth ----
 export const authSession = (session_id: string) =>
   apiFetch("/auth/session", { method: "POST", body: JSON.stringify({ session_id }) });
+export const loginWithPassword = (username: string, password: string) =>
+  apiFetch("/auth/login", { method: "POST", body: JSON.stringify({ username, password }) });
+export const registerWithPassword = (username: string, password: string, name: string) =>
+  apiFetch("/auth/register", { method: "POST", body: JSON.stringify({ username, password, name }) });
+export const demoLogin = () => apiFetch("/auth/demo", { method: "POST" });
 export const getMe = () => apiFetch("/auth/me");
 export const updateProfile = (data: { name?: string; picture?: string }) =>
   apiFetch("/users/me", { method: "PUT", body: JSON.stringify(data) });
@@ -99,11 +133,13 @@ export const adminOverview = () => apiFetch("/admin/overview");
 export const adminUsers = () => apiFetch("/admin/users");
 export const adminFeedback = () => apiFetch("/admin/feedback");
 
+export type PlanId = "free" | "pro" | "family" | "unlimited";
+
 export type Tree = {
   id: string;
   name: string;
   owner_id: string;
-  plan: "free" | "pro" | "family";
+  plan: PlanId;
   is_public?: boolean;
   root_person_id: string | null;
   role: "admin" | "editor" | "viewer";
@@ -111,7 +147,12 @@ export type Tree = {
   member_count?: number;
   editor_count?: number;
   photo_count?: number;
-  plan_limits?: { people: number | null; editors: number | null; photos: number | null };
+  /** Batas orang & editor. Kuota foto memakai `storage_limit` (byte). */
+  plan_limits?: { people: number | null; editors: number | null };
+  /** Pemakaian penyimpanan pohon dalam byte (foto, lampiran, galeri). */
+  storage_used?: number;
+  /** Kuota penyimpanan dalam byte; null = tak terbatas. */
+  storage_limit?: number | null;
   limit: number | null;
 };
 
@@ -157,6 +198,11 @@ export const createSnap = (plan: string, finishUrl?: string): Promise<{ order_id
   apiFetch("/payments/snap", { method: "POST", body: JSON.stringify({ plan, finish_url: finishUrl }) });
 export const paymentStatus = (orderId: string): Promise<{ status: string; plan: string }> =>
   apiFetch(`/payments/status/${orderId}`);
+export const playVerify = (productId: string, purchaseToken: string, treeId?: string): Promise<{ ok: boolean; plan: string; already?: boolean }> =>
+  apiFetch("/payments/play/verify", {
+    method: "POST",
+    body: JSON.stringify({ product_id: productId, purchase_token: purchaseToken, tree_id: treeId }),
+  });
 export type PaymentOrder = { order_id: string; plan: string; amount: number; status: string; created_at: string; paid_at?: string; tree_name?: string };
 export const paymentHistory = (): Promise<{ orders: PaymentOrder[] }> =>
   apiFetch("/payments/history");
@@ -189,6 +235,10 @@ export const addFirstPerson = (person: any): Promise<Person> =>
   apiFetch("/people/first", { method: "POST", body: JSON.stringify(person) });
 export const updatePerson = (id: string, data: any) =>
   apiFetch(`/people/${id}`, { method: "PUT", body: JSON.stringify(data) });
+export const setPersonPrivacy = (
+  id: string,
+  privacy: Record<string, PrivacyEntry | boolean>,
+) => apiFetch(`/people/${id}/privacy`, { method: "PUT", body: JSON.stringify(privacy) });
 export const deletePerson = (id: string) => apiFetch(`/people/${id}`, { method: "DELETE" });
 
 // ---- Backup / Invites ----
@@ -260,6 +310,7 @@ export type ChatRoom = {
   last_message: string;
   last_message_at?: string | null;
   unread: number;
+  muted?: boolean;
 };
 export type ChatContact = { user_id: string; name: string; picture?: string | null; role: string };
 

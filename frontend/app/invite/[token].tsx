@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { View, Text, Pressable, StyleSheet, ActivityIndicator } from "react-native";
+import { View, Text, Pressable, StyleSheet, ActivityIndicator, Alert } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useQuery } from "@tanstack/react-query";
 import { LinearGradient } from "expo-linear-gradient";
@@ -39,8 +39,20 @@ export default function InviteScreen() {
       await refreshTrees();
       await setActive(r.tree_id);
       router.replace("/(tabs)");
-    } catch (e) {
+    } catch (e: any) {
       console.log("accept invite error", e);
+      // 402 = kuota anggota pohon sudah penuh untuk plan saat ini.
+      // Tanpa pesan ini tombol hanya berhenti berputar tanpa penjelasan.
+      if (e?.status === 402) {
+        Alert.alert(
+          "Pohon sudah penuh",
+          "Pohon ini telah mencapai batas anggota untuk paketnya. Minta admin pohon melakukan upgrade agar Anda bisa bergabung."
+        );
+      } else if (e?.status === 404) {
+        Alert.alert("Undangan tidak valid", "Undangan ini sudah tidak aktif atau telah kedaluwarsa.");
+      } else {
+        Alert.alert("Gagal bergabung", "Terjadi kesalahan saat bergabung ke pohon. Silakan coba lagi.");
+      }
     } finally {
       setBusy(false);
     }

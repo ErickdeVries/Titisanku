@@ -3,6 +3,7 @@ import {
   View, Text, Pressable, StyleSheet, TextInput, ActivityIndicator, ScrollView, Linking, Alert,
 } from "react-native";
 import { useRouter } from "expo-router";
+import { useGoBack } from "@/src/hooks/useGoBack";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import { ArrowLeft, Link2, Search, ScanLine, Users, Check, Clock } from "lucide-react-native";
@@ -17,6 +18,7 @@ export default function JoinScreen() {
   const { colors } = useTheme();
   const { t } = useI18n();
   const router = useRouter();
+  const goBack = useGoBack("/");
   const insets = useSafeAreaInsets();
   const { refreshTrees, setActive } = useTree();
   const [tab, setTab] = useState<Tab>("link");
@@ -44,7 +46,7 @@ export default function JoinScreen() {
   return (
     <View style={[styles.root, { backgroundColor: colors.surface }]}>
       <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
-        <Pressable onPress={() => router.back()} hitSlop={10}>
+        <Pressable onPress={() => goBack()} hitSlop={10}>
           <ArrowLeft size={24} color={colors.onSurface} />
         </Pressable>
         <Text style={[styles.title, { color: colors.onSurface }]}>{t("join_tree")}</Text>
@@ -314,7 +316,7 @@ const styles = StyleSheet.create({
   statusChip: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 10, paddingVertical: 7, borderRadius: 10 },
   statusText: { fontFamily: fonts.medium, fontSize: 12 },
   permTitle: { fontFamily: fonts.semibold, fontSize: 17, marginTop: 8, marginBottom: 4 },
-  scanOverlay: { ...StyleSheet.absoluteFillObject, alignItems: "center", justifyContent: "center" },
+  scanOverlay: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, alignItems: "center", justifyContent: "center" },
   scanFrame: { width: 240, height: 240, borderWidth: 3, borderRadius: 24 },
   scanHintBar: { position: "absolute", bottom: 0, left: 0, right: 0, padding: 20 },
 });

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { View, Text, Pressable, FlatList } from "react-native";
 import { useRouter } from "expo-router";
+import { useGoBack } from "@/src/hooks/useGoBack";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAudioPlayer } from "expo-audio";
 import Feather from "@react-native-vector-icons/feather";
@@ -36,6 +37,7 @@ export default function ChatSoundScreen() {
   const { colors } = useTheme();
   const { t } = useI18n();
   const router = useRouter();
+  const goBack = useGoBack("/");
   const insets = useSafeAreaInsets();
   const [selected, setSelected] = useState<ChatSoundKey>(DEFAULT_CHAT_SOUND);
   const player = useAudioPlayer(soundByKey(DEFAULT_CHAT_SOUND).asset ?? undefined);
@@ -62,7 +64,7 @@ export default function ChatSoundScreen() {
   return (
     <View style={[styles.root, { paddingTop: insets.top + 8 }]}>
       <View style={styles.header}>
-        <Pressable style={styles.back} onPress={() => router.back()} testID="sound-back">
+        <Pressable style={styles.back} onPress={() => goBack()} testID="sound-back">
           <Feather name="arrow-left" size={20} color={colors.onSurface} />
         </Pressable>
         <Text style={styles.title}>{t("chat_sound")}</Text>

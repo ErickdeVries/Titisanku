@@ -1,4 +1,5 @@
-import { View, Text } from "react-native";
+import { useState } from "react";
+import { View, Text, TextInput, Pressable, ScrollView } from "react-native";
 import { Image } from "expo-image";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { fonts, makeStyles } from "@/src/theme";
@@ -8,63 +9,173 @@ import { GradientButton } from "@/src/components/GradientButton";
 
 const EMBLEM = require("../assets/images/titisanku-emblem.png");
 
+// Tombol akun demo hanya muncul bila diaktifkan lewat env (dipakai untuk review Play).
+const DEMO_ENABLED = process.env.EXPO_PUBLIC_ENABLE_DEMO_LOGIN === "true";
+
 const useStyles = makeStyles((c) => ({
   root: { flex: 1, backgroundColor: c.surface, alignItems: "center" },
-  frameOuter: { position: "absolute", top: 16, left: 16, right: 16, bottom: 16, borderWidth: 1.5, borderColor: c.brandPrimary, borderRadius: 10 },
-  frameInner: { position: "absolute", top: 22, left: 22, right: 22, bottom: 22, borderWidth: 0.75, borderColor: c.brandPrimary, borderRadius: 6, opacity: 0.6 },
-  content: { flex: 1, alignItems: "center", justifyContent: "center", paddingHorizontal: 40, gap: 6 },
-  emblem: { width: 210, height: 210 },
-  kicker: { fontFamily: fonts.medium, fontSize: 12, color: c.brandPrimary, letterSpacing: 4, marginTop: 4 },
-  brand: { fontFamily: fonts.display, fontSize: 46, color: c.brandSecondary, letterSpacing: 1, marginTop: 2 },
-  divider: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 10, marginBottom: 6 },
-  dline: { width: 46, height: 1, backgroundColor: c.brandPrimary, opacity: 0.7 },
-  diamond: { width: 8, height: 8, backgroundColor: c.brandPrimary, transform: [{ rotate: "45deg" }] },
-  subtitle: { fontFamily: fonts.regular, fontSize: 14.5, color: c.muted, textAlign: "center", lineHeight: 22, marginTop: 4 },
-  footer: { width: "100%", paddingHorizontal: 40 },
-  legal: { fontFamily: fonts.regular, fontSize: 11, color: c.muted, textAlign: "center", marginTop: 14, opacity: 0.8 },
-  error: { fontFamily: fonts.regular, fontSize: 12.5, color: "#B42318", textAlign: "center", marginBottom: 10, lineHeight: 18 },
+  scroll: { flexGrow: 1, width: "100%", alignItems: "center", justifyContent: "center" },
+  inner: { width: "100%", maxWidth: 460, paddingHorizontal: 28, paddingBottom: 32, alignItems: "center" },
+  emblem: { width: 112, height: 112, marginBottom: 18 },
+  title: {
+    fontFamily: fonts.bold,
+    fontSize: 24,
+    color: c.onSurface,
+    textAlign: "center",
+    letterSpacing: -0.4,
+  },
+  subtitle: {
+    fontFamily: fonts.regular,
+    fontSize: 14,
+    lineHeight: 21,
+    color: c.muted,
+    textAlign: "center",
+    marginTop: 8,
+    marginBottom: 22,
+  },
+  form: { width: "100%", gap: 12 },
+  input: {
+    height: 52,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: c.border,
+    backgroundColor: c.surfaceSecondary,
+    paddingHorizontal: 16,
+    fontFamily: fonts.regular,
+    fontSize: 15,
+    color: c.onSurface,
+  },
+  error: {
+    fontFamily: fonts.regular,
+    fontSize: 13,
+    color: "#B3261E",
+    textAlign: "center",
+    marginTop: 4,
+  },
+  link: {
+    fontFamily: fonts.semibold,
+    fontSize: 14,
+    color: c.brandSecondary,
+    textAlign: "center",
+    paddingVertical: 10,
+  },
+  dividerRow: { flexDirection: "row", alignItems: "center", gap: 12, marginVertical: 16, width: "100%" },
+  dividerLine: { flex: 1, height: 1, backgroundColor: c.border },
+  dividerText: { fontFamily: fonts.regular, fontSize: 12, color: c.muted },
+  legal: {
+    fontFamily: fonts.regular,
+    fontSize: 12,
+    color: c.muted,
+    marginTop: 22,
+    textAlign: "center",
+  },
 }));
 
 export default function Login() {
-  const styles = useStyles();
   const insets = useSafeAreaInsets();
-  const { login, signingIn, authError } = useAuth();
+  const styles = useStyles();
   const { t } = useI18n();
+  const { login, loginWithPassword, register, loginDemo, signingIn, authError } = useAuth();
+
+  const [mode, setMode] = useState<"login" | "register">("login");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [name, setName] = useState("");
+
+  const canSubmit = username.trim().length >= 3 && password.length >= 8;
+
+  const submit = async () => {
+    if (!canSubmit) return;
+    if (mode === "login") {
+      await loginWithPassword(username, password);
+    } else {
+      await register(username, password, name || username);
+    }
+  };
 
   return (
-    <View style={styles.root}>
-      <View style={styles.frameOuter} pointerEvents="none" />
-      <View style={styles.frameInner} pointerEvents="none" />
+    <View style={[styles.root, { paddingTop: insets.top }]}>
+      <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
+        <View style={styles.inner}>
+          <Image source={EMBLEM} style={styles.emblem} contentFit="contain" />
+          <Text style={styles.title}>{t("login_title")}</Text>
+          <Text style={styles.subtitle}>{t("login_subtitle")}</Text>
 
-      <View style={[styles.content, { paddingTop: insets.top }]}>
-        <Image source={EMBLEM} style={styles.emblem} contentFit="contain" />
-        <Text style={styles.kicker}>SILSILAH KELUARGA</Text>
-        <Text style={styles.brand}>Titisanku</Text>
-        <View style={styles.divider}>
-          <View style={styles.dline} />
-          <View style={styles.diamond} />
-          <View style={styles.dline} />
+          <View style={styles.form}>
+            <TextInput
+              style={styles.input}
+              placeholder={t("login_username")}
+              placeholderTextColor="#9A9488"
+              value={username}
+              onChangeText={setUsername}
+              autoCapitalize="none"
+              autoCorrect={false}
+              testID="input-username"
+            />
+            <TextInput
+              style={styles.input}
+              placeholder={t("login_password")}
+              placeholderTextColor="#9A9488"
+              value={password}
+              onChangeText={setPassword}
+              secureTextEntry
+              testID="input-password"
+            />
+            {mode === "register" && (
+              <TextInput
+                style={styles.input}
+                placeholder={t("login_name")}
+                placeholderTextColor="#9A9488"
+                value={name}
+                onChangeText={setName}
+                testID="input-name"
+              />
+            )}
+            {authError && <Text style={styles.error}>{authError}</Text>}
+            <GradientButton
+              title={mode === "login" ? t("login_submit") : t("login_register_submit")}
+              icon="log-in"
+              loading={signingIn}
+              disabled={!canSubmit}
+              onPress={submit}
+              testID="submit-credentials"
+            />
+            <Pressable onPress={() => setMode(mode === "login" ? "register" : "login")}>
+              <Text style={styles.link}>
+                {mode === "login" ? t("login_to_register") : t("login_to_login")}
+              </Text>
+            </Pressable>
+          </View>
+
+          {DEMO_ENABLED && (
+            <GradientButton
+              title={t("login_demo")}
+              icon="user"
+              variant="secondary"
+              loading={signingIn}
+              onPress={loginDemo}
+              style={{ marginTop: 14 }}
+              testID="demo-login"
+            />
+          )}
+
+          <View style={styles.dividerRow}>
+            <View style={styles.dividerLine} />
+            <Text style={styles.dividerText}>{t("login_or")}</Text>
+            <View style={styles.dividerLine} />
+          </View>
+
+          <GradientButton
+            title={t("login_google")}
+            icon="log-in"
+            variant="secondary"
+            loading={signingIn}
+            onPress={login}
+            testID="google-login"
+          />
+          <Text style={styles.legal}>© Titisanku · Warisan keluarga Anda</Text>
         </View>
-        <Text style={styles.subtitle}>{t("login_subtitle")}</Text>
-      </View>
-
-      <View style={[styles.footer, { paddingBottom: insets.bottom + 30 }]}>
-        {authError ? (
-          <Text style={styles.error} testID="login-error">
-            {authError}
-          </Text>
-        ) : null}
-        <GradientButton
-          testID="google-login-button"
-          title={signingIn ? t("logging_in") : t("login_google")}
-          icon="log-in"
-          loading={signingIn}
-          onPress={login}
-        />
-        <Text style={styles.legal}>© Titisanku · Warisan keluarga Anda</Text>
-      </View>
+      </ScrollView>
     </View>
   );
 }
-
-

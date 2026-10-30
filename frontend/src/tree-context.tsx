@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
+import React, { createContext, useContext, useRef, useState, useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { storage } from "@/src/utils/storage";
 import { listTrees, setActiveTree as setApiTree, Tree } from "@/src/api";
@@ -13,6 +13,7 @@ type TreeCtx = {
   loading: boolean;
   setActive: (id: string) => Promise<void>;
   refreshTrees: () => Promise<Tree[]>;
+  clearTree: () => void;
   pendingFocusId: string | null;
   setPendingFocus: (id: string | null) => void;
 };
@@ -24,6 +25,7 @@ const Ctx = createContext<TreeCtx>({
   loading: true,
   setActive: async () => {},
   refreshTrees: async () => [],
+  clearTree: () => {},
   pendingFocusId: null,
   setPendingFocus: () => {},
 });
@@ -36,6 +38,9 @@ export function TreeProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [pendingFocusId, setPendingFocusId] = useState<string | null>(null);
   const setPendingFocus = useCallback((id: string | null) => setPendingFocusId(id), []);
+  // User id the current tree data was loaded for — used to reset stale state
+  // when the signed-in account changes.
+  const loadedFor = useRef<string | null | undefined>(undefined);
 
   const applyActive = useCallback(
     async (id: string | null) => {
@@ -66,15 +71,35 @@ export function TreeProvider({ children }: { children: React.ReactNode }) {
     }
   }, [refreshTrees, applyActive]);
 
-  useEffect(() => {
-    if (user) bootstrap();
-    else {
-      setApiTree(null);
-      setActiveId(null);
-      setTrees([]);
+  // Logout / user switch: reset immediately so no stale tree from the previous
+  // account is visible while the new session bootstraps. Exposed for callers
+  // that need to force a reload of the list.
+  const clearTree = useCallback(() => {
+    setApiTree(null);
+    setActiveId(null);
+    setTrees([]);
+  }, []);
+
+  const userId = user?.user_id ?? null;
+
+  // Load the tree list whenever the signed-in account changes. Done during
+  // render (React's "adjust state when props change" pattern) instead of inside
+  // an effect, so the previous account's tree is dropped synchronously and no
+  // extra render pass is needed.
+  if (loadedFor.current !== userId) {
+    loadedFor.current = userId;
+    clearTree();
+    if (userId) {
+      // Stay in the loading state until bootstrap finishes. Without this the
+      // provider momentarily renders with loading=false AND trees=[], which
+      // makes the root guard think the user owns no tree and redirects them
+      // to /welcome even though their trees are about to load.
+      setLoading(true);
+      setTimeout(bootstrap, 0);
+    } else {
+      setLoading(false);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.user_id]);
+  }
 
   const setActive = useCallback(
     async (id: string) => {
@@ -87,7 +112,7 @@ export function TreeProvider({ children }: { children: React.ReactNode }) {
   const activeTree = trees.find((t) => t.id === activeTreeId) || null;
 
   return (
-    <Ctx.Provider value={{ trees, activeTree, activeTreeId, loading, setActive, refreshTrees, pendingFocusId, setPendingFocus }}>
+    <Ctx.Provider value={{ trees, activeTree, activeTreeId, loading, setActive, refreshTrees, clearTree, pendingFocusId, setPendingFocus }}>
       {children}
     </Ctx.Provider>
   );

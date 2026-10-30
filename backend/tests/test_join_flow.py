@@ -51,7 +51,7 @@ CREATED = {
 }
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="class")
 def mongo_db():
     c = MongoClient(MONGO_URL)
     return c[DB_NAME]
@@ -80,7 +80,7 @@ def _seed_user(db, name="TEST_JOIN_User"):
     return uid, token, email
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="class")
 def users(mongo_db):
     """A = admin/owner of tree_a; B = outsider; C = another outsider."""
     a_id, a_tok, a_email = _seed_user(mongo_db, name="TEST_JOIN_A")
@@ -127,7 +127,15 @@ NAME_TAG = f"TEST_JOIN_TreeA_{uuid.uuid4().hex[:6]}"
 # ---------------------------------------------------------------------------
 # 0. Setup — user A creates a tree via API
 # ---------------------------------------------------------------------------
-class TestSetup:
+class TestJoinFlow:
+    """Alur end-to-end. Test berurutan dan berbagi STATE; satu kelas =
+    satu worker xdist (loadscope), sehingga state tetap konsisten.
+    """
+
+    # ----------------------------------------------------------------------
+    # Bagian: TestSetup
+    # ----------------------------------------------------------------------
+
     def test_user_a_creates_tree(self, users):
         r = requests.post(f"{API}/trees", json={"name": NAME_TAG},
                           headers=auth(users["A"]["token"]))
@@ -142,7 +150,11 @@ class TestSetup:
 # ---------------------------------------------------------------------------
 # 1. PUT /api/trees/{tid}/visibility
 # ---------------------------------------------------------------------------
-class TestVisibility:
+
+    # ----------------------------------------------------------------------
+    # Bagian: TestVisibility
+    # ----------------------------------------------------------------------
+
     def test_non_admin_forbidden(self, users):
         r = requests.put(f"{API}/trees/{STATE['tree_a']}/visibility",
                          json={"is_public": True},
@@ -178,7 +190,11 @@ class TestVisibility:
 # ---------------------------------------------------------------------------
 # 2. GET /api/trees/search
 # ---------------------------------------------------------------------------
-class TestSearch:
+
+    # ----------------------------------------------------------------------
+    # Bagian: TestSearch
+    # ----------------------------------------------------------------------
+
     def test_min_two_chars_returns_empty(self, users):
         r = requests.get(f"{API}/trees/search", params={"q": "a"},
                          headers=auth(users["B"]["token"]))
@@ -231,7 +247,11 @@ class TestSearch:
 # ---------------------------------------------------------------------------
 # 3. POST /api/trees/{tid}/join-request
 # ---------------------------------------------------------------------------
-class TestCreateJoinRequest:
+
+    # ----------------------------------------------------------------------
+    # Bagian: TestCreateJoinRequest
+    # ----------------------------------------------------------------------
+
     def test_unknown_tree_returns_404(self, users):
         r = requests.post(f"{API}/trees/tree_nonexistent_xyz/join-request",
                           headers=auth(users["B"]["token"]))
@@ -273,7 +293,11 @@ class TestCreateJoinRequest:
 # ---------------------------------------------------------------------------
 # 4. GET /api/trees/{tid}/join-requests  (admin only)
 # ---------------------------------------------------------------------------
-class TestListJoinRequests:
+
+    # ----------------------------------------------------------------------
+    # Bagian: TestListJoinRequests
+    # ----------------------------------------------------------------------
+
     def test_non_admin_forbidden(self, users):
         r = requests.get(f"{API}/trees/{STATE['tree_a']}/join-requests",
                          headers=auth(users["B"]["token"]))
@@ -297,7 +321,11 @@ class TestListJoinRequests:
 # ---------------------------------------------------------------------------
 # 5. Reject flow (use user C to test reject; user B remains for approve)
 # ---------------------------------------------------------------------------
-class TestReject:
+
+    # ----------------------------------------------------------------------
+    # Bagian: TestReject
+    # ----------------------------------------------------------------------
+
     def test_c_creates_join_request(self, users, mongo_db):
         r = requests.post(f"{API}/trees/{STATE['tree_a']}/join-request",
                           headers=auth(users["C"]["token"]))
@@ -335,7 +363,11 @@ class TestReject:
 # ---------------------------------------------------------------------------
 # 6. Approve flow (user B) + full end-to-end
 # ---------------------------------------------------------------------------
-class TestApproveAndFullFlow:
+
+    # ----------------------------------------------------------------------
+    # Bagian: TestApproveAndFullFlow
+    # ----------------------------------------------------------------------
+
     def test_b_cannot_read_tree_before_approval(self, users):
         r = requests.get(f"{API}/tree", params={"tree_id": STATE["tree_a"]},
                          headers=auth(users["B"]["token"]))

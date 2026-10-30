@@ -68,7 +68,7 @@ CREATED = {
 }
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="class")
 def mongo_db():
     c = MongoClient(MONGO_URL)
     return c[DB_NAME]
@@ -150,9 +150,13 @@ def _insert_person(db, tid, name, email=None, is_alive=True, death_date=None):
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="class")
 def ctx(mongo_db):
-    """
+    """Scope `class`: seluruh alur chat kini satu kelas (lihat TestChatRooms),
+    dan pytest-xdist `--dist loadscope` menjalankan satu kelas di satu worker.
+    Dengan scope `module` dulu, fixture dieksekusi ulang di worker lain
+    sehingga id room/group yang disimpan STATE tidak ditemukan.
+
     Two trees:
       T1 — with members A(admin, alive-linked), B(editor, alive-linked),
            C(viewer, unlinked), D(editor, DECEASED-linked), E(viewer, unlinked)
@@ -239,7 +243,15 @@ def ctx(mongo_db):
 # ---------------------------------------------------------------------------
 # 1. GET /api/chat/rooms — Family room always present, pinned first
 # ---------------------------------------------------------------------------
-class TestListRooms:
+class TestChatRooms:
+    """Alur end-to-end. Test berurutan dan berbagi STATE; satu kelas =
+    satu worker xdist (loadscope), sehingga state tetap konsisten.
+    """
+
+    # ----------------------------------------------------------------------
+    # Bagian: TestListRooms
+    # ----------------------------------------------------------------------
+
     def test_family_room_always_present_and_pinned(self, ctx):
         r = requests.get(f"{API}/chat/rooms?tree_id={ctx['T1']}",
                          headers=auth(ctx["A"]["token"]))
@@ -269,7 +281,11 @@ class TestListRooms:
 # ---------------------------------------------------------------------------
 # 2. GET /api/chat/contacts — excludes self
 # ---------------------------------------------------------------------------
-class TestContacts:
+
+    # ----------------------------------------------------------------------
+    # Bagian: TestContacts
+    # ----------------------------------------------------------------------
+
     def test_contacts_exclude_self(self, ctx):
         r = requests.get(f"{API}/chat/contacts?tree_id={ctx['T1']}",
                          headers=auth(ctx["A"]["token"]))
@@ -289,7 +305,11 @@ class TestContacts:
 # ---------------------------------------------------------------------------
 # 3. POST /api/chat/group — admin/editor creates; viewer 403
 # ---------------------------------------------------------------------------
-class TestGroupCreation:
+
+    # ----------------------------------------------------------------------
+    # Bagian: TestGroupCreation
+    # ----------------------------------------------------------------------
+
     def test_admin_can_create_group_and_filter_invalid(self, ctx):
         payload = {
             "name": "TEST_CHAT_GroupAlpha",
@@ -308,10 +328,25 @@ class TestGroupCreation:
         # stash for later tests
         ctx["group_id"] = room["id"]
 
-    def test_viewer_cannot_create_group(self, ctx):
+    def test_viewer_can_create_group(self, ctx):
+        # Desain produk: SEMUA anggota pohon boleh membuat grup dan memilih
+        # anggotanya sendiri (lihat create_group di backend). Viewer tidak
+        # dibatasi, karena grup chat tidak mengubah data silsilah.
         r = requests.post(f"{API}/chat/group?tree_id={ctx['T1']}",
                           json={"name": "TEST_CHAT_ViewerGroup", "member_ids": [ctx["A"]["id"]]},
                           headers=auth(ctx["C"]["token"]))
+        assert r.status_code == 200, r.text
+        room = r.json()
+        CREATED["chat_room_ids"].add(room["id"])
+        assert room["type"] == "group"
+        assert ctx["C"]["id"] in room["member_ids"]
+
+    def test_non_member_cannot_create_group(self, ctx):
+        # Yang tetap ditolak: orang di luar pohon tidak bisa memakai tree_id
+        # untuk membuat grup.
+        r = requests.post(f"{API}/chat/group?tree_id={ctx['T1']}",
+                          json={"name": "TEST_CHAT_OutsiderGroup", "member_ids": [ctx["A"]["id"]]},
+                          headers=auth(ctx["X"]["token"]))
         assert r.status_code == 403, r.text
 
     def test_editor_can_create_group(self, ctx):
@@ -334,7 +369,11 @@ class TestGroupCreation:
 # ---------------------------------------------------------------------------
 # 4. POST /api/chat/direct — idempotent, self-400, not-in-tree-404
 # ---------------------------------------------------------------------------
-class TestDirectRoom:
+
+    # ----------------------------------------------------------------------
+    # Bagian: TestDirectRoom
+    # ----------------------------------------------------------------------
+
     def test_direct_room_idempotent(self, ctx):
         r1 = requests.post(f"{API}/chat/direct?tree_id={ctx['T1']}",
                            json={"user_id": ctx["B"]["id"]},
@@ -370,7 +409,11 @@ class TestDirectRoom:
 # ---------------------------------------------------------------------------
 # 5. GET /api/chat?room_id=<id> — membership enforced, direct name, can_send
 # ---------------------------------------------------------------------------
-class TestGetChat:
+
+    # ----------------------------------------------------------------------
+    # Bagian: TestGetChat
+    # ----------------------------------------------------------------------
+
     def test_get_family_room_default(self, ctx):
         r = requests.get(f"{API}/chat?tree_id={ctx['T1']}",
                          headers=auth(ctx["A"]["token"]))
@@ -413,7 +456,11 @@ class TestGetChat:
 # ---------------------------------------------------------------------------
 # 6. POST /api/chat — send messages; role checks; participant checks
 # ---------------------------------------------------------------------------
-class TestSendChat:
+
+    # ----------------------------------------------------------------------
+    # Bagian: TestSendChat
+    # ----------------------------------------------------------------------
+
     def test_admin_can_send_family(self, ctx):
         r = requests.post(f"{API}/chat?tree_id={ctx['T1']}&room_id={ctx['T1']}",
                           json={"message": "TEST_CHAT hello from A (family)"},
@@ -473,7 +520,11 @@ class TestSendChat:
 # ---------------------------------------------------------------------------
 # 7. Deceased rule — POST /api/chat 403 for deceased-linked sender
 # ---------------------------------------------------------------------------
-class TestDeceasedRule:
+
+    # ----------------------------------------------------------------------
+    # Bagian: TestDeceasedRule
+    # ----------------------------------------------------------------------
+
     def test_deceased_editor_blocked_family(self, ctx):
         r = requests.post(f"{API}/chat?tree_id={ctx['T1']}&room_id={ctx['T1']}",
                           json={"message": "TEST_CHAT ghost msg"},
@@ -511,7 +562,11 @@ class TestDeceasedRule:
 # ---------------------------------------------------------------------------
 # 8. Backward compatibility — legacy room_id == tree_id shows up in family
 # ---------------------------------------------------------------------------
-class TestBackwardCompat:
+
+    # ----------------------------------------------------------------------
+    # Bagian: TestBackwardCompat
+    # ----------------------------------------------------------------------
+
     def test_legacy_message_appears_in_family_room(self, ctx, mongo_db):
         # Insert legacy message directly with room_id == tree_id
         legacy_id = str(uuid.uuid4())
@@ -546,7 +601,11 @@ class TestBackwardCompat:
 # ---------------------------------------------------------------------------
 # 9. Unread counts flow
 # ---------------------------------------------------------------------------
-class TestUnreadCounts:
+
+    # ----------------------------------------------------------------------
+    # Bagian: TestUnreadCounts
+    # ----------------------------------------------------------------------
+
     def test_unread_increments_and_resets(self, ctx):
         # Fresh DM between E (viewer, alive-linked) and A
         r = requests.post(f"{API}/chat/direct?tree_id={ctx['T1']}",

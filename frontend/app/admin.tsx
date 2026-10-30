@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { View, Text, Pressable, ScrollView, ActivityIndicator } from "react-native";
 import { useRouter } from "expo-router";
+import { useGoBack } from "@/src/hooks/useGoBack";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useQuery } from "@tanstack/react-query";
 import Feather from "@react-native-vector-icons/feather";
@@ -57,6 +58,7 @@ export default function AdminScreen() {
   const styles = useStyles();
   const { colors } = useTheme();
   const router = useRouter();
+  const goBack = useGoBack("/");
   const insets = useSafeAreaInsets();
   const [tab, setTab] = useState<"overview" | "users" | "feedback">("overview");
 
@@ -71,7 +73,7 @@ export default function AdminScreen() {
   return (
     <View style={[styles.root, { paddingTop: insets.top + 8 }]}>
       <View style={styles.header}>
-        <Pressable style={styles.backBtn} onPress={() => router.back()} hitSlop={8} testID="admin-back">
+        <Pressable style={styles.backBtn} onPress={() => goBack()} hitSlop={8} testID="admin-back">
           <Feather name="chevron-left" size={24} color={colors.onSurface} />
         </Pressable>
         <Text style={styles.title}>Admin Dashboard</Text>

@@ -37,6 +37,15 @@ dist
 *service-account.json
 firebase-service-account.json
 google-services.json
+# Kunci service account hasil download Firebase Console
+# (mis. titisanku-firebase-adminsdk-fbsvc-<id>.json) — jangan pernah di-commit
+*-firebase-adminsdk-*.json
+
+# Artefak sesi browser (screenshot, snapshot, file yang ter-download)
+.playwright-mcp/
+
+# Artefak/bootstrap Emergent (sudah dilepas — jangan di-commit lagi)
+.emergent/
 
 # Logs and debug files
 npm-debug.log*
@@ -44,6 +53,11 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 dump.rdb
+
+# Server/run logs & backup configs (jangan di-commit)
+uvicorn*.log
+*uvicorn_*.log
+google-services.*.bak.json
 
 # System files
 .DS_Store
@@ -75,6 +89,13 @@ agenthub/agents/youtube/db
 *.pack
 *.deb
 *.dylib
+
+# Artefak sesi browser / screenshot pratinjau (jangan di-commit)
+mobile-*.png
+preview-*.png
+admin-*.png
+helipod-*.yml
+vars.yml
 
 # Build caches
 .cache/

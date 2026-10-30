@@ -1,5 +1,6 @@
 import { View, Text, Pressable, ScrollView, ActivityIndicator } from "react-native";
 import { useRouter } from "expo-router";
+import { useGoBack } from "@/src/hooks/useGoBack";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft, Receipt } from "lucide-react-native";
@@ -35,6 +36,7 @@ export default function PaymentHistoryScreen() {
   const { colors } = useTheme();
   const { t } = useI18n();
   const router = useRouter();
+  const goBack = useGoBack("/");
   const insets = useSafeAreaInsets();
 
   const { data, isLoading } = useQuery({ queryKey: ["paymentHistory"], queryFn: paymentHistory });
@@ -50,7 +52,7 @@ export default function PaymentHistoryScreen() {
   return (
     <View style={[styles.root, { paddingTop: insets.top + 8 }]}>
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} hitSlop={10} testID="payment-history-back">
+        <Pressable onPress={() => goBack()} hitSlop={10} testID="payment-history-back">
           <ArrowLeft size={24} color={colors.onSurface} />
         </Pressable>
         <Text style={styles.title}>{t("payment_history")}</Text>

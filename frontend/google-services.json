@@ -1,45 +1,36 @@
 {
   "project_info": {
-    "project_number": "710949408785",
-    "project_id": "kulproy-app",
-    "storage_bucket": "kulproy-app.firebasestorage.app"
+    "project_number": "389393525285",
+    "project_id": "titisanku",
+    "storage_bucket": "titisanku.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:710949408785:android:1d9ebd95652dd3b9ad21b0",
-        "android_client_info": {
-          "package_name": "com.kulproy.app"
-        }
-      },
-      "oauth_client": [],
-      "api_key": [
-        {
-          "current_key": "AIzaSyAhvwzUQtfwbhBDsn3wfbCT-sFP3vZbDf0"
-        }
-      ],
-      "services": {
-        "appinvite_service": {
-          "other_platform_oauth_client": []
-        }
-      }
-    },
-    {
-      "client_info": {
-        "mobilesdk_app_id": "1:710949408785:android:b82cd1a697d1f614ad21b0",
+        "mobilesdk_app_id": "1:389393525285:android:0883fe81aa8d4b54526dcc",
         "android_client_info": {
           "package_name": "com.titisanku.app"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "389393525285-65e7mlkf8ttjqq3eelr3khqrgh0lpkms.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
-          "current_key": "AIzaSyAhvwzUQtfwbhBDsn3wfbCT-sFP3vZbDf0"
+          "current_key": "AIzaSyDOFq0aYnH4SNgPr26k5vlMwhJEQshy-cQ"
         }
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "389393525285-65e7mlkf8ttjqq3eelr3khqrgh0lpkms.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
         }
       }
     }

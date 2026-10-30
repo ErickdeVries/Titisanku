@@ -3,11 +3,12 @@ import { View, Text, Pressable, FlatList, TextInput, ActivityIndicator, Alert } 
 import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
 import { useRouter, useLocalSearchParams } from "expo-router";
+import { useGoBack } from "@/src/hooks/useGoBack";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Feather from "@react-native-vector-icons/feather";
 import { fonts, makeStyles, useTheme } from "@/src/theme";
-import { chatContacts, openDirect, createGroup, fileUrl, uploadPhoto, ChatContact } from "@/src/api";
+import { chatContacts, openDirect, createGroup, fileUrl, uploadPhoto, ChatContact, limitMessage } from "@/src/api";
 import { compressImage } from "@/src/utils/image";
 import { useTree } from "@/src/tree-context";
 import { useI18n } from "@/src/i18n";
@@ -53,6 +54,7 @@ export default function NewChatScreen() {
   const { t } = useI18n();
   const { activeTree } = useTree();
   const router = useRouter();
+  const goBack = useGoBack("/");
   const params = useLocalSearchParams<{ mode?: string }>();
   const insets = useSafeAreaInsets();
   const qc = useQueryClient();
@@ -79,7 +81,7 @@ export default function NewChatScreen() {
       const path = await uploadPhoto(compressed);
       setGroupPhoto(path);
     } catch (e: any) {
-      Alert.alert(t("error_generic"), e?.message || "");
+      Alert.alert(t("error_generic"), limitMessage(e) || e?.message || "");
     } finally {
       setUploadingPhoto(false);
     }
@@ -144,7 +146,7 @@ export default function NewChatScreen() {
   return (
     <View style={[styles.root, { paddingTop: insets.top + 8 }]}>
       <View style={styles.header}>
-        <Pressable style={styles.backBtn} onPress={() => router.back()} hitSlop={8} testID="new-chat-back">
+        <Pressable style={styles.backBtn} onPress={() => goBack()} hitSlop={8} testID="new-chat-back">
           <Feather name="chevron-left" size={24} color={colors.onSurface} />
         </Pressable>
         <Text style={styles.title}>{groupMode ? t("new_group") : t("new_chat")}</Text>

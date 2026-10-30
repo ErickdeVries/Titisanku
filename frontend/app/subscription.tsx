@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { View, Text, Pressable, StyleSheet, ScrollView, ActivityIndicator, Alert, Platform } from "react-native";
 import { useRouter } from "expo-router";
+import { useGoBack } from "@/src/hooks/useGoBack";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import * as WebBrowser from "expo-web-browser";
@@ -8,13 +9,15 @@ import { ArrowLeft, Crown, Check, Users, Image as ImageIcon, GitBranch, Receipt,
 import { fonts, useTheme } from "@/src/theme";
 import { useI18n } from "@/src/i18n";
 import { useTree } from "@/src/tree-context";
-import { createSnap, paymentStatus } from "@/src/api";
+import { createSnap, paymentStatus, playVerify } from "@/src/api";
+import { purchasePlan, finishPlayPurchase, billingSupported } from "@/src/billing";
+import { formatBytes } from "@/src/utils/format";
 
 type PlanId = "free" | "pro" | "family";
 const PLANS: { id: PlanId; name: string; price: string; perks: string[] }[] = [
-  { id: "free", name: "Free", price: "Gratis", perks: ["1 Pohon Keluarga", "50 Orang", "20 Foto", "3 Editor", "PDF dengan watermark"] },
-  { id: "pro", name: "Pro", price: "Rp149.000/tahun", perks: ["Pohon tak terbatas", "Orang tak terbatas", "5GB Foto", "10 Editor", "PDF tanpa watermark", "Backup Google Drive", "Tema Premium"] },
-  { id: "family", name: "Keluarga", price: "Rp199.000/tahun", perks: ["Semua fitur Pro", "50 Editor", "Cetak Buku Silsilah"] },
+  { id: "free", name: "Free", price: "Gratis", perks: ["1 Pohon Keluarga", "50 Orang", "500 MB Foto", "3 Editor", "PDF dengan watermark"] },
+  { id: "pro", name: "Pro", price: "Rp149.000/tahun", perks: ["Orang tak terbatas", "10 GB Foto", "10 Editor", "PDF tanpa watermark", "Backup Google Drive", "Tema Premium"] },
+  { id: "family", name: "Keluarga", price: "Rp199.000/tahun", perks: ["Semua fitur Pro", "25 GB Foto", "50 Editor", "Cetak Buku Silsilah"] },
 ];
 const RANK: Record<PlanId, number> = { free: 0, pro: 1, family: 2 };
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -23,23 +26,31 @@ export default function SubscriptionScreen() {
   const { colors, gradient } = useTheme();
   const { t } = useI18n();
   const router = useRouter();
+  const goBack = useGoBack("/");
   const insets = useSafeAreaInsets();
   const { activeTree, activeTreeId, refreshTrees } = useTree();
   const [busy, setBusy] = useState<PlanId | null>(null);
+  // Reading the clock is impure, so it is captured once per render pass instead
+  // of being called inline while rendering.
+  const [now] = useState(() => Date.now());
 
   const plan = (activeTree?.plan ?? "free") as PlanId;
   const isAdmin = activeTree?.role === "admin";
   const expIso = (activeTree as any)?.expires_at as string | undefined;
   const expDate = expIso ? new Date(expIso) : null;
-  const daysLeft = expDate ? Math.ceil((expDate.getTime() - Date.now()) / 86400000) : null;
+  const daysLeft = expDate ? Math.ceil((expDate.getTime() - now) / 86400000) : null;
   const expFmt = expDate
     ? expDate.toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" })
     : null;
   const limits = activeTree?.plan_limits;
+  // Kuota foto kini berbasis byte (bukan jumlah foto), mengikuti harga asli
+  // penyimpanan. Batas ini datang dari backend sebagai storage_limit.
+  const storageUsed = activeTree?.storage_used ?? 0;
+  const storageMax = activeTree?.storage_limit ?? null;
   const usage = [
-    { icon: <Users size={16} color={colors.brandSecondary} />, label: "Orang", used: activeTree?.person_count ?? 0, max: limits?.people ?? null },
-    { icon: <GitBranch size={16} color={colors.brandSecondary} />, label: "Editor", used: activeTree?.editor_count ?? 0, max: limits?.editors ?? null },
-    { icon: <ImageIcon size={16} color={colors.brandSecondary} />, label: "Foto", used: activeTree?.photo_count ?? 0, max: limits?.photos ?? null },
+    { icon: <Users size={16} color={colors.brandSecondary} />, label: "Orang", value: `${activeTree?.person_count ?? 0}${limits?.people != null ? `/${limits.people}` : ""}`, unlimited: limits?.people == null },
+    { icon: <GitBranch size={16} color={colors.brandSecondary} />, label: "Editor", value: `${activeTree?.editor_count ?? 0}${limits?.editors != null ? `/${limits.editors}` : ""}`, unlimited: limits?.editors == null },
+    { icon: <ImageIcon size={16} color={colors.brandSecondary} />, label: "Penyimpanan", value: `${formatBytes(storageUsed)}${storageMax != null ? `/${formatBytes(storageMax)}` : ""}`, unlimited: storageMax == null },
   ];
 
   const pollUntilPaid = async (orderId: string) => {
@@ -66,8 +77,19 @@ export default function SubscriptionScreen() {
 
   const doUpgrade = async (target: PlanId) => {
     if (!activeTreeId) return;
+    if (target !== "pro" && target !== "family") return;
     setBusy(target);
     try {
+      if (billingSupported) {
+        // Android: wajib pakai Google Play Billing untuk produk digital.
+        const purchase = await purchasePlan(target);
+        const res = await playVerify(purchase.productId, purchase.purchaseToken, activeTreeId);
+        await finishPlayPurchase(purchase.purchaseToken, purchase.productId);
+        await refreshTrees();
+        Alert.alert(t("payment_success_title"), `${t("payment_success_msg")} (${res.plan})`);
+        return;
+      }
+      // Web: tetap Midtrans (Play Billing tidak berlaku di luar aplikasi Android).
       const finishUrl = Platform.OS === "web" ? window.location.origin + "/" : undefined;
       const res = await createSnap(target, finishUrl);
       if (Platform.OS === "web") {
@@ -77,8 +99,15 @@ export default function SubscriptionScreen() {
       }
       await pollUntilPaid(res.order_id);
     } catch (e) {
-      console.log("payment error", e);
-      Alert.alert(t("payment_failed_title"), t("payment_failed_msg"));
+      const msg = (e as Error)?.message;
+      if (msg === "cancelled") {
+        // pengguna membatalkan pembelian; jangan tampilkan error keras
+      } else if (msg === "unsupported") {
+        Alert.alert(t("payment_failed_title"), t("payment_failed_msg"));
+      } else {
+        console.log("payment error", e);
+        Alert.alert(t("payment_failed_title"), t("payment_failed_msg"));
+      }
     } finally {
       setBusy(null);
     }
@@ -87,7 +116,7 @@ export default function SubscriptionScreen() {
   return (
     <View style={[styles.root, { backgroundColor: colors.surface }]}>
       <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
-        <Pressable onPress={() => router.back()} hitSlop={10}>
+        <Pressable onPress={() => goBack()} hitSlop={10}>
           <ArrowLeft size={24} color={colors.onSurface} />
         </Pressable>
         <Text style={[styles.title, { color: colors.onSurface }]}>{t("subscription")}</Text>
@@ -111,8 +140,8 @@ export default function SubscriptionScreen() {
             <View style={styles.usageRow}>
               {usage.map((u) => (
                 <View key={u.label} style={styles.usageItem}>
-                  <Text style={styles.usageVal}>{u.used}{u.max != null ? `/${u.max}` : ""}</Text>
-                  <Text style={styles.usageLabel}>{u.label}{u.max == null ? " ∞" : ""}</Text>
+                  <Text style={styles.usageVal}>{u.value}</Text>
+                  <Text style={styles.usageLabel}>{u.label}{u.unlimited ? " ∞" : ""}</Text>
                 </View>
               ))}
             </View>
@@ -169,6 +198,8 @@ export default function SubscriptionScreen() {
 
           {!isAdmin ? (
             <Text style={[styles.note, { color: colors.muted }]}>Hanya admin pohon yang dapat mengubah paket. Editor tetap menikmati fitur paket ini.</Text>
+          ) : billingSupported ? (
+            <Text style={[styles.note, { color: colors.muted }]}>Langganan diproses oleh Google Play. Paket aktif otomatis setelah pembayaran berhasil, dan dapat dikelola di Play Store &gt; Pembayaran &amp; langganan.</Text>
           ) : (
             <Text style={[styles.note, { color: colors.muted }]}>Pembayaran aman diproses oleh Midtrans. Paket aktif otomatis setelah pembayaran berhasil.</Text>
           )}

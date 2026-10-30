@@ -51,7 +51,7 @@ CREATED = {
 }
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="class")
 def mongo_db():
     c = MongoClient(MONGO_URL)
     return c[DB_NAME]
@@ -80,7 +80,7 @@ def _seed_user(db, role_hint="viewer", name="TEST_MT_User"):
     return uid, token, email
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="class")
 def users(mongo_db):
     """Two synthetic users, both without any tree membership at start."""
     u1_id, u1_tok, u1_email = _seed_user(mongo_db, name="TEST_MT_A")
@@ -126,7 +126,15 @@ STATE = {}
 # ---------------------------------------------------------------------------
 # 1. POST /api/trees + GET /api/trees
 # ---------------------------------------------------------------------------
-class TestTreeCreation:
+class TestMultiTenantFlow:
+    """Alur multi-tenant end-to-end. Test berjalan berurutan dan
+    memakai STATE bersama; satu kelas = satu worker (loadscope).
+    """
+
+# ---------------------------------------------------------------------------
+# Bagian: TestTreeCreation
+# ---------------------------------------------------------------------------
+
     def test_create_tree_returns_admin_role_and_root(self, users):
         r = requests.post(f"{API}/trees", json={"name": "TEST_MT_TreeA"},
                           headers=auth(users["A"]["token"]))
@@ -166,7 +174,11 @@ class TestTreeCreation:
 # ---------------------------------------------------------------------------
 # 2. GET /api/tree — tenant isolation
 # ---------------------------------------------------------------------------
-class TestGetTree:
+
+# ---------------------------------------------------------------------------
+# Bagian: TestGetTree
+# ---------------------------------------------------------------------------
+
     def test_owner_can_read_own_tree(self, users):
         r = requests.get(f"{API}/tree", params={"tree_id": STATE["tree_a"]},
                          headers=auth(users["A"]["token"]))
@@ -194,7 +206,11 @@ class TestGetTree:
 # ---------------------------------------------------------------------------
 # 3. add-relative + 402 limit + upgrade
 # ---------------------------------------------------------------------------
-class TestAddRelativeAndLimit:
+
+# ---------------------------------------------------------------------------
+# Bagian: TestAddRelativeAndLimit
+# ---------------------------------------------------------------------------
+
     def test_add_relative_success(self, users):
         r = requests.post(
             f"{API}/people/add-relative",
@@ -241,17 +257,34 @@ class TestAddRelativeAndLimit:
         assert r.status_code == 402, r.text
         assert r.json()["detail"].startswith("LIMIT_REACHED:")
 
-    def test_upgrade_admin_only_and_unlocks(self, users):
-        # Non-member cannot upgrade
-        r_bad = requests.post(f"{API}/trees/{STATE['tree_a']}/upgrade",
-                              headers=auth(users["B"]["token"]))
+    def test_upgrade_admin_only_and_unlocks(self, users, mongo_db):
+        # Plan berbayar HANYA lewat pembayaran: non-admin tidak boleh memulai
+        # transaksi (403) dan endpoint /upgrade khusus superadmin juga 403.
+        r_bad = requests.post(f"{API}/payments/snap",
+                              params={"tree_id": STATE["tree_a"]},
+                              headers=auth(users["B"]["token"]),
+                              json={"plan": "pro"})
         assert r_bad.status_code == 403, r_bad.text
 
-        # Admin can upgrade
-        r = requests.post(f"{API}/trees/{STATE['tree_a']}/upgrade",
-                          headers=auth(users["A"]["token"]))
-        assert r.status_code == 200, r.text
-        assert r.json()["plan"] == "pro"
+        r_bad2 = requests.post(f"{API}/trees/{STATE['tree_a']}/upgrade",
+                               headers=auth(users["A"]["token"]),
+                               json={"plan": "pro"})
+        assert r_bad2.status_code == 403, r_bad2.text
+        assert "pembayaran" in r_bad2.json()["detail"].lower()
+
+        # Simulasikan hasil webhook settlement yang sah (tanpa memanggil Midtrans).
+        order_id = f"TEST-MT-{uuid.uuid4().hex[:12]}"
+        mongo_db.payment_orders.insert_one({
+            "order_id": order_id, "user_id": users["A"]["id"],
+            "tree_id": STATE["tree_a"], "plan": "pro", "amount": 149000,
+            "status": "paid", "created_at": now_utc(), "paid_at": now_utc(),
+        })
+        CREATED.setdefault("order_ids", set()).add(order_id)
+        mongo_db.trees.update_one(
+            {"id": STATE["tree_a"]},
+            {"$set": {"plan": "pro", "upgraded_at": now_utc(),
+                      "expires_at": now_utc() + timedelta(days=365)}},
+        )
 
         # After upgrade: add beyond 50 succeeds
         r2 = requests.post(
@@ -273,7 +306,11 @@ class TestAddRelativeAndLimit:
 # ---------------------------------------------------------------------------
 # 4. Members endpoints  (role change + removal + owner protection)
 # ---------------------------------------------------------------------------
-class TestMembers:
+
+# ---------------------------------------------------------------------------
+# Bagian: TestMembers
+# ---------------------------------------------------------------------------
+
     def test_add_viewer_member_directly(self, users, mongo_db):
         """Insert a tree_members doc with role=viewer for user V into tree A
         (simulates an accepted invite as viewer)."""
@@ -389,7 +426,11 @@ class TestMembers:
 # ---------------------------------------------------------------------------
 # 5. Backup / Restore — tree-scoped, no leakage across trees
 # ---------------------------------------------------------------------------
-class TestBackupRestoreScoped:
+
+# ---------------------------------------------------------------------------
+# Bagian: TestBackupRestoreScoped
+# ---------------------------------------------------------------------------
+
     def test_backup_only_returns_this_tree(self, users, mongo_db):
         # Ensure tree_b has 1 person (its root) — add a marker child
         root_b_doc = mongo_db.people.find_one({"tree_id": STATE["tree_b"], "is_root": True})
@@ -444,7 +485,11 @@ class TestBackupRestoreScoped:
 # ---------------------------------------------------------------------------
 # 6. Chat & person notes — tree scoped
 # ---------------------------------------------------------------------------
-class TestChatTreeScoped:
+
+# ---------------------------------------------------------------------------
+# Bagian: TestChatTreeScoped
+# ---------------------------------------------------------------------------
+
     def test_post_and_get_chat_uses_tree_id_as_room(self, users):
         r = requests.post(
             f"{API}/chat", params={"tree_id": STATE["tree_a"]},
@@ -483,8 +528,10 @@ class TestChatTreeScoped:
         )
         assert r.status_code == 403
 
+# ---------------------------------------------------------------------------
+# Bagian: TestPersonNotesTreeScoped
+# ---------------------------------------------------------------------------
 
-class TestPersonNotesTreeScoped:
     def test_add_and_list_note_scoped(self, users):
         r = requests.post(
             f"{API}/people/{STATE['root_a']}/notes",

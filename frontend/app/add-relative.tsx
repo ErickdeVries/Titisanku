@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { View, Text, Pressable } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import { useGoBack } from "@/src/hooks/useGoBack";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Feather from "@react-native-vector-icons/feather";
@@ -31,6 +32,7 @@ export default function AddRelative() {
   const { colors } = useTheme();
   const { t } = useI18n();
   const router = useRouter();
+  const goBack = useGoBack("/");
   const insets = useSafeAreaInsets();
   const qc = useQueryClient();
   const { focus_id, direction, focus_name, sib } = useLocalSearchParams<{ focus_id: string; direction: string; focus_name: string; sib?: string }>();
@@ -92,7 +94,7 @@ export default function AddRelative() {
         other_parent_id: isChild && spouses.length >= 2 ? otherParent : undefined,
       });
       await qc.invalidateQueries({ queryKey: ["tree"] });
-      router.back();
+      goBack();
     } catch (e: any) {
       console.log("add relative error", e);
       setSubmitting(false);
@@ -105,7 +107,7 @@ export default function AddRelative() {
   return (
     <View style={[styles.root, { paddingTop: insets.top + 8 }]}>
       <View style={styles.header}>
-        <Pressable style={styles.closeBtn} onPress={() => router.back()} testID="close-modal">
+        <Pressable style={styles.closeBtn} onPress={() => goBack()} testID="close-modal">
           <Feather name="x" size={20} color={colors.onSurface} />
         </Pressable>
         <View>
@@ -151,7 +153,7 @@ export default function AddRelative() {
       />
       <UpgradeModal
         visible={upgradeOpen}
-        onClose={() => { setUpgradeOpen(false); router.back(); }}
+        onClose={() => { setUpgradeOpen(false); goBack(); }}
         limit={activeTree?.limit}
       />
     </View>
