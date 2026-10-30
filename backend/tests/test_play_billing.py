@@ -37,7 +37,7 @@ def test_verify_play_subscription_ok(monkeypatch):
 
     def fake_get(url, headers=None, timeout=None):
         captured["url"] = url
-        return _Resp(200, {"paymentState": 0, "orderId": "GPA.1234", "expiryTimeMillis": "9999999999999"})
+        return _Resp(200, {"paymentState": 1, "orderId": "GPA.1234", "expiryTimeMillis": "9999999999999"})
 
     monkeypatch.setattr(integrations.requests, "get", fake_get)
 
@@ -61,3 +61,21 @@ def test_verify_requires_package(monkeypatch):
     monkeypatch.delenv("ANDROID_PACKAGE_NAME", raising=False)
     with pytest.raises(integrations.IntegrationError):
         integrations.verify_play_subscription("t", "titisanku_pro_yearly")
+
+
+@pytest.mark.parametrize(
+    "payload,expected",
+    [
+        ({"paymentState": 1}, True),   # payment received
+        ({"paymentState": 2}, True),   # free trial
+        ({"paymentState": "1"}, True),  # string dinormalisasi ke int
+        ({"paymentState": 0}, False),  # pending, belum dibayar
+        ({"paymentState": 3}, False),  # pending deferred upgrade/downgrade
+        ({"paymentState": None}, False),
+        ({"paymentState": "abc"}, False),
+        ({}, False),
+    ],
+)
+def test_play_payment_is_active(payload, expected):
+    assert server.play_payment_is_active(payload) is expected
+
