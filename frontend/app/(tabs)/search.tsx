@@ -6,7 +6,8 @@ import { useQuery } from "@tanstack/react-query";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Feather from "@react-native-vector-icons/feather";
 import { fonts, makeStyles, useTheme } from "@/src/theme";
-import { getTree, fileUrl, Person } from "@/src/api";
+import { getTree, Person } from "@/src/api";
+import { imageProps, photoProps } from "@/src/utils/image";
 import { useI18n } from "@/src/i18n";
 import { nodeColor } from "@/src/components/PersonNode";
 
@@ -46,12 +47,12 @@ export default function SearchScreen() {
   }, [q, people]);
 
   const renderRow = ({ item }: { item: Person }) => {
-    const photo = fileUrl(item.photo_url);
+    const photo = photoProps(item);
     const color = nodeColor(item, colors);
     return (
       <Pressable style={styles.row} onPress={() => router.push(`/person/${item.id}`)} testID={`search-row-${item.id}`}>
         <View style={[styles.avatar, { borderColor: color }]}>
-          {photo ? <Image source={{ uri: photo }} style={styles.avatarImg} contentFit="cover" /> : <Feather name="user" size={22} color={color} />}
+          {photo.source ? <Image {...photo} style={styles.avatarImg} contentFit="cover" /> : <Feather name="user" size={22} color={color} />}
         </View>
         <View style={{ flex: 1 }}>
           <Text style={styles.name}>{item.name}</Text>
@@ -91,7 +92,7 @@ export default function SearchScreen() {
         contentContainerStyle={{ paddingBottom: insets.bottom + 24 }}
         ListEmptyComponent={
           <View style={styles.empty}>
-            <Image source={{ uri: EMPTY }} style={styles.emptyImg} contentFit="cover" />
+            <Image {...imageProps(EMPTY)} style={styles.emptyImg} contentFit="cover" />
             <Text style={styles.emptyText}>{q ? t("no_results") : t("search_hint")}</Text>
           </View>
         }

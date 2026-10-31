@@ -12,9 +12,10 @@ import { fonts, useTheme } from "@/src/theme";
 import { useI18n } from "@/src/i18n";
 import { useTree } from "@/src/tree-context";
 import {
-  getMembers, changeMemberRole, removeMember, createInviteLink, fileUrl, TreeMember,
+  getMembers, changeMemberRole, removeMember, createInviteLink, TreeMember,
   listJoinRequests, actJoinRequest, setTreeVisibility,
 } from "@/src/api";
+import { imageProps } from "@/src/utils/image";
 
 const ROLES = ["admin", "editor", "viewer"] as const;
 
@@ -150,7 +151,7 @@ export default function MembersScreen() {
                 <View key={r.id} style={styles.reqRow}>
                   <View style={[styles.avatar, { backgroundColor: colors.surfaceTertiary }]}>
                     {r.picture ? (
-                      <Image source={{ uri: fileUrl(r.picture) }} style={styles.avatarImg} contentFit="cover" />
+                      <Image {...imageProps(r.picture)} style={styles.avatarImg} contentFit="cover" />
                     ) : (
                       <Text style={[styles.avatarInit, { color: colors.onSurfaceTertiary }]}>{(r.name || "?").charAt(0).toUpperCase()}</Text>
                     )}
@@ -222,7 +223,7 @@ export default function MembersScreen() {
             <View key={m.user_id} style={[styles.card, { backgroundColor: colors.surfaceSecondary }]}>
               <View style={[styles.avatar, { backgroundColor: colors.surfaceTertiary }]}>
                 {m.picture ? (
-                  <Image source={{ uri: fileUrl(m.picture) }} style={styles.avatarImg} contentFit="cover" />
+                  <Image {...imageProps(m.picture)} style={styles.avatarImg} contentFit="cover" />
                 ) : (
                   <Text style={[styles.avatarInit, { color: colors.onSurfaceTertiary }]}>{m.name.charAt(0).toUpperCase()}</Text>
                 )}

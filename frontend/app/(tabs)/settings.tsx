@@ -10,7 +10,7 @@ import * as ImagePicker from "expo-image-picker";
 import Feather from "@react-native-vector-icons/feather";
 import { fonts, makeStyles, useTheme } from "@/src/theme";
 import { getTree, getBackup, restoreBackup, createInvite, acceptInvite, listInvites, linkCoparents, deleteAccount, fileUrl, uploadPhoto, updateProfile } from "@/src/api";
-import { compressImage } from "@/src/utils/image";
+import { compressImage, imageProps } from "@/src/utils/image";
 import { useAuth } from "@/src/auth";
 import { useTree } from "@/src/tree-context";
 import { useRouter } from "expo-router";
@@ -253,7 +253,7 @@ export default function SettingsScreen() {
               {photoBusy ? (
                 <ActivityIndicator size="small" color={colors.brandPrimary} />
               ) : fileUrl(user?.picture) ? (
-                <Image source={{ uri: fileUrl(user?.picture) }} style={styles.avatarImg} contentFit="cover" />
+                <Image {...imageProps(user?.picture)} style={styles.avatarImg} contentFit="cover" />
               ) : (
                 <Feather name="user" size={26} color={colors.muted} />
               )}

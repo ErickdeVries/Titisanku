@@ -12,7 +12,8 @@ import { ArrowLeft, Check, GitBranch, User, Search } from "lucide-react-native";
 import { fonts, useTheme } from "@/src/theme";
 import { useI18n } from "@/src/i18n";
 import { useTree } from "@/src/tree-context";
-import { getTree, claimBranch, fileUrl } from "@/src/api";
+import { getTree, claimBranch } from "@/src/api";
+import { photoProps } from "@/src/utils/image";
 import { nodeColor } from "@/src/components/PersonNode";
 
 type Scope = "descendants" | "children" | "whole";
@@ -87,8 +88,8 @@ export default function ClaimBranchScreen() {
             style={[styles.personCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}
           >
             <View style={[styles.avatar, { borderColor: person ? nodeColor(person, colors) : colors.border }]}>
-              {person && fileUrl(person.photo_url) ? (
-                <Image source={{ uri: fileUrl(person.photo_url)! }} style={styles.avatarImg} contentFit="cover" />
+              {person && photoProps(person).source ? (
+                <Image {...photoProps(person)} style={styles.avatarImg} contentFit="cover" />
               ) : (
                 <User size={22} color={colors.muted} />
               )}
@@ -188,8 +189,8 @@ export default function ClaimBranchScreen() {
                   testID={`claim-pick-${item.id}`}
                 >
                   <View style={[styles.avatar, { borderColor: nodeColor(item, colors) }]}>
-                    {fileUrl(item.photo_url) ? (
-                      <Image source={{ uri: fileUrl(item.photo_url)! }} style={styles.avatarImg} contentFit="cover" />
+                    {photoProps(item).source ? (
+                      <Image {...photoProps(item)} style={styles.avatarImg} contentFit="cover" />
                     ) : (
                       <User size={20} color={nodeColor(item, colors)} />
                     )}

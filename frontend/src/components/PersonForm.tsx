@@ -5,8 +5,8 @@ import { KeyboardAwareScrollView, KeyboardStickyView } from "react-native-keyboa
 import * as ImagePicker from "expo-image-picker";
 import Feather from "@react-native-vector-icons/feather";
 import { fonts, makeStyles, useTheme } from "@/src/theme";
-import { fileUrl, uploadPhoto } from "@/src/api";
-import { compressImage } from "@/src/utils/image";
+import { uploadPhotoMeta } from "@/src/api";
+import { compressImage, imageProps } from "@/src/utils/image";
 import { useI18n } from "@/src/i18n";
 import { GradientButton } from "./GradientButton";
 import { DateField } from "./DateField";
@@ -18,6 +18,7 @@ export type PersonFormValue = {
   birth_place: string | null;
   death_date: string | null;
   photo_url: string | null;
+  photo_thumb?: string | null;
   job: string | null;
   is_adopted: boolean;
   notes: string | null;
@@ -111,6 +112,7 @@ export function PersonForm({ initial, lockedGender, showAdopted, showMarriageTab
   const [deathDate, setDeathDate] = useState(initial?.death_date ?? null);
   const [notes, setNotes] = useState(initial?.notes ?? "");
   const [photoUrl, setPhotoUrl] = useState<string | null>(initial?.photo_url ?? null);
+  const [photoThumb, setPhotoThumb] = useState<string | null>(initial?.photo_thumb ?? null);
   const [isAdopted, setIsAdopted] = useState(initial?.is_adopted ?? false);
   const [marriageDate, setMarriageDate] = useState(initial?.marriage_date ?? null);
   const [divorceDate, setDivorceDate] = useState(initial?.divorce_date ?? null);
@@ -125,8 +127,9 @@ export function PersonForm({ initial, lockedGender, showAdopted, showMarriageTab
     setUploadErr(null);
     try {
       const compressed = await compressImage(uri);
-      const path = await uploadPhoto(compressed);
-      setPhotoUrl(path);
+      const up = await uploadPhotoMeta(compressed);
+      setPhotoUrl(up.path);
+      setPhotoThumb(up.thumb_path ?? null);
     } catch (e: any) {
       console.log("upload error", e);
       setUploadErr(e?.message || "Gagal mengunggah foto. Coba lagi.");
@@ -181,6 +184,7 @@ export function PersonForm({ initial, lockedGender, showAdopted, showMarriageTab
       birth_place: birthPlace || null,
       death_date: deathDate,
       photo_url: photoUrl,
+      photo_thumb: photoThumb,
       job: job || null,
       is_adopted: isAdopted,
       notes: notes || null,
@@ -190,7 +194,7 @@ export function PersonForm({ initial, lockedGender, showAdopted, showMarriageTab
     });
   };
 
-  const preview = fileUrl(photoUrl);
+  const preview = imageProps(photoUrl, photoThumb);
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.surface }}>
@@ -211,13 +215,13 @@ export function PersonForm({ initial, lockedGender, showAdopted, showMarriageTab
           <>
             <View style={styles.photoWrap}>
               <Pressable style={styles.photo} onPress={pickPhoto} testID="photo-picker">
-                {preview ? (
-                  <Image source={{ uri: preview }} style={styles.photoImg} contentFit="cover" />
+                {preview.source ? (
+                  <Image {...preview} style={styles.photoImg} contentFit="cover" />
                 ) : (
                   <Feather name="camera" size={28} color={colors.muted} />
                 )}
-                {preview && !uploading ? (
-                  <Pressable style={styles.removeBadge} onPress={() => { setPhotoUrl(null); setUploadErr(null); }} hitSlop={8} testID="photo-remove">
+                {preview.source && !uploading ? (
+                  <Pressable style={styles.removeBadge} onPress={() => { setPhotoUrl(null); setPhotoThumb(null); setUploadErr(null); }} hitSlop={8} testID="photo-remove">
                     <Feather name="x" size={14} color={colors.onError} />
                   </Pressable>
                 ) : null}
@@ -225,14 +229,14 @@ export function PersonForm({ initial, lockedGender, showAdopted, showMarriageTab
               <View style={styles.photoBtnRow}>
                 <Pressable style={styles.uploadBtn} onPress={pickPhoto}>
                   <Feather name="upload" size={14} color={colors.brandSecondary} />
-                  <Text style={styles.uploadText}>{uploading ? "..." : preview ? t("change_photo") : t("upload_photo")}</Text>
+                  <Text style={styles.uploadText}>{uploading ? "..." : preview.source ? t("change_photo") : t("upload_photo")}</Text>
                 </Pressable>
                 <Pressable style={styles.uploadBtn} onPress={takePhoto} testID="photo-camera">
                   <Feather name="camera" size={14} color={colors.brandSecondary} />
                   <Text style={styles.uploadText}>{t("take_photo")}</Text>
                 </Pressable>
-                {preview ? (
-                  <Pressable style={styles.uploadBtn} onPress={() => { setPhotoUrl(null); setUploadErr(null); }} testID="photo-remove-btn">
+                {preview.source ? (
+                  <Pressable style={styles.uploadBtn} onPress={() => { setPhotoUrl(null); setPhotoThumb(null); setUploadErr(null); }} testID="photo-remove-btn">
                     <Feather name="trash-2" size={14} color={colors.error} />
                     <Text style={[styles.uploadText, { color: colors.error }]}>{t("remove_photo")}</Text>
                   </Pressable>

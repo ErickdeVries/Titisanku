@@ -13,8 +13,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Feather from "@react-native-vector-icons/feather";
 import { fonts, makeStyles, useTheme, usePremiumTheme, bgColor } from "@/src/theme";
-import { getChat, sendChat, deleteChat, setTyping, uploadPhoto, fileUrl, markNotificationsRead, muteRoom, leaveGroup, limitMessage } from "@/src/api";
-import { compressImage } from "@/src/utils/image";
+import { getChat, sendChat, deleteChat, setTyping, uploadPhoto, markNotificationsRead, muteRoom, leaveGroup, limitMessage } from "@/src/api";
+import { compressImage, imageProps } from "@/src/utils/image";
 import { storage } from "@/src/utils/storage";
 import { CHAT_SOUND_STORAGE_KEY, ChatSound, DEFAULT_CHAT_SOUND, soundByKey } from "@/src/utils/chat-sounds";
 import { useAuth } from "@/src/auth";
@@ -342,7 +342,7 @@ export default function ChatRoomScreen() {
         {!mine ? (
           <View style={styles.avatar}>
             {item.sender_picture ? (
-              <Image source={{ uri: fileUrl(item.sender_picture) }} style={styles.avatarImg} contentFit="cover" />
+              <Image {...imageProps(item.sender_picture)} style={styles.avatarImg} contentFit="cover" />
             ) : (
               <Feather name="user" size={16} color={colors.muted} />
             )}
@@ -360,7 +360,7 @@ export default function ChatRoomScreen() {
             </View>
           ) : null}
           {item.attachments?.length ? (
-            <Image source={{ uri: fileUrl(item.attachments[0]) }} style={styles.chatImg} contentFit="cover" />
+            <Image {...imageProps(item.attachments[0])} style={styles.chatImg} contentFit="cover" />
           ) : null}
           {item.message ? <MessageText text={item.message} color={onText} styles={styles} /> : null}
           <View style={styles.footerRow}>
@@ -392,7 +392,7 @@ export default function ChatRoomScreen() {
         >
           <View style={styles.roomIcon}>
             {data?.room_picture ? (
-              <Image source={{ uri: fileUrl(data.room_picture) }} style={styles.roomIconImg} contentFit="cover" />
+              <Image {...imageProps(data.room_picture)} style={styles.roomIconImg} contentFit="cover" />
             ) : (
               <Feather name={roomType === "direct" ? "user" : "users"} size={18} color={colors.brandPrimary} />
             )}
@@ -459,7 +459,7 @@ export default function ChatRoomScreen() {
                 <Pressable style={styles.mentionRow} onPress={() => insertMention(item)} testID={`mention-${item.user_id}`}>
                   <View style={styles.mentionAvatar}>
                     {item.picture ? (
-                      <Image source={{ uri: fileUrl(item.picture) }} style={styles.avatarImg} contentFit="cover" />
+                      <Image {...imageProps(item.picture)} style={styles.avatarImg} contentFit="cover" />
                     ) : (
                       <Feather name="user" size={15} color={colors.muted} />
                     )}
@@ -558,7 +558,7 @@ export default function ChatRoomScreen() {
                   {readers.map((m: any) => (
                     <View key={m.user_id} style={styles.readRow}>
                       <View style={styles.readAvatar}>
-                        {m.picture ? <Image source={{ uri: fileUrl(m.picture) }} style={styles.readAvatarImg} contentFit="cover" /> : <Feather name="user" size={14} color={colors.muted} />}
+                        {m.picture ? <Image {...imageProps(m.picture)} style={styles.readAvatarImg} contentFit="cover" /> : <Feather name="user" size={14} color={colors.muted} />}
                       </View>
                       <Text style={styles.readName}>{m.name}</Text>
                     </View>
@@ -570,7 +570,7 @@ export default function ChatRoomScreen() {
                   {pending.map((m: any) => (
                     <View key={m.user_id} style={styles.readRow}>
                       <View style={styles.readAvatar}>
-                        {m.picture ? <Image source={{ uri: fileUrl(m.picture) }} style={styles.readAvatarImg} contentFit="cover" /> : <Feather name="user" size={14} color={colors.muted} />}
+                        {m.picture ? <Image {...imageProps(m.picture)} style={styles.readAvatarImg} contentFit="cover" /> : <Feather name="user" size={14} color={colors.muted} />}
                       </View>
                       <Text style={styles.readName}>{m.name}</Text>
                     </View>
