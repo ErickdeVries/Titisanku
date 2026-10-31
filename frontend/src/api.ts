@@ -75,6 +75,7 @@ export type Person = {
   birth_place?: string | null;
   death_date?: string | null;
   photo_url?: string | null;
+  photo_thumb?: string | null;
   cover_url?: string | null;
   job?: string | null;
   is_adopted?: boolean;
@@ -132,6 +133,182 @@ export const deleteAccount = (): Promise<{ ok: boolean }> =>
 export const adminOverview = () => apiFetch("/admin/overview");
 export const adminUsers = () => apiFetch("/admin/users");
 export const adminFeedback = () => apiFetch("/admin/feedback");
+
+// ---- Superadmin dashboard ----
+function qs(params: Record<string, unknown>): string {
+  const parts = Object.entries(params)
+    .filter(([, v]) => v !== undefined && v !== null && v !== "")
+    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`);
+  return parts.length ? `?${parts.join("&")}` : "";
+}
+
+export type AdminGrowthPoint = {
+  date: string;
+  signups: number;
+  trees: number;
+  people: number;
+  messages: number;
+  active_users: number;
+  paid_orders: number;
+  revenue: number;
+};
+
+export type AdminGrowth = {
+  days: number;
+  start: string;
+  series: AdminGrowthPoint[];
+  totals: {
+    total_users: number;
+    total_trees: number;
+    paid_trees: number;
+    new_users_1d: number;
+    new_users_7d: number;
+    new_users_30d: number;
+    new_trees_7d: number;
+    total_people: number;
+    total_messages: number;
+  };
+  engagement: { dau: number; wau: number; mau: number; stickiness: number; returning_7d: number };
+  funnel: { users: number; owners: number; payers: number; conversion: number };
+};
+
+export type AdminFinanceOrder = {
+  order_id?: string;
+  plan?: string;
+  status?: string;
+  provider?: string;
+  amount: number;
+  created_at?: string;
+  paid_at?: string | null;
+  tree_id?: string;
+  tree_name?: string | null;
+  user_email?: string | null;
+};
+
+export type AdminFinance = {
+  days: number;
+  revenue: {
+    total: number;
+    today: number;
+    "7d": number;
+    "30d": number;
+    avg_order_value: number;
+    arpu: number;
+  };
+  series: { date: string; revenue: number; orders: number }[];
+  by_plan: { plan: string; count: number; revenue: number }[];
+  by_status: { status: string; count: number; amount: number }[];
+  by_provider: { provider: string; count: number; revenue: number }[];
+  subscriptions: { active: number; expiring_30d: number; paid_trees: number };
+  conversion: number;
+  recent: AdminFinanceOrder[];
+  top_trees: {
+    tree_id: string;
+    tree_name: string | null;
+    plan: string | null;
+    owner_email: string | null;
+    revenue: number;
+  }[];
+};
+
+export type AdminActivityItem = {
+  id: string;
+  action: string;
+  created_at: string;
+  actor_id?: string | null;
+  actor_email?: string | null;
+  actor_name?: string | null;
+  tree_id?: string | null;
+  target?: string | null;
+  meta?: Record<string, unknown>;
+  ip?: string | null;
+};
+
+export type AdminActivity = {
+  items: AdminActivityItem[];
+  total: number;
+  limit: number;
+  skip: number;
+  actions: { action: string; count: number }[];
+  known_actions: string[];
+};
+
+export type AdminErrorItem = {
+  id: string;
+  path: string;
+  method?: string;
+  status: number;
+  detail?: string;
+  duration_ms?: number;
+  level?: "error" | "warn";
+  created_at: string;
+};
+
+export type AdminErrors = {
+  items: AdminErrorItem[];
+  total: number;
+  count_24h: number;
+  by_path: { path: string; count: number; last_at: string | null }[];
+  by_status: { status: number; count: number }[];
+};
+
+export type AdminTreeItem = {
+  id: string;
+  name: string;
+  plan: string;
+  created_at: string | null;
+  expires_at: string | null;
+  owner_id: string;
+  owner_email: string | null;
+  owner_name: string | null;
+  people: number;
+  members: number;
+  messages: number;
+  storage_used: number;
+};
+
+export type AdminTrees = {
+  trees: AdminTreeItem[];
+  total: number;
+  plan_counts: { plan: string; count: number }[];
+  limit: number;
+  skip: number;
+};
+
+export type AdminSystem = {
+  uptime_seconds: number;
+  started_at: string;
+  integrations: Record<string, boolean>;
+  request_stats: Record<
+    string,
+    {
+      requests: number;
+      errors: number;
+      avg_ms: number;
+      p95_ms: number;
+      slowest: { path: string; ms: number; status: number }[];
+    }
+  >;
+  collections: Record<string, number | null>;
+  db_name: string;
+  superadmins: string[];
+  activity_log_started: string | null;
+};
+
+export const adminGrowth = (days = 30): Promise<AdminGrowth> =>
+  apiFetch(`/admin/growth${qs({ days })}`);
+export const adminFinance = (days = 30): Promise<AdminFinance> =>
+  apiFetch(`/admin/finance${qs({ days })}`);
+export const adminActivity = (
+  p: { action?: string; q?: string; days?: number; limit?: number; skip?: number } = {},
+): Promise<AdminActivity> => apiFetch(`/admin/activity${qs(p)}`);
+export const adminErrors = (
+  p: { path?: string; status?: number; days?: number; limit?: number; skip?: number } = {},
+): Promise<AdminErrors> => apiFetch(`/admin/errors${qs(p)}`);
+export const adminTrees = (
+  p: { q?: string; plan?: string; limit?: number; skip?: number } = {},
+): Promise<AdminTrees> => apiFetch(`/admin/trees${qs(p)}`);
+export const adminSystem = (): Promise<AdminSystem> => apiFetch("/admin/system");
 
 export type PlanId = "free" | "pro" | "family" | "unlimited";
 
@@ -222,9 +399,9 @@ export const linkCoparents = (): Promise<{ linked: number }> =>
 export const listPeople = (q?: string): Promise<Person[]> =>
   apiFetch(`/people${q ? `?q=${encodeURIComponent(q)}` : ""}`);
 export const getPerson = (id: string): Promise<Person> => apiFetch(`/people/${id}`);
-export type GalleryPhoto = { id: string; path: string; caption?: string; date?: string };
-export const addGalleryPhoto = (id: string, path: string, caption?: string, date?: string): Promise<{ gallery: GalleryPhoto[] }> =>
-  apiFetch(`/people/${id}/gallery`, { method: "POST", body: JSON.stringify({ path, caption, date }) });
+export type GalleryPhoto = { id: string; path: string; thumb?: string | null; caption?: string; date?: string };
+export const addGalleryPhoto = (id: string, path: string, caption?: string, date?: string, thumb?: string | null): Promise<{ gallery: GalleryPhoto[] }> =>
+  apiFetch(`/people/${id}/gallery`, { method: "POST", body: JSON.stringify({ path, caption, date, thumb }) });
 export const editGalleryPhoto = (id: string, photoId: string, caption?: string, date?: string): Promise<{ gallery: GalleryPhoto[] }> =>
   apiFetch(`/people/${id}/gallery/${photoId}`, { method: "PATCH", body: JSON.stringify({ caption, date }) });
 export const removeGalleryPhoto = (id: string, photoId: string): Promise<{ gallery: GalleryPhoto[] }> =>
@@ -359,7 +536,15 @@ export function fileUrl(pathOrUrl?: string | null): string | undefined {
   return `${API}/files/${clean}?token=${authToken ?? ""}`;
 }
 
-export async function uploadPhoto(uri: string): Promise<string> {
+/** Hasil unggah: path objek utama + thumbnail 320px (bila server berhasil membuatnya). */
+export type UploadedPhoto = {
+  path: string;
+  url?: string;
+  thumb_path?: string | null;
+  thumb_url?: string | null;
+};
+
+export async function uploadPhotoMeta(uri: string): Promise<UploadedPhoto> {
   const name = uri.split("/").pop() || `photo_${Date.now()}.jpg`;
   const form = new FormData();
   if (Platform.OS === "web") {
@@ -385,5 +570,15 @@ export async function uploadPhoto(uri: string): Promise<string> {
     throw new Error(detail);
   }
   const data = await res.json();
-  return data.path as string;
+  return {
+    path: data.path as string,
+    url: data.url,
+    thumb_path: data.thumb_path ?? null,
+    thumb_url: data.thumb_url ?? null,
+  };
+}
+
+/** Versi ringkas: hanya path objek utama (dipakai chat & lampiran). */
+export async function uploadPhoto(uri: string): Promise<string> {
+  return (await uploadPhotoMeta(uri)).path;
 }
