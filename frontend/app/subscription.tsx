@@ -84,7 +84,7 @@ export default function SubscriptionScreen() {
         // Android: wajib pakai Google Play Billing untuk produk digital.
         const purchase = await purchasePlan(target);
         const res = await playVerify(purchase.productId, purchase.purchaseToken, activeTreeId);
-        await finishPlayPurchase(purchase.purchaseToken, purchase.productId);
+        await finishPlayPurchase(purchase.purchaseToken, purchase.productId, purchase.purchase);
         await refreshTrees();
         Alert.alert(t("payment_success_title"), `${t("payment_success_msg")} (${res.plan})`);
         return;
