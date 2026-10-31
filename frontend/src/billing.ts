@@ -41,6 +41,11 @@ export async function purchasePlan(plan: BillingPlan): Promise<{ purchaseToken: 
     const sub = iap.purchaseUpdatedListener((purchase) => {
       const token = purchase.purchaseToken ?? null;
       if (!token) return;
+      // Abaikan transaksi yang bukan untuk produk ini atau belum lunas,
+      // agar purchase tertunda dari produk lain tidak ikut terpakai.
+      if (purchase.productId && purchase.productId !== PRODUCTS[plan]) return;
+      const state = (purchase as { purchaseState?: string | number }).purchaseState;
+      if (state === "pending" || state === 2) return;
       done(() => resolve({ purchaseToken: token, productId: purchase.productId || PRODUCTS[plan] }));
     });
     const errSub = iap.purchaseErrorListener((error) => {
@@ -70,13 +75,17 @@ export async function purchasePlan(plan: BillingPlan): Promise<{ purchaseToken: 
 export async function finishPlayPurchase(purchaseToken: string, productId: string): Promise<void> {
   if (!billingSupported) return;
   const iap = await import("expo-iap");
-  // finishTransaction menandai transaksi selesai; parameter bervariasi per versi.
+  // expo-iap v6: finishTransaction menerima objek purchase.
+  // Kalau purchase lengkap tidak tersedia, ambil dari daftar pembelian aktif.
   try {
-    await (iap as unknown as { finishTransaction: (args: unknown) => Promise<void> }).finishTransaction({
-      productId,
-      purchaseToken,
+    const pending = await iap.getAvailablePurchases();
+    const match = pending.find(
+      (p) => p.purchaseToken === purchaseToken || p.productId === productId,
+    );
+    await iap.finishTransaction({
+      purchase: match ?? ({ purchaseToken, productId } as Parameters<typeof iap.finishTransaction>[0]["purchase"]),
       isConsumable: false,
-    });
+    } as Parameters<typeof iap.finishTransaction>[0]);
   } catch {
     // best-effort: server sudah acknowledge via Play Developer API
   }

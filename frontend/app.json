@@ -1,7 +1,8 @@
 {
   "expo": {
     "name": "Titisanku",
-    "slug": "frontend",
+    "slug": "erickdevries",
+    "owner": "lima-jiwa-mandiri",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
@@ -80,6 +81,11 @@
     ],
     "experiments": {
       "typedRoutes": true
+    },
+    "extra": {
+      "eas": {
+        "projectId": "91ca8132-8707-4b16-b89e-c7bee197aecd"
+      }
     }
   }
 }
