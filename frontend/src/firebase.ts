@@ -50,6 +50,37 @@ function getFirebaseAuth(): Auth {
 }
 
 /**
+ * Muat + konfigurasi modul native Google Sign-In (hanya dipakai di Android/iOS).
+ * Dilepas dari signInWithGoogle agar bisa dipakai juga saat logout.
+ */
+async function loadNativeGoogle() {
+  const gsi = await import("@react-native-google-signin/google-signin");
+  const webClientId = process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID;
+  if (!webClientId) {
+    throw new Error("EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID belum diisi (dibutuhkan untuk Google Sign-In native).");
+  }
+  gsi.GoogleSignin.configure({ webClientId });
+  return gsi;
+}
+
+/**
+ * Buang sesi Google yang di-cache modul native di perangkat.
+ *
+ * Tanpa ini, `GoogleSignin.signIn()` memakai ulang akun terakhir yang pernah
+ * dipakai tanpa menampilkan sheet pemilihan akun, sehingga pengguna tidak bisa
+ * ganti akun saat login. Kegagalan pembersihan tidak boleh menghalangi login.
+ */
+export async function forgetGoogleSession(): Promise<void> {
+  if (Platform.OS === "web") return;
+  try {
+    const gsi = await loadNativeGoogle();
+    if (gsi.GoogleSignin.hasPreviousSignIn()) await gsi.GoogleSignin.signOut();
+  } catch {
+    // diamkan: percobaan login berikutnya tetap akan menampilkan sheet Google
+  }
+}
+
+/**
  * ID token terbaru bila pengguna sudah login di Firebase, atau null.
  * `getIdToken(true)` memaksa refresh agar tidak memakai token kedaluwarsa.
  */
@@ -87,13 +118,12 @@ export async function signInWithGoogle(): Promise<string | null> {
   // Native (Android/iOS): gunakan @react-native-google-signin/google-signin.
   // Diimpor dinamis agar web tetap bisa build tanpa modul native ini.
   try {
-    const gsi = await import("@react-native-google-signin/google-signin");
-    const webClientId = process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID;
-    if (!webClientId) {
-      throw new Error("EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID belum diisi (dibutuhkan untuk Google Sign-In native).");
-    }
-    gsi.GoogleSignin.configure({ webClientId });
+    const gsi = await loadNativeGoogle();
     await gsi.GoogleSignin.hasPlayServices();
+    // Modul native menyimpan sesi Google terakhir. Kalau tidak dibersihkan,
+    // GoogleSignin.signIn() langsung memakai akun itu tanpa menampilkan sheet
+    // pemilihan akun — akibatnya pengguna tidak bisa ganti akun saat login.
+    await forgetGoogleSession();
     const res = await gsi.GoogleSignin.signIn();
     const idToken = res.data?.idToken ?? (res as { idToken?: string }).idToken;
     if (!idToken) throw new Error("Google Sign-In tidak mengembalikan idToken.");
@@ -108,6 +138,9 @@ export async function signInWithGoogle(): Promise<string | null> {
 }
 
 export async function signOutFirebase(): Promise<void> {
+  // Bersihkan sesi Google kached di perangkat juga, supaya login berikutnya
+  // menampilkan pilihan akun (bukan otomatis masuk ke akun yang sama).
+  await forgetGoogleSession();
   if (!firebaseConfigured()) return;
   await signOut(getFirebaseAuth());
 }
