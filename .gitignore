@@ -59,6 +59,9 @@ uvicorn*.log
 *uvicorn_*.log
 google-services.*.bak.json
 
+# Dump database hasil skrip repair/backfill (berisi data pribadi pengguna)
+backups/
+
 # System files
 .DS_Store
 *.pem
