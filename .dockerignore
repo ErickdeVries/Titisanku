@@ -18,6 +18,11 @@ backend/firebase-service-account.json
 **/*service-account*.json
 **/google-services.json
 
+# Alat ops & tes tidak ikut ke image produksi (bisa menghapus database
+# kalau tidak sengaja dijalankan di dalam container)
+backend/scripts/
+backend/tests/
+
 # Sisa-sisa dev
 backend/__pycache__/
 backend/.pytest_cache/

@@ -629,3 +629,12 @@ User choices: chat notif = getar + suara "ding"; kerjakan Push sekarang.
   manual dari panel Helipod (pakai tag `:<git-sha>` agar bisa rollback, jangan hanya `:latest`).
   Verifikasi cepat pasca-deploy: `GET /api/admin/system` harus 401 (route baru ada) - kalau 404
   berarti container masih image lama.
+- ALAT OPS di `backend/scripts/` (2026-11-01, di-commit + dipagari):
+  * `repair_orphan_tree.py` - memperbaiki pohon yatim (`trees` tanpa `owner_id`/`tree_members`).
+    Default dry-run; menulis backup ke `backups/`; `--apply` ke Mongo non-lokal wajib
+    `--yes-remote`. Dicoba 2026-11-01: dry-run menyatakan data produksi sudah konsisten.
+  * `manual_admin_check.py` - seed DB uji + assert angka `/admin/*` (bukan pytest).
+    Menghapus koleksi, jadi wajib `--yes-wipe`, `--db` harus berakhiran `_verify` dan
+    tidak boleh sama dengan `DB_NAME`, `--url` non-lokal butuh `--allow-remote`.
+  * Keduanya di-`.dockerignore` (tidak ikut image produksi), jadi jalankan dari root repo:
+    `python backend/scripts/<nama>.py ...`.
