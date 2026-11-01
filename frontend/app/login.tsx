@@ -12,38 +12,69 @@ const EMBLEM = require("../assets/images/titisanku-emblem.png");
 // Tombol akun demo hanya muncul bila diaktifkan lewat env (dipakai untuk review Play).
 const DEMO_ENABLED = process.env.EXPO_PUBLIC_ENABLE_DEMO_LOGIN === "true";
 
+/**
+ * Halaman masuk.
+ *
+ * Bagian branding (emblem, eyebrow, nama aplikasi, garis pemisah, subjudul)
+ * memakai skala desain acuan: emblem 168pt, judul Playfair Display.
+ * Bagian cara masuk sengaja dibuat kompak dan ditempel ke bawah layar agar
+ * branding tetap dominan seperti desain acuan.
+ */
 const useStyles = makeStyles((c) => ({
-  root: { flex: 1, backgroundColor: c.surface, alignItems: "center" },
-  scroll: { flexGrow: 1, width: "100%", alignItems: "center", justifyContent: "center" },
+  root: { flex: 1, backgroundColor: c.surface },
   scrollOuter: { flex: 1, width: "100%" },
-  inner: { width: "100%", maxWidth: 460, paddingHorizontal: 28, paddingBottom: 32, alignItems: "center" },
-  emblem: { width: 112, height: 112, marginBottom: 18 },
-  title: {
-    fontFamily: fonts.bold,
-    fontSize: 24,
-    color: c.onSurface,
-    textAlign: "center",
-    letterSpacing: -0.4,
+  scroll: { flexGrow: 1, width: "100%", justifyContent: "space-between" },
+
+  // Branding
+  brand: {
+    flexGrow: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 28,
+    paddingTop: 16,
   },
+  emblem: { width: 168, height: 168 },
+  eyebrow: {
+    fontFamily: fonts.semibold,
+    fontSize: 12,
+    letterSpacing: 2.6,
+    color: c.brandSecondary,
+    textAlign: "center",
+    marginTop: 22,
+  },
+  brandName: {
+    fontFamily: fonts.display,
+    fontSize: 46,
+    lineHeight: 58,
+    color: c.brandSecondary,
+    textAlign: "center",
+    marginTop: 4,
+  },
+  rule: { flexDirection: "row", alignItems: "center", gap: 12, marginTop: 4 },
+  ruleLine: { width: 62, height: 1, backgroundColor: c.borderStrong },
+  ruleDot: { width: 7, height: 7, backgroundColor: c.brand, transform: [{ rotate: "45deg" }] },
   subtitle: {
     fontFamily: fonts.regular,
-    fontSize: 14,
-    lineHeight: 21,
+    fontSize: 15,
+    lineHeight: 24,
     color: c.muted,
     textAlign: "center",
-    marginTop: 8,
-    marginBottom: 22,
+    marginTop: 16,
+    maxWidth: 330,
   },
-  form: { width: "100%", gap: 12 },
+
+  // Cara masuk (kompak, di bawah)
+  login: { width: "100%", maxWidth: 460, alignSelf: "center", paddingHorizontal: 28 },
+  form: { width: "100%", gap: 10, marginBottom: 12 },
   input: {
-    height: 52,
+    height: 46,
     borderRadius: 14,
     borderWidth: 1,
     borderColor: c.border,
     backgroundColor: c.surfaceSecondary,
-    paddingHorizontal: 16,
+    paddingHorizontal: 14,
     fontFamily: fonts.regular,
-    fontSize: 15,
+    fontSize: 14,
     color: c.onSurface,
   },
   error: {
@@ -51,23 +82,27 @@ const useStyles = makeStyles((c) => ({
     fontSize: 13,
     color: "#B3261E",
     textAlign: "center",
-    marginTop: 4,
+    marginBottom: 10,
   },
   link: {
     fontFamily: fonts.semibold,
-    fontSize: 14,
+    fontSize: 13,
     color: c.brandSecondary,
     textAlign: "center",
-    paddingVertical: 10,
+    paddingVertical: 8,
   },
-  dividerRow: { flexDirection: "row", alignItems: "center", gap: 12, marginVertical: 16, width: "100%" },
-  dividerLine: { flex: 1, height: 1, backgroundColor: c.border },
-  dividerText: { fontFamily: fonts.regular, fontSize: 12, color: c.muted },
+  linkSmall: {
+    fontFamily: fonts.medium,
+    fontSize: 13,
+    color: c.brandSecondary,
+    textAlign: "center",
+    paddingVertical: 9,
+  },
   legal: {
     fontFamily: fonts.regular,
-    fontSize: 12,
+    fontSize: 11,
     color: c.muted,
-    marginTop: 22,
+    marginTop: 2,
     textAlign: "center",
   },
 }));
@@ -82,6 +117,7 @@ export default function Login() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
+  const [showCredentials, setShowCredentials] = useState(false);
 
   const canSubmit = username.trim().length >= 3 && password.length >= 8;
 
@@ -98,86 +134,97 @@ export default function Login() {
     <View style={[styles.root, { paddingTop: insets.top }]}>
       <ScrollView
         style={styles.scrollOuter}
-        contentContainerStyle={styles.scroll}
+        contentContainerStyle={[styles.scroll, { paddingBottom: Math.max(insets.bottom, 10) + 8 }]}
         keyboardShouldPersistTaps="handled"
       >
-        <View style={styles.inner}>
+        <View style={styles.brand}>
           <Image source={EMBLEM} style={styles.emblem} contentFit="contain" />
-          <Text style={styles.title}>{t("login_title")}</Text>
+          <Text style={styles.eyebrow}>{t("login_eyebrow")}</Text>
+          <Text style={styles.brandName}>{t("login_brand")}</Text>
+          <View style={styles.rule}>
+            <View style={styles.ruleLine} />
+            <View style={styles.ruleDot} />
+            <View style={styles.ruleLine} />
+          </View>
           <Text style={styles.subtitle}>{t("login_subtitle")}</Text>
+        </View>
 
-          <View style={styles.form}>
-            <TextInput
-              style={styles.input}
-              placeholder={t("login_username")}
-              placeholderTextColor="#9A9488"
-              value={username}
-              onChangeText={setUsername}
-              autoCapitalize="none"
-              autoCorrect={false}
-              testID="input-username"
-            />
-            <TextInput
-              style={styles.input}
-              placeholder={t("login_password")}
-              placeholderTextColor="#9A9488"
-              value={password}
-              onChangeText={setPassword}
-              secureTextEntry
-              testID="input-password"
-            />
-            {mode === "register" && (
+        <View style={styles.login}>
+          {showCredentials && (
+            <View style={styles.form}>
               <TextInput
                 style={styles.input}
-                placeholder={t("login_name")}
+                placeholder={t("login_username")}
                 placeholderTextColor="#9A9488"
-                value={name}
-                onChangeText={setName}
-                testID="input-name"
+                value={username}
+                onChangeText={setUsername}
+                autoCapitalize="none"
+                autoCorrect={false}
+                testID="input-username"
               />
-            )}
-            {authError && <Text style={styles.error}>{authError}</Text>}
-            <GradientButton
-              title={mode === "login" ? t("login_submit") : t("login_register_submit")}
-              icon="log-in"
-              loading={signingIn}
-              disabled={!canSubmit}
-              onPress={submit}
-              testID="submit-credentials"
-            />
-            <Pressable onPress={() => setMode(mode === "login" ? "register" : "login")}>
-              <Text style={styles.link}>
-                {mode === "login" ? t("login_to_register") : t("login_to_login")}
-              </Text>
-            </Pressable>
-          </View>
-
-          {DEMO_ENABLED && (
-            <GradientButton
-              title={t("login_demo")}
-              icon="user"
-              variant="secondary"
-              loading={signingIn}
-              onPress={loginDemo}
-              style={{ marginTop: 14 }}
-              testID="demo-login"
-            />
+              <TextInput
+                style={styles.input}
+                placeholder={t("login_password")}
+                placeholderTextColor="#9A9488"
+                value={password}
+                onChangeText={setPassword}
+                secureTextEntry
+                testID="input-password"
+              />
+              {mode === "register" && (
+                <TextInput
+                  style={styles.input}
+                  placeholder={t("login_name")}
+                  placeholderTextColor="#9A9488"
+                  value={name}
+                  onChangeText={setName}
+                  testID="input-name"
+                />
+              )}
+              <GradientButton
+                title={mode === "login" ? t("login_submit") : t("login_register_submit")}
+                icon="log-in"
+                size="compact"
+                loading={signingIn}
+                disabled={!canSubmit}
+                onPress={submit}
+                testID="submit-credentials"
+              />
+              <Pressable onPress={() => setMode(mode === "login" ? "register" : "login")}>
+                <Text style={styles.link}>
+                  {mode === "login" ? t("login_to_register") : t("login_to_login")}
+                </Text>
+              </Pressable>
+            </View>
           )}
 
-          <View style={styles.dividerRow}>
-            <View style={styles.dividerLine} />
-            <Text style={styles.dividerText}>{t("login_or")}</Text>
-            <View style={styles.dividerLine} />
-          </View>
+          {authError && <Text style={styles.error}>{authError}</Text>}
 
           <GradientButton
             title={t("login_google")}
             icon="log-in"
-            variant="secondary"
+            size="compact"
             loading={signingIn}
             onPress={login}
             testID="google-login"
           />
+
+          <Pressable
+            onPress={() => setShowCredentials((v) => !v)}
+            testID="toggle-credentials"
+            hitSlop={6}
+          >
+            <Text style={styles.linkSmall}>
+              {showCredentials ? t("login_hide_credentials") : t("login_show_credentials")}
+            </Text>
+          </Pressable>
+
+          {DEMO_ENABLED && (
+            <Pressable onPress={loginDemo} disabled={signingIn} testID="demo-login" hitSlop={6}>
+              <Text style={styles.linkSmall}>{t("login_demo")}</Text>
+            </Pressable>
+          )}
+
           <Text style={styles.legal}>© Titisanku · Warisan keluarga Anda</Text>
         </View>
       </ScrollView>
