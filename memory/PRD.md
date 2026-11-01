@@ -622,3 +622,10 @@ User choices: chat notif = getar + suara "ding"; kerjakan Push sekarang.
   Ikut dihapus: query `["notifications"]` + `unreadNotif` + import getNotifications di layar Pohon
   (polling notif tetap ada di (tabs)/_layout.tsx untuk badge tab Chat).
 - Preview APK build: b5108a26 (status FINISHED, versionCode 1) di EAS project erickdevries.
+- ALUR DEPLOY BACKEND (keputusan 2026-11-01): semua pekerjaan & push LANGSUNG ke branch `main`
+  (branch `dev-titisanku` tidak dipakai lagi). Setiap push ke `main` memicu workflow
+  `.github/workflows/docker-build.yml` -> image `ghcr.io/erickdevries/titisanku:latest` +
+  `:<git-sha>`. PENTING: Helipod TIDAK auto-pull; image baru harus di-pull & service di-restart
+  manual dari panel Helipod (pakai tag `:<git-sha>` agar bisa rollback, jangan hanya `:latest`).
+  Verifikasi cepat pasca-deploy: `GET /api/admin/system` harus 401 (route baru ada) - kalau 404
+  berarti container masih image lama.
