@@ -9,7 +9,7 @@ import Animated, { useSharedValue, useAnimatedStyle, withTiming, withDelay, with
 import Svg, { Line } from "react-native-svg";
 import Feather from "@react-native-vector-icons/feather";
 import { fonts, makeStyles, useTheme, usePremiumTheme, bgColor } from "@/src/theme";
-import { getTree, Person, Relation, getNotifications } from "@/src/api";
+import { getTree, Person, Relation } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { useTree } from "@/src/tree-context";
 import { useI18n } from "@/src/i18n";
@@ -24,29 +24,29 @@ const EMPTY_IMG =
 
 const useStyles = makeStyles((c) => ({
   root: { flex: 1, backgroundColor: c.surface },
+  // Header dua baris: baris 1 judul pohon + aksi utama, baris 2 info plan &
+  // tombol sekunder. Sebelumnya semuanya di satu baris sehingga judul terpotong
+  // ("Ke...") dan chip plan pecah jadi dua baris ("KELUARG A") di layar sempit.
   header: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 20,
-    paddingBottom: 12,
+    paddingHorizontal: 16,
+    paddingBottom: 10,
     backgroundColor: c.surface,
     borderBottomWidth: 1,
     borderBottomColor: c.divider,
+    gap: 8,
   },
-  headerTitle: { fontFamily: fonts.display, fontSize: 22, color: c.onSurface },
-  headerTitleRow: { flexDirection: "row", alignItems: "center", gap: 6 },
-  headerLeft: { flex: 1, marginRight: 12 },
-  headerMeta: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 2 },
-  planChip: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999 },
+  headerTitle: { fontFamily: fonts.display, fontSize: 22, color: c.onSurface, flexShrink: 1 },
+  headerTitleRow: { flexDirection: "row", alignItems: "center", gap: 6, flex: 1, minWidth: 0 },
+  headerRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  headerMetaRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  headerSpacer: { flex: 1 },
+  planChip: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999, maxWidth: 104 },
   planChipText: { fontFamily: fonts.bold, fontSize: 10, letterSpacing: 0.5 },
   headerCount: { fontFamily: fonts.medium, fontSize: 12, color: c.muted },
-  headerActions: { flexDirection: "row", alignItems: "center", gap: 8 },
   iconBtn: { width: 38, height: 38, borderRadius: 999, backgroundColor: c.brandTertiary, alignItems: "center", justifyContent: "center" },
-  notifDot: { position: "absolute", top: -3, right: -3, minWidth: 18, height: 18, paddingHorizontal: 4, borderRadius: 999, backgroundColor: c.error, alignItems: "center", justifyContent: "center", borderWidth: 1.5, borderColor: c.surface },
-  notifDotText: { fontFamily: fonts.bold, fontSize: 9, color: "#FFFFFF" },
-  exportBtn: { flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: c.surfaceTertiary, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 999 },
-  exportText: { fontFamily: fonts.medium, fontSize: 13, color: c.onSurfaceSecondary },
+  iconBtnSm: { width: 32, height: 32, borderRadius: 999, backgroundColor: c.brandTertiary, alignItems: "center", justifyContent: "center" },
+  exportBtn: { flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: c.surfaceTertiary, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999, flexShrink: 0 },
+  exportText: { fontFamily: fonts.medium, fontSize: 13, color: c.onSurfaceSecondary, flexShrink: 1 },
   bookBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, borderWidth: 1.5, borderRadius: 16, height: 52, marginTop: 10 },
   bookBtnText: { fontFamily: fonts.semibold, fontSize: 15 },
   statsStrip: { flexDirection: "row", gap: 10, paddingHorizontal: 16, paddingVertical: 12, backgroundColor: c.surface, borderBottomWidth: 1, borderBottomColor: c.divider },
@@ -77,15 +77,18 @@ const useStyles = makeStyles((c) => ({
     shadowRadius: 4,
     elevation: 4,
   },
+  // Legend jadi strip footer di bawah kanvas (bukan overlay absolute) supaya
+  // tidak menutupi node/garis saat kanvas di-pan atau di-zoom.
   legend: {
-    position: "absolute",
-    left: 16,
     flexDirection: "row",
-    gap: 14,
-    backgroundColor: "rgba(255,255,255,0.92)",
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 18,
+    backgroundColor: c.surfaceSecondary,
+    borderTopWidth: 1,
+    borderTopColor: c.divider,
+    paddingHorizontal: 16,
+    paddingVertical: 6,
   },
   legendItem: { flexDirection: "row", alignItems: "center", gap: 5 },
   legendDot: { width: 10, height: 10, borderRadius: 999 },
@@ -192,8 +195,6 @@ export default function TreeScreen() {
   const { width: screenW } = useWindowDimensions();
 
   const { data, isLoading } = useQuery({ queryKey: ["tree"], queryFn: getTree });
-  const { data: notif } = useQuery({ queryKey: ["notifications"], queryFn: getNotifications, refetchInterval: 8000 });
-  const unreadNotif = notif?.unread ?? 0;
   const { activeTree, activeTreeId, pendingFocusId } = useTree();
   const [selected, setSelected] = useState<string | null>(null);
   // `null` means "not chosen yet" -> fall back to the tree root below.
@@ -432,14 +433,32 @@ export default function TreeScreen() {
   return (
     <View style={styles.root}>
       <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
-        <View style={styles.headerLeft}>
+        <View style={styles.headerRow}>
           <Pressable onPress={() => router.push("/trees")} style={styles.headerTitleRow} testID="tree-switcher" hitSlop={8}>
-            <Text style={[styles.headerTitle, { flexShrink: 1 }]} numberOfLines={1}>{activeTree?.name ?? t("tree")}</Text>
+            <Text style={styles.headerTitle} numberOfLines={1}>{activeTree?.name ?? t("tree")}</Text>
             <Feather name="chevron-down" size={18} color={colors.brandSecondary} />
           </Pressable>
-          <View style={styles.headerMeta}>
+          {hasTree ? (
+            <>
+              <Pressable style={styles.iconBtn} onPress={() => router.push("/notifications")} testID="open-notifications">
+                <Feather name="bell" size={18} color={colors.brandSecondary} />
+              </Pressable>
+              <Pressable style={styles.exportBtn} onPress={() => setExportOpen(true)} testID="export-pdf-button">
+                <Feather name="file-text" size={15} color={colors.onSurfaceSecondary} />
+                {screenW >= 360 ? (
+                  <Text style={styles.exportText} numberOfLines={1}>{t("export_pdf")}</Text>
+                ) : null}
+              </Pressable>
+            </>
+          ) : null}
+        </View>
+        {hasTree ? (
+          <View style={styles.headerMetaRow}>
             <View style={[styles.planChip, { backgroundColor: plan === "free" ? colors.brandTertiary : colors.brandSecondary }]}>
-              <Text style={[styles.planChipText, { color: plan === "free" ? colors.onBrandTertiary : colors.onBrandSecondary }]}>
+              <Text
+                style={[styles.planChipText, { color: plan === "free" ? colors.onBrandTertiary : colors.onBrandSecondary }]}
+                numberOfLines={1}
+              >
                 {plan === "pro" ? "PRO" : plan === "family" ? "KELUARGA" : "GRATIS"}
               </Text>
             </View>
@@ -448,31 +467,16 @@ export default function TreeScreen() {
             ) : (
               <Text style={styles.headerCount}>{personCount} orang</Text>
             )}
-          </View>
-        </View>
-        {hasTree ? (
-          <View style={styles.headerActions}>
-            <Pressable style={styles.iconBtn} onPress={() => router.push("/notifications")} testID="open-notifications">
-              <Feather name="bell" size={18} color={colors.brandSecondary} />
-              {unreadNotif > 0 ? (
-                <View style={styles.notifDot}>
-                  <Text style={styles.notifDotText}>{unreadNotif > 9 ? "9+" : unreadNotif}</Text>
-                </View>
-              ) : null}
-            </Pressable>
-            <Pressable style={styles.iconBtn} onPress={() => setFilterOpen(true)} testID="open-filter">
-              <Feather name="sliders" size={18} color={colors.brandSecondary} />
+            <View style={styles.headerSpacer} />
+            <Pressable style={styles.iconBtnSm} onPress={() => setFilterOpen(true)} testID="open-filter">
+              <Feather name="sliders" size={16} color={colors.brandSecondary} />
             </Pressable>
             <Pressable
-              style={styles.iconBtn}
+              style={styles.iconBtnSm}
               onPress={() => router.push(`/explorer/${activeFocus ?? data?.root_id}`)}
               testID="open-explorer"
             >
-              <Feather name="compass" size={18} color={colors.brandSecondary} />
-            </Pressable>
-            <Pressable style={styles.exportBtn} onPress={() => setExportOpen(true)} testID="export-pdf-button">
-              <Feather name="file-text" size={15} color={colors.onSurfaceSecondary} />
-              <Text style={styles.exportText}>{t("export_pdf")}</Text>
+              <Feather name="compass" size={16} color={colors.brandSecondary} />
             </Pressable>
           </View>
         ) : null}
@@ -610,23 +614,27 @@ export default function TreeScreen() {
               </Pressable>
             </Animated.View>
           </GestureDetector>
-
-          <View style={[styles.legend, { bottom: insets.bottom + 16 }]}>
-            <View style={styles.legendItem}>
-              <View style={[styles.legendDot, { backgroundColor: colors.maleNode }]} />
-              <Text style={styles.legendText}>{t("male")}</Text>
-            </View>
-            <View style={styles.legendItem}>
-              <View style={[styles.legendDot, { backgroundColor: colors.femaleNode }]} />
-              <Text style={styles.legendText}>{t("female")}</Text>
-            </View>
-            <View style={styles.legendItem}>
-              <View style={[styles.legendDot, { backgroundColor: colors.adminNode }]} />
-              <Text style={styles.legendText}>{t("admin")}</Text>
-            </View>
-          </View>
         </View>
       )}
+
+      {/* Legend sebagai strip footer di bawah kanvas: bukan overlay absolute,
+          jadi tidak menutupi node/garis saat kanvas di-pan atau di-zoom. */}
+      {hasTree ? (
+        <View style={styles.legend} testID="tree-legend">
+          <View style={styles.legendItem}>
+            <View style={[styles.legendDot, { backgroundColor: colors.maleNode }]} />
+            <Text style={styles.legendText}>{t("male")}</Text>
+          </View>
+          <View style={styles.legendItem}>
+            <View style={[styles.legendDot, { backgroundColor: colors.femaleNode }]} />
+            <Text style={styles.legendText}>{t("female")}</Text>
+          </View>
+          <View style={styles.legendItem}>
+            <View style={[styles.legendDot, { backgroundColor: colors.adminNode }]} />
+            <Text style={styles.legendText}>{t("admin")}</Text>
+          </View>
+        </View>
+      ) : null}
 
       <Modal visible={exportOpen} transparent animationType="slide" onRequestClose={() => setExportOpen(false)}>
         <Pressable style={styles.modalBg} onPress={() => setExportOpen(false)}>

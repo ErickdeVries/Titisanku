@@ -8,8 +8,8 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Feather from "@react-native-vector-icons/feather";
 import { fonts, makeStyles, useTheme } from "@/src/theme";
-import { chatContacts, openDirect, createGroup, fileUrl, uploadPhoto, ChatContact, limitMessage } from "@/src/api";
-import { compressImage } from "@/src/utils/image";
+import { chatContacts, openDirect, createGroup, uploadPhoto, ChatContact, limitMessage } from "@/src/api";
+import { compressImage, imageProps } from "@/src/utils/image";
 import { useTree } from "@/src/tree-context";
 import { useI18n } from "@/src/i18n";
 
@@ -126,7 +126,7 @@ export default function NewChatScreen() {
       >
         <View style={styles.avatar}>
           {item.picture ? (
-            <Image source={{ uri: fileUrl(item.picture) }} style={styles.avatarImg} contentFit="cover" />
+            <Image {...imageProps(item.picture)} style={styles.avatarImg} contentFit="cover" />
           ) : (
             <Feather name="user" size={20} color={colors.muted} />
           )}
@@ -167,7 +167,7 @@ export default function NewChatScreen() {
             {uploadingPhoto ? (
               <ActivityIndicator color={colors.brandPrimary} />
             ) : groupPhoto ? (
-              <Image source={{ uri: fileUrl(groupPhoto) }} style={styles.groupPhotoImg} contentFit="cover" />
+              <Image {...imageProps(groupPhoto)} style={styles.groupPhotoImg} contentFit="cover" />
             ) : (
               <Feather name="camera" size={22} color={colors.brandSecondary} />
             )}
@@ -195,7 +195,7 @@ export default function NewChatScreen() {
               <Pressable style={styles.chip} onPress={() => toggle(item.user_id)} testID={`chip-${item.user_id}`}>
                 <View style={styles.chipAvatar}>
                   {item.picture ? (
-                    <Image source={{ uri: fileUrl(item.picture) }} style={styles.avatarImg} contentFit="cover" />
+                    <Image {...imageProps(item.picture)} style={styles.avatarImg} contentFit="cover" />
                   ) : (
                     <Feather name="user" size={16} color={colors.muted} />
                   )}

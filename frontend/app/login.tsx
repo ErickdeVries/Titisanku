@@ -15,6 +15,7 @@ const DEMO_ENABLED = process.env.EXPO_PUBLIC_ENABLE_DEMO_LOGIN === "true";
 const useStyles = makeStyles((c) => ({
   root: { flex: 1, backgroundColor: c.surface, alignItems: "center" },
   scroll: { flexGrow: 1, width: "100%", alignItems: "center", justifyContent: "center" },
+  scrollOuter: { flex: 1, width: "100%" },
   inner: { width: "100%", maxWidth: 460, paddingHorizontal: 28, paddingBottom: 32, alignItems: "center" },
   emblem: { width: 112, height: 112, marginBottom: 18 },
   title: {
@@ -95,7 +96,11 @@ export default function Login() {
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
-      <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
+      <ScrollView
+        style={styles.scrollOuter}
+        contentContainerStyle={styles.scroll}
+        keyboardShouldPersistTaps="handled"
+      >
         <View style={styles.inner}>
           <Image source={EMBLEM} style={styles.emblem} contentFit="contain" />
           <Text style={styles.title}>{t("login_title")}</Text>

@@ -6,7 +6,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Feather from "@react-native-vector-icons/feather";
 import { fonts, makeStyles, useTheme } from "@/src/theme";
-import { listChatRooms, fileUrl, ChatRoom, markNotificationsRead } from "@/src/api";
+import { listChatRooms, ChatRoom, markNotificationsRead } from "@/src/api";
+import { imageProps } from "@/src/utils/image";
 import { useI18n } from "@/src/i18n";
 
 const useStyles = makeStyles((c) => ({
@@ -69,7 +70,7 @@ export default function ChatListScreen() {
     <Pressable style={styles.row} onPress={() => router.push(`/chat/${item.id}`)} testID={`room-${item.id}`}>
       <View style={styles.avatar}>
         {item.picture ? (
-          <Image source={{ uri: fileUrl(item.picture) }} style={styles.avatarImg} contentFit="cover" />
+          <Image {...imageProps(item.picture)} style={styles.avatarImg} contentFit="cover" />
         ) : (
           <Feather name={item.type === "direct" ? "user" : item.type === "family" ? "home" : "users"} size={22} color={colors.brandPrimary} />
         )}

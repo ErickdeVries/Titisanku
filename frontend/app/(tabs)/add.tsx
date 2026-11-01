@@ -6,7 +6,8 @@ import { useQuery } from "@tanstack/react-query";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Feather from "@react-native-vector-icons/feather";
 import { fonts, makeStyles, useTheme } from "@/src/theme";
-import { getTree, fileUrl } from "@/src/api";
+import { getTree } from "@/src/api";
+import { photoProps } from "@/src/utils/image";
 import { useAuth } from "@/src/auth";
 import { useI18n } from "@/src/i18n";
 import { nodeColor } from "@/src/components/PersonNode";
@@ -133,8 +134,8 @@ export default function AddScreen() {
           <Text style={styles.label}>{t("add_relative_to")}</Text>
           <View style={styles.targetCard}>
             <View style={[styles.avatar, { borderColor: target ? nodeColor(target, colors) : colors.border }]}>
-              {target && fileUrl(target.photo_url) ? (
-                <Image source={{ uri: fileUrl(target.photo_url)! }} style={styles.avatarImg} contentFit="cover" />
+              {target && photoProps(target).source ? (
+                <Image {...photoProps(target)} style={styles.avatarImg} contentFit="cover" />
               ) : (
                 <Feather name="user" size={22} color={colors.muted} />
               )}
@@ -195,8 +196,8 @@ export default function AddScreen() {
                   testID={`pick-${item.id}`}
                 >
                   <View style={[styles.avatar, { borderColor: nodeColor(item, colors) }]}>
-                    {fileUrl(item.photo_url) ? (
-                      <Image source={{ uri: fileUrl(item.photo_url)! }} style={styles.avatarImg} contentFit="cover" />
+                    {photoProps(item).source ? (
+                      <Image {...photoProps(item)} style={styles.avatarImg} contentFit="cover" />
                     ) : (
                       <Feather name="user" size={20} color={nodeColor(item, colors)} />
                     )}

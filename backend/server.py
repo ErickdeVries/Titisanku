@@ -1,7 +1,9 @@
 import os
 import io
+import re
 import uuid
 import time
+import asyncio
 import logging
 import secrets
 import hashlib
@@ -159,7 +161,72 @@ def is_superadmin(user) -> bool:
     return (user.get("email") or "").lower() in SUPERADMIN_EMAILS
 
 
+# ---------------------------------------------------------------------------
+# Activity log (audit trail untuk dashboard superadmin)
+# ---------------------------------------------------------------------------
+# Daftar action yang dipakai dashboard. Dipisah dari "dokumentasi" supaya
+# filter di UI bisa konsisten.
+ACTIVITY_ACTIONS = {
+    "auth.register",
+    "auth.login",
+    "auth.logout",
+    "tree.create",
+    "tree.delete",
+    "tree.restore",
+    "invite.create",
+    "member.join",
+    "member.role_change",
+    "member.remove",
+    "person.add",
+    "person.delete",
+    "plan.manual_override",
+    "plan.expired",
+    "payment.created",
+    "payment.paid",
+    "payment.failed",
+    "feedback.submit",
+}
+
+
+async def log_activity(
+    action: str,
+    *,
+    user: Optional[dict] = None,
+    tree_id: Optional[str] = None,
+    target: Optional[str] = None,
+    meta: Optional[dict] = None,
+    request: Optional[Request] = None,
+) -> None:
+    """Tulis satu baris audit trail. TIDAK PERNAH melempar error.
+
+    Audit log bersifat best-effort: kegagalan menulis log tidak boleh
+    menggagalkan operasi bisnis (registrasi, pembayaran, dsb).
+    """
+    try:
+        ip = None
+        if request is not None:
+            fwd = request.headers.get("x-forwarded-for") or ""
+            ip = (fwd.split(",")[0].strip() or (request.client.host if request.client else None))
+        await db.activity_log.insert_one({
+            "id": f"act_{uuid.uuid4().hex[:16]}",
+            "action": action,
+            "created_at": now_utc(),
+            "actor_id": (user or {}).get("user_id"),
+            "actor_email": (user or {}).get("email"),
+            "actor_name": (user or {}).get("name"),
+            "tree_id": tree_id,
+            "target": target,
+            "meta": meta or {},
+            "ip": ip,
+        })
+    except Exception as e:  # pragma: no cover - defensif
+        logger.warning("gagal menulis activity_log (%s): %s", action, e)
+
+
 RECENT_TIMINGS: deque = deque(maxlen=800)
+
+# Dipakai /admin/system untuk menghitung uptime proses.
+PROCESS_STARTED_AT = datetime.now(timezone.utc)
 
 def put_object(path: str, data: bytes, content_type: str) -> dict:
     """Unggah objek ke Firebase Storage."""
@@ -205,6 +272,7 @@ class PersonData(BaseModel):
     birth_place: Optional[str] = None
     death_date: Optional[str] = None
     photo_url: Optional[str] = None
+    photo_thumb: Optional[str] = None  # versi 320px untuk kartu/daftar
     cover_url: Optional[str] = None
     job: Optional[str] = None
     is_adopted: bool = False
@@ -538,6 +606,63 @@ async def compress_image(data: bytes, ext: str) -> tuple:
     return new_data, new_ext, ctype
 
 
+# ---------------------------------------------------------------------------
+# Thumbnail: versi kecil foto untuk kartu, daftar, dan galeri. Tanpa ini
+# setiap kartu menarik foto 1920px sehingga pohon besar terasa berat dan
+# kuota data pengguna cepat habis.
+# ---------------------------------------------------------------------------
+THUMB_MAX_DIMENSION = 320
+THUMB_JPEG_QUALITY = 55
+
+
+def thumb_key(path: str) -> str:
+    """Path thumbnail untuk sebuah objek: `a/b/x.jpg` -> `a/b/thumb_x.jpg`."""
+    folder, _, name = (path or "").rpartition("/")
+    if not name:
+        return path or ""
+    return f"{folder}/thumb_{name}" if folder else f"thumb_{name}"
+
+
+def _thumbnail_image_sync(data: bytes) -> Optional[bytes]:
+    """Kembalikan bytes JPEG kecil, atau None bila data bukan gambar terbaca."""
+    if not data:
+        return None
+    try:
+        from PIL import Image, ImageOps
+    except ImportError:  # pragma: no cover - Pillow wajib ada di requirements
+        return None
+
+    with io.BytesIO(data) as raw:
+        try:
+            img = Image.open(raw)
+            img.load()
+        except Exception:
+            return None
+        img = ImageOps.exif_transpose(img)
+        if img.mode in ("RGBA", "LA", "P"):
+            img = img.convert("RGBA")
+            canvas = Image.new("RGB", img.size, (255, 255, 255))
+            canvas.paste(img, mask=img.split()[-1])
+            img = canvas
+        elif img.mode != "RGB":
+            img = img.convert("RGB")
+        img.thumbnail((THUMB_MAX_DIMENSION, THUMB_MAX_DIMENSION), Image.LANCZOS)
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=THUMB_JPEG_QUALITY, optimize=True)
+        return buf.getvalue()
+
+
+async def make_thumbnail(data: bytes) -> Optional[bytes]:
+    """Thumbnail 320px (best-effort). None bila gagal — upload tetap jalan."""
+    try:
+        if len(data) < COMPRESS_IN_THREAD_THRESHOLD:
+            return _thumbnail_image_sync(data)
+        return await run_in_threadpool(_thumbnail_image_sync, data)
+    except Exception as e:  # pragma: no cover - defensif
+        logger.warning("gagal membuat thumbnail: %s", e)
+        return None
+
+
 async def photo_count(tree_id: str) -> int:
     return await db.person_notes.count_documents({"tree_id": tree_id, "attachments": {"$ne": []}, "deleted_at": None})
 async def gallery_count(tree_id: str) -> int:
@@ -739,7 +864,7 @@ async def create_tree_for_user(user, name: str, make_root: bool = True) -> dict:
 # Auth routes
 # ---------------------------------------------------------------------------
 @api_router.post("/auth/session")
-async def auth_session(body: SessionInput):
+async def auth_session(body: SessionInput, request: Request):
     """Tukar ID token Firebase dengan session token milik aplikasi."""
     try:
         # `session_id` kini membawa Firebase ID Token (JWT) dari client SDK.
@@ -785,6 +910,12 @@ async def auth_session(body: SessionInput):
             "expires_at": now_utc() + timedelta(days=7),
         })
         user = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+        await log_activity(
+            "auth.login",
+            user=user,
+            meta={"method": "google", "new_user": not bool(existing)},
+            request=request,
+        )
     except PyMongoError as e:
         # Kredensial/klaster DB bermasalah (mis. "bad auth") atau DB tak terjangkau.
         # Balas 503 dengan pesan jelas, bukan 500 tanpa header CORS.
@@ -813,7 +944,7 @@ async def _create_user_session(user_id: str) -> str:
 
 
 @api_router.post("/auth/register")
-async def auth_register(body: RegisterInput):
+async def auth_register(body: RegisterInput, request: Request):
     """Daftar akun dengan username + password (tanpa layanan OAuth eksternal)."""
     username = (body.username or "").strip().lower()
     password = body.password or ""
@@ -842,11 +973,12 @@ async def auth_register(body: RegisterInput):
     await db.users.insert_one(doc)
     token = await _create_user_session(user_id)
     user = await db.users.find_one({"user_id": user_id}, {"_id": 0, "password_hash": 0})
+    await log_activity("auth.register", user=user, meta={"method": "password"}, request=request)
     return {"session_token": token, "user": user}
 
 
 @api_router.post("/auth/login")
-async def auth_login(body: LoginInput):
+async def auth_login(body: LoginInput, request: Request):
     """Masuk dengan username + password."""
     username = (body.username or "").strip().lower()
     password = body.password or ""
@@ -857,11 +989,12 @@ async def auth_login(body: LoginInput):
         raise HTTPException(status_code=401, detail="Username atau password salah")
     token = await _create_user_session(user["user_id"])
     out = {k: v for k, v in user.items() if k not in ("_id", "password_hash")}
+    await log_activity("auth.login", user=out, meta={"method": "password"}, request=request)
     return {"session_token": token, "user": out}
 
 
 @api_router.post("/auth/demo")
-async def auth_demo():
+async def auth_demo(request: Request):
     """Login cepat ke akun demo (untuk reviewer Play) + seed data contoh bila belum ada.
 
     Dimatikan secara default; aktifkan dengan DEMO_LOGIN_ENABLED=true di env.
@@ -887,6 +1020,7 @@ async def auth_demo():
         await seed_demo_tree(demo_user)
     token = await _create_user_session(demo_user["user_id"])
     out = {k: v for k, v in demo_user.items() if k not in ("_id", "password_hash")}
+    await log_activity("auth.login", user=out, meta={"method": "demo"}, request=request)
     return {"session_token": token, "user": out}
 
 
@@ -1001,10 +1135,14 @@ async def update_me(body: ProfileUpdate, user=Depends(get_current_user)):
 
 
 @api_router.post("/auth/logout")
-async def auth_logout(authorization: Optional[str] = Header(None)):
+async def auth_logout(request: Request, authorization: Optional[str] = Header(None)):
     if authorization and authorization.startswith("Bearer "):
         token = authorization.split(" ", 1)[1]
+        sess = await db.user_sessions.find_one({"session_token": token}, {"_id": 0})
         await db.user_sessions.delete_one({"session_token": token})
+        if sess:
+            actor = await db.users.find_one({"user_id": sess["user_id"]}, {"_id": 0})
+            await log_activity("auth.logout", user=actor, request=request)
     return {"ok": True}
 
 
@@ -1073,6 +1211,7 @@ async def get_person(person_id: str, tree_id: Optional[str] = Query(None), user=
 
 class GalleryInput(BaseModel):
     path: Optional[str] = None
+    thumb: Optional[str] = None  # path/URL thumbnail 320px (opsional)
     caption: Optional[str] = None
     date: Optional[str] = None
     id: Optional[str] = None
@@ -1095,7 +1234,10 @@ async def add_gallery_photo(person_id: str, body: GalleryInput, tree_id: Optiona
     # tidak menghitung ganda dan tidak memblokir penambahan galeri tanpa upload.
     if not body.path:
         raise HTTPException(status_code=400, detail="path wajib diisi")
-    item = {"id": str(uuid.uuid4()), "path": body.path, "caption": body.caption or "", "date": body.date or "", "created_at": now_utc()}
+    item = {
+        "id": str(uuid.uuid4()), "path": body.path, "thumb": body.thumb,
+        "caption": body.caption or "", "date": body.date or "", "created_at": now_utc(),
+    }
     await db.people.update_one({"id": person_id, "tree_id": tree["id"]}, {"$push": {"gallery": item}})
     p = await db.people.find_one({"id": person_id}, {"_id": 0})
     return {"gallery": _serialize(p.get("gallery", []))}
@@ -1206,6 +1348,7 @@ async def delete_person(person_id: str, tree_id: Optional[str] = Query(None), us
         {"tree_id": tree["id"], "$or": [{"person_id": person_id}, {"related_person_id": person_id}]},
         {"$set": {"deleted_at": now_utc()}},
     )
+    await log_activity("person.delete", user=user, tree_id=tree["id"], target=person_id)
     return {"ok": True}
 
 
@@ -1304,6 +1447,7 @@ async def add_first_person(body: PersonData, tree_id: Optional[str] = Query(None
         "birth_place": body.birth_place,
         "death_date": body.death_date,
         "photo_url": body.photo_url,
+        "photo_thumb": body.photo_thumb,
         "cover_url": body.cover_url,
         "job": body.job,
         "is_adopted": body.is_adopted,
@@ -1316,6 +1460,8 @@ async def add_first_person(body: PersonData, tree_id: Optional[str] = Query(None
     }
     await db.people.insert_one(doc)
     await db.trees.update_one({"id": tree["id"]}, {"$set": {"root_person_id": pid}})
+    await log_activity("person.add", user=user, tree_id=tree["id"], target=pid,
+                       meta={"direction": "root", "name": body.name})
     return _serialize([doc])[0]
 
 
@@ -1368,6 +1514,8 @@ async def add_relative(body: AddRelativeInput, tree_id: Optional[str] = Query(No
         "deleted_at": None,
     }
     await db.people.insert_one(person_doc)
+    await log_activity("person.add", user=user, tree_id=tree["id"], target=new_id,
+                       meta={"direction": body.direction, "name": pd.get("name")})
 
     rel_id = str(uuid.uuid4())
     extra_rels = []
@@ -1481,17 +1629,39 @@ async def upload_file(file: UploadFile = File(...), tree_id: Optional[str] = Que
     # Kompres foto sebelum cek kuota, supaya yang ditolak/diterima adalah ukuran
     # yang benar-benar disimpan (bukan ukuran asli ponsel).
     content, ext, ctype = await compress_image(content, ext)
-    await ensure_storage_room(tree, len(content))
+    thumb = await make_thumbnail(content)
+    await ensure_storage_room(tree, len(content) + (len(thumb) if thumb else 0))
     path = f"{APP_NAME}/uploads/{user['user_id']}/{uuid.uuid4().hex}.{ext}"
     try:
         result = await run_in_threadpool(put_object, path, content, ctype or file.content_type or "image/jpeg")
     except integrations.IntegrationError as e:
         logger.error("Upload gagal: %s", e)
         raise HTTPException(status_code=503, detail=f"Penyimpanan file belum siap: {e}")
-    await add_storage_usage(tree["id"], len(content))
     stored = result["path"]
+    url = result.get("url") or f"/api/files/{stored}"
+    used = len(content)
+
+    # Thumbnail dibuat setelah file utama sukses: kalau gagal, foto tetap
+    # terpakai (klien otomatis memakai `url` biasa).
+    thumb_stored = thumb_url = None
+    if thumb:
+        tpath = thumb_key(stored)
+        try:
+            tres = await run_in_threadpool(put_object, tpath, thumb, "image/jpeg")
+            thumb_stored = tres["path"]
+            thumb_url = tres.get("url") or f"/api/files/{thumb_stored}"
+            used += len(thumb)
+        except integrations.IntegrationError as e:
+            logger.warning("thumbnail gagal diunggah (%s): %s", tpath, e)
+
+    await add_storage_usage(tree["id"], used)
     # `url` memakai URL publik Firebase Storage bila tersedia, fallback ke proxy /api/files.
-    return {"path": stored, "url": result.get("url") or f"/api/files/{stored}"}
+    return {
+        "path": stored,
+        "url": url,
+        "thumb_path": thumb_stored,
+        "thumb_url": thumb_url,
+    }
 
 
 async def _validate_token(token: str):
@@ -1513,7 +1683,13 @@ async def get_file(path: str, token: Optional[str] = Query(None), authorization:
         content, content_type = await run_in_threadpool(get_object, path)
     except Exception:
         raise HTTPException(status_code=404, detail="File not found")
-    return Response(content=content, media_type=content_type)
+    # Nama objek dibuat unik (uuid) sehingga isinya tidak pernah berubah:
+    # boleh di-cache selamanya oleh klien. `private` karena token ada di URL.
+    return Response(
+        content=content,
+        media_type=content_type,
+        headers={"Cache-Control": "private, max-age=31536000, immutable"},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1735,10 +1911,17 @@ async def _check_plan_expiry(tree):
     tid = tree["id"]
     name = tree.get("name", "")
     if exp <= now:
-        await db.trees.update_one(
+        res = await db.trees.update_one(
             {"id": tid},
             {"$set": {"plan": "free"}, "$unset": {"expires_at": "", "expiry_reminder_7": "", "expiry_reminder_1": ""}},
         )
+        # Hanya log saat benar-benar berubah, supaya dua request bersamaan
+        # tidak menghasilkan dua baris "plan.expired".
+        if res.modified_count:
+            await log_activity(
+                "plan.expired", tree_id=tid,
+                meta={"from_plan": tree.get("plan"), "expired_at": exp.isoformat()},
+            )
         try:
             await notify_tree(tid, "", "plan", "Paket berakhir",
                               f"Paket berbayar untuk \"{name}\" telah berakhir. Pohon kini memakai paket Free — data Anda tetap aman. Perpanjang untuk membuka kembali fitur premium.")
@@ -2250,6 +2433,10 @@ async def restore(body: RestoreInput, tree_id: Optional[str] = Query(None), user
         await db.relations.update_one({"id": rid}, {"$set": doc}, upsert=True)
     if root_id:
         await db.trees.update_one({"id": tid}, {"$set": {"root_person_id": root_id}})
+    await log_activity(
+        "tree.restore", user=user, tree_id=tid,
+        meta={"people": len(body.people), "relations": len(body.relations)},
+    )
     return {"ok": True, "people": len(body.people), "relations": len(body.relations)}
 
 
@@ -2301,6 +2488,8 @@ async def create_tree(body: TreeCreateInput, user=Depends(get_current_user)):
         )
     name = (body.name or "").strip() or f"Keluarga {user['name']}"
     tree = await create_tree_for_user(user, name)
+    await log_activity("tree.create", user=user, tree_id=tree["id"],
+                       meta={"name": tree.get("name")})
     # Payload harus identik dengan item GET /trees supaya klien bisa memakai
     # respons ini langsung (kuota storage juga wajib ada, bukan hanya plan_limits).
     limits = plan_limits(effective_plan(tree))
@@ -2513,13 +2702,20 @@ async def act_join_request(req_id: str, action: str, user=Depends(get_current_us
     tree, role = await resolve_tree(user, req["tree_id"])
     require_role_t(role, ["admin"])
     if action == "approve":
+        inserted = False
         if not await db.tree_members.find_one({"tree_id": req["tree_id"], "user_id": req["user_id"]}):
             await ensure_can_join(tree)
             await db.tree_members.insert_one({
                 "id": str(uuid.uuid4()), "tree_id": req["tree_id"], "user_id": req["user_id"],
                 "role": "editor", "joined_at": now_utc(),
             })
+            inserted = True
         await db.join_requests.update_one({"id": req_id}, {"$set": {"status": "approved", "resolved_at": now_utc()}})
+        if inserted:
+            await log_activity(
+                "member.join", user=user, tree_id=req["tree_id"], target=req["user_id"],
+                meta={"via": "join_request", "role": "editor"},
+            )
     else:
         await db.join_requests.update_one({"id": req_id}, {"$set": {"status": "rejected", "resolved_at": now_utc()}})
     return {"ok": True}
@@ -2559,6 +2755,8 @@ async def delete_tree(tid: str, user=Depends(get_current_user)):
         raise HTTPException(status_code=404, detail="Pohon tidak ditemukan")
     if tree.get("owner_id") != user["user_id"]:
         raise HTTPException(status_code=403, detail="Hanya pemilik yang dapat menghapus pohon")
+    await log_activity("tree.delete", user=user, tree_id=tid,
+                       meta={"name": tree.get("name"), "plan": effective_plan(tree)})
     await _purge_tree(tid)
     return {"ok": True}
 
@@ -2597,6 +2795,9 @@ async def submit_feedback(body: FeedbackInput, user=Depends(get_current_user)):
         "email": user.get("email"), "category": body.category or "general",
         "message": body.message.strip(), "status": "new", "created_at": now_utc(),
     })
+    await log_activity("feedback.submit", user=user,
+                       meta={"category": body.category or "general",
+                             "length": len(body.message.strip())})
     return {"ok": True}
 
 
@@ -2618,6 +2819,135 @@ async def delete_account(user=Depends(get_current_user)):
     return {"ok": True}
 
 
+# ---------------------------------------------------------------------------
+# Helper agregasi untuk dashboard superadmin.
+#
+# Endpoint admin dulu memakai puluhan `count_documents` berurutan plus loop
+# per-baris (N+1). Di MongoDB Atlas setiap round-trip ~30-100 ms, jadi satu tab
+# dashboard bisa menunggu 5-15 detik. Helper di bawah menggabungkan hitungan
+# menjadi satu pipeline (`$group`) dan endpoint menjalankannya paralel dengan
+# `asyncio.gather`.
+# ---------------------------------------------------------------------------
+
+
+def _plan_bucket_expr(now: datetime) -> dict:
+    """Ekspresi agregasi yang meniru `effective_plan()` di sisi MongoDB."""
+    return {
+        "$let": {
+            "vars": {"plan": {"$ifNull": ["$plan", "free"]}, "exp": "$expires_at"},
+            "in": {
+                "$cond": [
+                    {"$eq": ["$$plan", "free"]},
+                    "free",
+                    {
+                        "$cond": [
+                            {"$eq": [{"$type": "$$exp"}, "date"]},
+                            {"$cond": [{"$lt": ["$$exp", now]}, "free", "$$plan"]},
+                            "$$plan",
+                        ]
+                    },
+                ]
+            },
+        }
+    }
+
+
+async def _plan_counts(now: Optional[datetime] = None) -> Dict[str, int]:
+    """Jumlah pohon per plan efektif (plan berbayar yang kedaluwarsa = free)."""
+    now = now or now_utc()
+    counts: Dict[str, int] = {"free": 0, "pro": 0, "family": 0, "unlimited": 0}
+    rows = await db.trees.aggregate([
+        {"$group": {"_id": _plan_bucket_expr(now), "n": {"$sum": 1}}},
+    ]).to_list(50)
+    for row in rows:
+        key = row.get("_id") or "free"
+        counts[key] = counts.get(key, 0) + int(row.get("n") or 0)
+    return counts
+
+
+async def _count_by(
+    collection: str, key: str, ids: List[str], match: Optional[dict] = None
+) -> Dict[str, int]:
+    """`count_documents` untuk banyak id sekaligus: satu aggregation, bukan N query."""
+    unique_ids = [i for i in dict.fromkeys(ids or []) if i]
+    if not unique_ids:
+        return {}
+    rows = await db[collection].aggregate([
+        {"$match": {**(match or {}), key: {"$in": unique_ids}}},
+        {"$group": {"_id": f"${key}", "n": {"$sum": 1}}},
+    ]).to_list(len(unique_ids) + 1)
+    return {r["_id"]: int(r.get("n") or 0) for r in rows if r.get("_id")}
+
+
+async def _daily_counts(
+    collection: str, start: datetime, field: str = "created_at", match: Optional[dict] = None
+) -> Dict[str, int]:
+    """Jumlah dokumen per hari (string `YYYY-MM-DD`) dalam satu aggregation."""
+    rows = await db[collection].aggregate([
+        {"$match": {**(match or {}), field: {"$gte": start}}},
+        {
+            "$group": {
+                "_id": {"$dateToString": {"format": "%Y-%m-%d", "date": f"${field}"}},
+                "n": {"$sum": 1},
+            }
+        },
+    ]).to_list(4000)
+    return {r["_id"]: int(r.get("n") or 0) for r in rows if r.get("_id")}
+
+
+async def _daily_actors(
+    collection: str, start: datetime, id_field: str, match: Optional[dict] = None
+) -> Dict[str, set]:
+    """Set pelaku unik per hari (`{tanggal: {user_id, ...}}`) untuk DAU/WAU/MAU."""
+    rows = await db[collection].aggregate([
+        {
+            "$match": {
+                **(match or {}),
+                "created_at": {"$gte": start},
+                id_field: {"$nin": [None, ""]},
+            }
+        },
+        {
+            "$group": {
+                "_id": {"$dateToString": {"format": "%Y-%m-%d", "date": "$created_at"}},
+                "ids": {"$addToSet": f"${id_field}"},
+            }
+        },
+    ]).to_list(4000)
+    return {r["_id"]: set(r.get("ids") or []) for r in rows if r.get("_id")}
+
+
+async def _docs_by_id(collection: str, ids: List[str], projection: dict) -> Dict[str, dict]:
+    """Ambil banyak dokumen `{id: doc}` dengan satu query (`$in`)."""
+    unique_ids = [i for i in dict.fromkeys(ids or []) if i]
+    if not unique_ids:
+        return {}
+    rows = await db[collection].find(
+        {"id": {"$in": unique_ids}}, {"_id": 0, "id": 1, **projection}
+    ).to_list(len(unique_ids) + 1)
+    return {r["id"]: r for r in rows if r.get("id")}
+
+
+async def _docs_by_field(
+    collection: str, field: str, values: List[str], projection: dict
+) -> Dict[str, dict]:
+    """Ambil banyak dokumen di-key berdasarkan field lain (mis. `user_id`)."""
+    unique_values = [v for v in dict.fromkeys(values or []) if v]
+    if not unique_values:
+        return {}
+    rows = await db[collection].find(
+        {field: {"$in": unique_values}}, {"_id": 0, field: 1, **projection}
+    ).to_list(len(unique_values) + 1)
+    return {r[field]: r for r in rows if r.get(field)}
+
+
+async def _safe_count(collection: str) -> Optional[int]:
+    try:
+        return await db[collection].count_documents({})
+    except Exception:  # pragma: no cover - koleksi bisa belum ada
+        return None
+
+
 @api_router.get("/admin/overview")
 async def admin_overview(user=Depends(get_current_user)):
     if not is_superadmin(user):
@@ -2627,27 +2957,64 @@ async def admin_overview(user=Depends(get_current_user)):
     d30 = now - timedelta(days=30)
     d1 = now - timedelta(days=1)
 
-    total_users = await db.users.count_documents({})
-    new_7d = await db.users.count_documents({"created_at": {"$gte": d7}})
-    new_30d = await db.users.count_documents({"created_at": {"$gte": d30}})
-    active_7d = len(await db.user_sessions.distinct("user_id", {"created_at": {"$gte": d7}}))
+    # Semua hitungan dijalankan PARALEL. Sebelumnya ±20 query berurutan, jadi
+    # satu tab overview saja butuh beberapa detik di Atlas.
+    (
+        total_users,
+        new_7d,
+        new_30d,
+        active_user_ids,
+        total_trees,
+        plan_counts,
+        paid,
+        total_people,
+        total_messages,
+        owner_ids,
+        payer_ids,
+        group_rooms,
+        direct_rooms,
+        join_request_count,
+        photo_people,
+        err_24h,
+        errors,
+        total_relations,
+        total_feedback,
+    ) = await asyncio.gather(
+        db.users.count_documents({}),
+        db.users.count_documents({"created_at": {"$gte": d7}}),
+        db.users.count_documents({"created_at": {"$gte": d30}}),
+        db.user_sessions.distinct("user_id", {"created_at": {"$gte": d7}}),
+        db.trees.count_documents({}),
+        # Hitung per plan EFEKTIF: langganan yang sudah lewat expires_at tampil
+        # sebagai free, sama seperti yang dilihat pengguna.
+        _plan_counts(now),
+        db.payment_orders.find({"status": "paid"}, {"_id": 0}).to_list(20000),
+        db.people.count_documents({"deleted_at": None}),
+        db.family_chat.count_documents({"deleted_at": None}),
+        db.trees.distinct("owner_id"),
+        db.payment_orders.distinct("user_id", {"status": "paid"}),
+        db.chat_rooms.count_documents({"type": "group"}),
+        db.chat_rooms.count_documents({"type": "direct"}),
+        db.join_requests.count_documents({}),
+        db.people.count_documents({"photo_url": {"$nin": [None, ""]}, "deleted_at": None}),
+        db.error_logs.count_documents({"created_at": {"$gte": d1}}),
+        db.error_logs.find({}, {"_id": 0}).sort("created_at", -1).to_list(15),
+        db.relations.count_documents({"deleted_at": None}),
+        db.feedback.count_documents({}),
+    )
 
-    total_trees = await db.trees.count_documents({})
-    free_trees = await db.trees.count_documents({"plan": "free"})
-    pro_trees = await db.trees.count_documents({"plan": "pro"})
-    family_trees = await db.trees.count_documents({"plan": "family"})
+    active_7d = len([u for u in active_user_ids if u])
+    free_trees = plan_counts.get("free", 0)
+    pro_trees = plan_counts.get("pro", 0)
+    family_trees = plan_counts.get("family", 0)
 
-    paid = await db.payment_orders.find({"status": "paid"}, {"_id": 0, "amount": 1, "paid_at": 1}).to_list(5000)
-    revenue_total = sum(o.get("amount", 0) for o in paid)
-    revenue_30d = sum(o.get("amount", 0) for o in paid if o.get("paid_at") and _aware(o["paid_at"]) >= d30)
+    revenue_total = sum(_order_amount(o) for o in paid)
+    revenue_30d = sum(_order_amount(o) for o in paid if o.get("paid_at") and _aware(o["paid_at"]) >= d30)
     paid_count = len(paid)
 
-    total_people = await db.people.count_documents({"deleted_at": None})
-    total_messages = await db.family_chat.count_documents({"deleted_at": None})
-
     # Funnel
-    owners = len(await db.trees.distinct("owner_id"))
-    payers = len(await db.payment_orders.distinct("user_id", {"status": "paid"}))
+    owners = len([o for o in owner_ids if o])
+    payers = len([p for p in payer_ids if p])
     funnel = [
         {"step": "Daftar", "count": total_users},
         {"step": "Buat Pohon", "count": owners},
@@ -2658,10 +3025,10 @@ async def admin_overview(user=Depends(get_current_user)):
     features = [
         {"key": "Anggota ditambahkan", "count": total_people},
         {"key": "Pesan chat", "count": total_messages},
-        {"key": "Grup chat", "count": await db.chat_rooms.count_documents({"type": "group"})},
-        {"key": "Chat pribadi", "count": await db.chat_rooms.count_documents({"type": "direct"})},
-        {"key": "Permintaan gabung", "count": await db.join_requests.count_documents({})},
-        {"key": "Foto anggota", "count": await db.people.count_documents({"photo_url": {"$nin": [None, ""]}, "deleted_at": None})},
+        {"key": "Grup chat", "count": group_rooms},
+        {"key": "Chat pribadi", "count": direct_rooms},
+        {"key": "Permintaan gabung", "count": join_request_count},
+        {"key": "Foto anggota", "count": photo_people},
     ]
     features.sort(key=lambda f: f["count"], reverse=True)
 
@@ -2670,12 +3037,11 @@ async def admin_overview(user=Depends(get_current_user)):
     last_hour = [r for r in recent if r[0] >= now - timedelta(hours=1)]
     avg_ms = round(sum(r[2] for r in last_hour) / len(last_hour), 1) if last_hour else 0
     req_1h = len(last_hour)
-    err_24h = await db.error_logs.count_documents({"created_at": {"$gte": d1}})
-    errors = _serialize(await db.error_logs.find({}, {"_id": 0}).sort("created_at", -1).to_list(15))
+    errors = _serialize(errors)
     db_counts = {
         "users": total_users, "trees": total_trees, "people": total_people,
-        "relations": await db.relations.count_documents({"deleted_at": None}),
-        "messages": total_messages, "feedback": await db.feedback.count_documents({}),
+        "relations": total_relations,
+        "messages": total_messages, "feedback": total_feedback,
     }
 
     return {
@@ -2699,9 +3065,12 @@ async def admin_users(user=Depends(get_current_user)):
     if not is_superadmin(user):
         raise HTTPException(status_code=403, detail="Akses ditolak")
     users = await db.users.find({}, {"_id": 0, "password": 0}).sort("created_at", -1).to_list(100)
+    # Dulu: satu count_documents per user (N+1 = 100 round-trip). Sekarang satu
+    # aggregation untuk semua user sekaligus.
+    tree_counts = await _count_by("tree_members", "user_id", [u.get("user_id") for u in users])
     out = []
     for u in _serialize(users):
-        u["tree_count"] = await db.tree_members.count_documents({"user_id": u["user_id"]})
+        u["tree_count"] = tree_counts.get(u.get("user_id"), 0)
         out.append(u)
     return {"users": out}
 
@@ -2712,6 +3081,555 @@ async def admin_feedback(user=Depends(get_current_user)):
         raise HTTPException(status_code=403, detail="Akses ditolak")
     items = _serialize(await db.feedback.find({}, {"_id": 0}).sort("created_at", -1).to_list(200))
     return {"feedback": items}
+
+
+# ---------------------------------------------------------------------------
+# Superadmin dashboard: aktivitas, pertumbuhan, keuangan, error, tenant, sistem
+# ---------------------------------------------------------------------------
+# Semua endpoint di bawah WAJIB superadmin. Isolasi tenant tetap berlaku di
+# endpoint biasa; di sini superadmin memang sengaja melihat lintas tenant.
+def _require_superadmin(user) -> None:
+    if not is_superadmin(user):
+        raise HTTPException(status_code=403, detail="Akses ditolak")
+
+
+def _day_range(days: int):
+    """N hari terakhir (termasuk hari ini), dibatasi 7..90 agar query tetap ringan."""
+    days = max(7, min(int(days or 30), 90))
+    today = now_utc().replace(hour=0, minute=0, second=0, microsecond=0)
+    start = today - timedelta(days=days - 1)
+    keys = [(start + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(days)]
+    return start, keys
+
+
+def _day_key(dt) -> Optional[str]:
+    dt = _aware(dt)
+    return dt.strftime("%Y-%m-%d") if dt else None
+
+
+def _order_amount(order: dict) -> int:
+    """Pendapatan satu order.
+
+    Order dari Play Billing disimpan dengan `amount` hasil hitung dari produk
+    (bisa 0 bila produk diverifikasi lewat Google), jadi untuk laporan pakai
+    harga katalog PLAN_PRICES agar angka pendapatan tidak tampak nol.
+    """
+    amount = order.get("amount") or 0
+    if amount:
+        return int(amount)
+    return int(PLAN_PRICES.get(order.get("plan") or "", 0))
+
+
+def _plan_is_paid(tree: dict) -> bool:
+    return effective_plan(tree) in PLAN_PRICES
+
+
+@api_router.get("/admin/growth")
+async def admin_growth(days: int = Query(30, ge=7, le=90), user=Depends(get_current_user)):
+    """Deret waktu pertumbuhan aplikasi + DAU/WAU/MAU.
+
+    `active_users` dihitung dari gabungan pelaku activity_log dan pengirim chat
+    (dua sumber yang punya riwayat), jadi DAU tetap terisi walau activity_log
+    baru mulai dicatat belakangan.
+    """
+    _require_superadmin(user)
+    start, keys = _day_range(days)
+    idx = {k: i for i, k in enumerate(keys)}
+    now = now_utc()
+    d7 = now - timedelta(days=7)
+
+    def blank():
+        return {
+            "date": None, "signups": 0, "trees": 0, "people": 0,
+            "messages": 0, "active_users": 0, "paid_orders": 0, "revenue": 0,
+        }
+
+    series = [blank() for _ in keys]
+    for i, k in enumerate(keys):
+        series[i]["date"] = k
+
+    # Satu aggregation per metrik, semuanya paralel — dulu tiap koleksi dipindai
+    # baris-per-baris lewat cursor sehingga response bisa >5 detik.
+    (
+        signups_by_day,
+        trees_by_day,
+        people_by_day,
+        messages_by_day,
+        chat_actors,
+        log_actors,
+        paid,
+        total_users,
+        total_trees,
+        plan_counts,
+        new_users_1d,
+        new_users_7d,
+        new_users_30d,
+        new_trees_7d,
+        total_people,
+        total_messages,
+        owner_ids,
+        payer_ids,
+        old_user_rows,
+    ) = await asyncio.gather(
+        _daily_counts("users", start),
+        _daily_counts("trees", start),
+        _daily_counts("people", start),
+        _daily_counts("family_chat", start),
+        _daily_actors("family_chat", start, "sender_id"),
+        _daily_actors("activity_log", start, "actor_id"),
+        db.payment_orders.find({"status": "paid"}, {"_id": 0}).to_list(20000),
+        db.users.count_documents({}),
+        db.trees.count_documents({}),
+        _plan_counts(now),
+        db.users.count_documents({"created_at": {"$gte": now - timedelta(days=1)}}),
+        db.users.count_documents({"created_at": {"$gte": d7}}),
+        db.users.count_documents({"created_at": {"$gte": now - timedelta(days=30)}}),
+        db.trees.count_documents({"created_at": {"$gte": d7}}),
+        db.people.count_documents({"deleted_at": None}),
+        db.family_chat.count_documents({"deleted_at": None}),
+        db.trees.distinct("owner_id"),
+        db.payment_orders.distinct("user_id", {"status": "paid"}),
+        db.users.find({"created_at": {"$lt": d7}}, {"_id": 0, "user_id": 1}).to_list(20000),
+    )
+
+    for i, k in enumerate(keys):
+        series[i]["signups"] = signups_by_day.get(k, 0)
+        series[i]["trees"] = trees_by_day.get(k, 0)
+        series[i]["people"] = people_by_day.get(k, 0)
+        series[i]["messages"] = messages_by_day.get(k, 0)
+
+    active = [
+        set(chat_actors.get(k, set())) | set(log_actors.get(k, set()))
+        for k in keys
+    ]
+    for i in range(len(keys)):
+        series[i]["active_users"] = len(active[i])
+
+    for o in paid:
+        i = idx.get(_day_key(o.get("paid_at") or o.get("created_at")))
+        if i is not None:
+            series[i]["paid_orders"] += 1
+            series[i]["revenue"] += _order_amount(o)
+
+    dau = len(active[-1]) if active else 0
+    wau = len(set().union(*active[-7:])) if len(active) >= 1 else 0
+    mau = len(set().union(*active)) if active else 0
+
+    paid_trees = sum(plan_counts.get(p, 0) for p in PLAN_PRICES)
+
+    # Retensi sederhana: pengguna yang sudah ada >7 hari lalu tapi masih aktif 7 hari terakhir.
+    returning = 0
+    if wau:
+        recent_ids = set().union(*active[-7:])
+        returning = len(recent_ids & {u["user_id"] for u in old_user_rows if u.get("user_id")})
+
+    return {
+        "days": len(keys),
+        "start": start.isoformat(),
+        "series": series,
+        "totals": {
+            "total_users": total_users,
+            "total_trees": total_trees,
+            "paid_trees": paid_trees,
+            "new_users_1d": new_users_1d,
+            "new_users_7d": new_users_7d,
+            "new_users_30d": new_users_30d,
+            "new_trees_7d": new_trees_7d,
+            "total_people": total_people,
+            "total_messages": total_messages,
+        },
+        "engagement": {
+            "dau": dau,
+            "wau": wau,
+            "mau": mau,
+            "stickiness": round(dau / mau, 3) if mau else 0.0,
+            "returning_7d": returning,
+        },
+        "funnel": {
+            "users": total_users,
+            "owners": len([o for o in owner_ids if o]),
+            "payers": len([p for p in payer_ids if p]),
+            "conversion": round(paid_trees / total_trees, 3) if total_trees else 0.0,
+        },
+    }
+
+
+@api_router.get("/admin/finance")
+async def admin_finance(days: int = Query(30, ge=7, le=90), user=Depends(get_current_user)):
+    """Pendapatan, komposisi paket, status pembayaran, ARPU, dan transaksi terakhir."""
+    _require_superadmin(user)
+    start, keys = _day_range(days)
+    idx = {k: i for i, k in enumerate(keys)}
+    series = [{"date": k, "revenue": 0, "orders": 0} for k in keys]
+
+    orders = await db.payment_orders.find({}, {"_id": 0}).to_list(20000)
+    now = now_utc()
+    d7 = now - timedelta(days=7)
+    d30 = now - timedelta(days=30)
+
+    paid = [o for o in orders if o.get("status") == "paid"]
+    by_status: Dict[str, dict] = {}
+    by_plan: Dict[str, dict] = {}
+    by_provider: Dict[str, dict] = {}
+    revenue_by_tree: Dict[str, int] = {}
+
+    for o in orders:
+        status = o.get("status") or "unknown"
+        s = by_status.setdefault(status, {"status": status, "count": 0, "amount": 0})
+        s["count"] += 1
+        if status == "paid":
+            s["amount"] += _order_amount(o)
+
+    for o in paid:
+        amt = _order_amount(o)
+        provider = o.get("provider") or "midtrans"
+        plan = o.get("plan") or "unknown"
+        p = by_plan.setdefault(plan, {"plan": plan, "count": 0, "revenue": 0})
+        p["count"] += 1
+        p["revenue"] += amt
+        pv = by_provider.setdefault(provider, {"provider": provider, "count": 0, "revenue": 0})
+        pv["count"] += 1
+        pv["revenue"] += amt
+        tid = o.get("tree_id") or ""
+        revenue_by_tree[tid] = revenue_by_tree.get(tid, 0) + amt
+        i = idx.get(_day_key(o.get("paid_at") or o.get("created_at")))
+        if i is not None:
+            series[i]["revenue"] += amt
+            series[i]["orders"] += 1
+
+    revenue_total = sum(_order_amount(o) for o in paid)
+    revenue_7d = sum(_order_amount(o) for o in paid if _aware(o.get("paid_at")) and _aware(o["paid_at"]) >= d7)
+    revenue_30d = sum(_order_amount(o) for o in paid if _aware(o.get("paid_at")) and _aware(o["paid_at"]) >= d30)
+    revenue_today = sum(
+        _order_amount(o) for o in paid
+        if _day_key(o.get("paid_at") or o.get("created_at")) == now.strftime("%Y-%m-%d")
+    )
+    paying_users = len({o.get("user_id") for o in paid if o.get("user_id")})
+    paid_count = len(paid)
+
+    active_subs = 0
+    expiring = 0
+    # `active_subs` = langganan berbayar yang belum kedaluwarsa; dihitung lewat
+    # aggregation supaya tidak memindai seluruh koleksi pohon ke aplikasi.
+    rows = await db.trees.aggregate([
+        {"$match": {"plan": {"$in": list(PLAN_PRICES)}, "expires_at": {"$gte": now}}},
+        {
+            "$group": {
+                "_id": None,
+                "active": {"$sum": 1},
+                "expiring": {
+                    "$sum": {
+                        "$cond": [
+                            {"$lte": ["$expires_at", now + timedelta(days=30)]}, 1, 0
+                        ]
+                    }
+                },
+            }
+        },
+    ]).to_list(1)
+    if rows:
+        active_subs = int(rows[0].get("active") or 0)
+        expiring = int(rows[0].get("expiring") or 0)
+
+    recent_orders = sorted(
+        orders, key=lambda o: _aware(o.get("created_at")) or now, reverse=True
+    )[:25]
+    top_trees = sorted(revenue_by_tree.items(), key=lambda kv: kv[1], reverse=True)[:10]
+
+    # Nama pohon + email pemilik diambil BULK (2 query), bukan 2 query per baris.
+    recent_tree_ids = [o.get("tree_id") for o in recent_orders]
+    recent_user_ids = [o.get("user_id") for o in recent_orders]
+    top_tree_ids = [tid for tid, rev in top_trees if tid and rev]
+
+    (
+        recent_trees,
+        recent_users,
+        top_tree_docs,
+        total_trees,
+        plan_counts,
+    ) = await asyncio.gather(
+        _docs_by_id("trees", recent_tree_ids, {"name": 1}),
+        _docs_by_field("users", "user_id", recent_user_ids, {"email": 1, "name": 1}),
+        _docs_by_id("trees", top_tree_ids, {"name": 1, "plan": 1, "owner_id": 1}),
+        db.trees.count_documents({}),
+        _plan_counts(now),
+    )
+    top_owner_docs = await _docs_by_field(
+        "users", "user_id", [t.get("owner_id") for t in top_tree_docs.values()], {"email": 1}
+    )
+
+    recent = []
+    for o in recent_orders:
+        owner = recent_users.get(o.get("user_id") or "", {})
+        recent.append({
+            **_serialize([dict(o)])[0],
+            "amount": _order_amount(o),
+            "tree_name": recent_trees.get(o.get("tree_id") or "", {}).get("name"),
+            "user_email": owner.get("email"),
+        })
+
+    top = []
+    for tid, rev in top_trees:
+        if not tid or not rev:
+            continue
+        tree = top_tree_docs.get(tid, {})
+        owner = top_owner_docs.get(tree.get("owner_id") or "", {})
+        top.append({
+            "tree_id": tid,
+            "tree_name": tree.get("name"),
+            "plan": tree.get("plan"),
+            "owner_email": owner.get("email"),
+            "revenue": rev,
+        })
+
+    return {
+        "days": len(keys),
+        "revenue": {
+            "total": revenue_total,
+            "today": revenue_today,
+            "7d": revenue_7d,
+            "30d": revenue_30d,
+            "avg_order_value": round(revenue_total / paid_count) if paid_count else 0,
+            "arpu": round(revenue_total / paying_users) if paying_users else 0,
+        },
+        "series": series,
+        "by_plan": sorted(by_plan.values(), key=lambda x: -x["revenue"]),
+        "by_status": sorted(by_status.values(), key=lambda x: -x["count"]),
+        "by_provider": sorted(by_provider.values(), key=lambda x: -x["revenue"]),
+        "subscriptions": {
+            "active": active_subs,
+            "expiring_30d": expiring,
+            "paid_trees": active_subs,
+        },
+        "conversion": round(active_subs / total_trees, 3) if total_trees else 0.0,
+        "recent": recent,
+        "top_trees": top,
+    }
+
+
+@api_router.get("/admin/activity")
+async def admin_activity(
+    action: Optional[str] = Query(None),
+    q: Optional[str] = Query(None),
+    tree_id: Optional[str] = Query(None),
+    days: int = Query(30, ge=1, le=365),
+    limit: int = Query(50, ge=1, le=200),
+    skip: int = Query(0, ge=0),
+    user=Depends(get_current_user),
+):
+    """Audit trail aktivitas pengguna (login, pohon, anggota, pembayaran, admin)."""
+    _require_superadmin(user)
+    start = now_utc() - timedelta(days=days)
+    base = {"created_at": {"$gte": start}}
+    filt = dict(base)
+    if action:
+        filt["action"] = action
+    if tree_id:
+        filt["tree_id"] = tree_id
+    if q:
+        rx = {"$regex": re.escape(q.strip()), "$options": "i"}
+        filt["$or"] = [
+            {"actor_email": rx}, {"actor_name": rx}, {"target": rx},
+            {"action": rx}, {"meta.name": rx},
+        ]
+
+    total, raw_items, grouped = await asyncio.gather(
+        db.activity_log.count_documents(filt),
+        db.activity_log.find(filt, {"_id": 0})
+        .sort("created_at", -1).skip(skip).limit(limit).to_list(limit),
+        db.activity_log.aggregate([
+            {"$match": base},
+            {"$group": {"_id": "$action", "count": {"$sum": 1}}},
+            {"$sort": {"count": -1}},
+            {"$limit": 40},
+        ]).to_list(40),
+    )
+    items = _serialize(raw_items)
+    return {
+        "items": items,
+        "total": total,
+        "limit": limit,
+        "skip": skip,
+        "actions": [{"action": g["_id"], "count": g["count"]} for g in grouped],
+        "known_actions": sorted(ACTIVITY_ACTIONS),
+    }
+
+
+@api_router.get("/admin/errors")
+async def admin_errors(
+    path: Optional[str] = Query(None),
+    status: Optional[int] = Query(None),
+    days: int = Query(7, ge=1, le=90),
+    limit: int = Query(50, ge=1, le=200),
+    skip: int = Query(0, ge=0),
+    user=Depends(get_current_user),
+):
+    """Log error server: daftar terbaru + agregat per endpoint dan per status."""
+    _require_superadmin(user)
+    start = now_utc() - timedelta(days=days)
+    filt: Dict[str, Any] = {"created_at": {"$gte": start}}
+    if path:
+        filt["path"] = {"$regex": re.escape(path.strip()), "$options": "i"}
+    if status:
+        filt["status"] = int(status)
+
+    total, raw_items, by_path, by_status, count_24h = await asyncio.gather(
+        db.error_logs.count_documents(filt),
+        db.error_logs.find(filt, {"_id": 0})
+        .sort("created_at", -1).skip(skip).limit(limit).to_list(limit),
+        db.error_logs.aggregate([
+            {"$match": {"created_at": {"$gte": start}}},
+            {"$group": {"_id": "$path", "count": {"$sum": 1}, "last": {"$max": "$created_at"}}},
+            {"$sort": {"count": -1}},
+            {"$limit": 20},
+        ]).to_list(20),
+        db.error_logs.aggregate([
+            {"$match": {"created_at": {"$gte": start}}},
+            {"$group": {"_id": "$status", "count": {"$sum": 1}}},
+            {"$sort": {"count": -1}},
+        ]).to_list(20),
+        db.error_logs.count_documents({"created_at": {"$gte": now_utc() - timedelta(days=1)}}),
+    )
+    items = _serialize(raw_items)
+
+    return {
+        "items": items,
+        "total": total,
+        "count_24h": count_24h,
+        "by_path": [
+            {"path": g["_id"], "count": g["count"], "last_at": _aware(g.get("last")).isoformat() if g.get("last") else None}
+            for g in by_path
+        ],
+        "by_status": [{"status": g["_id"], "count": g["count"]} for g in by_status],
+    }
+
+
+@api_router.get("/admin/trees")
+async def admin_trees(
+    q: Optional[str] = Query(None),
+    plan: Optional[str] = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+    skip: int = Query(0, ge=0),
+    user=Depends(get_current_user),
+):
+    """Daftar seluruh tenant (pohon) + pemilik, plan, dan ukuran isinya."""
+    _require_superadmin(user)
+    filt: Dict[str, Any] = {}
+    if q:
+        filt["name"] = {"$regex": re.escape(q.strip()), "$options": "i"}
+    if plan:
+        filt["plan"] = plan
+
+    total = await db.trees.count_documents(filt)
+    docs = await db.trees.find(filt, {"_id": 0}).sort("created_at", -1).skip(skip).limit(limit).to_list(limit)
+
+    ids = [t["id"] for t in docs if t.get("id")]
+
+    # Dulu loop ini menembak 4 query per pohon (50 pohon = 200 round-trip).
+    # Sekarang semuanya diambil bulk dalam satu gelombang paralel.
+    (
+        people_by_tree,
+        members_by_tree,
+        messages_by_tree,
+        usage_rows,
+        owners,
+        plan_counts,
+    ) = await asyncio.gather(
+        _count_by("people", "tree_id", ids, {"deleted_at": None}),
+        _count_by("tree_members", "tree_id", ids),
+        _count_by("family_chat", "tree_id", ids, {"deleted_at": None}),
+        db.tree_usage.find({"tree_id": {"$in": ids}}, {"_id": 0, "tree_id": 1, "bytes": 1}).to_list(len(ids) + 1) if ids else asyncio.sleep(0, result=[]),
+        _docs_by_field("users", "user_id", [t.get("owner_id") for t in docs], {"email": 1, "name": 1}),
+        _plan_counts(now_utc()),
+    )
+    usage_by_tree = {r.get("tree_id"): int(r.get("bytes") or 0) for r in usage_rows if r.get("tree_id")}
+
+    out = []
+    for t in docs:
+        owner = owners.get(t.get("owner_id") or "")
+        out.append({
+            "id": t.get("id"),
+            "name": t.get("name"),
+            "plan": effective_plan(t),
+            "created_at": _aware(t.get("created_at")).isoformat() if t.get("created_at") else None,
+            "expires_at": _aware(t.get("expires_at")).isoformat() if t.get("expires_at") else None,
+            "owner_id": t.get("owner_id"),
+            "owner_email": (owner or {}).get("email"),
+            "owner_name": (owner or {}).get("name"),
+            "people": people_by_tree.get(t.get("id"), 0),
+            "members": members_by_tree.get(t.get("id"), 0),
+            "messages": messages_by_tree.get(t.get("id"), 0),
+            "storage_used": usage_by_tree.get(t.get("id"), 0),
+        })
+
+    return {
+        "trees": out,
+        "total": total,
+        "plan_counts": [{"plan": k, "count": v} for k, v in sorted(plan_counts.items())],
+        "limit": limit,
+        "skip": skip,
+    }
+
+
+@api_router.get("/admin/system")
+async def admin_system(user=Depends(get_current_user)):
+    """Kesehatan teknis: uptime, latensi request, integrasi, dan ukuran koleksi."""
+    _require_superadmin(user)
+    now = now_utc()
+    timings = list(RECENT_TIMINGS)
+
+    def window(hours: int):
+        cutoff = now - timedelta(hours=hours)
+        return [t for t in timings if _aware(t[0]) and _aware(t[0]) >= cutoff]
+
+    def pct(values, p):
+        if not values:
+            return 0
+        ordered = sorted(values)
+        i = min(len(ordered) - 1, max(0, int(round((p / 100) * (len(ordered) - 1)))))
+        return round(ordered[i], 1)
+
+    stats = {}
+    for label, hours in (("1h", 1), ("24h", 24)):
+        bucket = window(hours)
+        durations = [t[2] for t in bucket]
+        stats[label] = {
+            "requests": len(bucket),
+            "errors": len([t for t in bucket if t[3] >= 500]),
+            "avg_ms": round(sum(durations) / len(durations), 1) if durations else 0,
+            "p95_ms": pct(durations, 95),
+            "slowest": sorted(
+                ({"path": t[1], "ms": round(t[2], 1), "status": t[3]} for t in bucket),
+                key=lambda x: -x["ms"],
+            )[:5],
+        }
+
+    collection_names = (
+        "users", "trees", "tree_members", "people", "relations", "family_chat",
+        "payment_orders", "feedback", "error_logs", "activity_log",
+        "app_notifications", "join_requests",
+    )
+    # count_documents per koleksi dijalankan paralel (dulu 12 query berurutan).
+    counts, first_activity = await asyncio.gather(
+        asyncio.gather(*(_safe_count(n) for n in collection_names)),
+        db.activity_log.find_one({}, {"_id": 0, "created_at": 1}, sort=[("created_at", 1)]),
+    )
+    collections = dict(zip(collection_names, counts))
+
+    uptime = (now - PROCESS_STARTED_AT).total_seconds()
+    return {
+        "uptime_seconds": int(uptime),
+        "started_at": PROCESS_STARTED_AT.isoformat(),
+        "integrations": integrations.describe_config(),
+        "request_stats": stats,
+        "collections": collections,
+        "db_name": os.environ.get("DB_NAME", ""),
+        "superadmins": SUPERADMIN_EMAILS,
+        "activity_log_started": (
+            _aware(first_activity["created_at"]).isoformat()
+            if first_activity and first_activity.get("created_at") else None
+        ),
+    }
 
 
 @api_router.post("/trees/{tid}/upgrade")
@@ -2736,10 +3654,13 @@ async def upgrade_tree(tid: str, user=Depends(get_current_user), body: Optional[
     # 2) Validasi input setelah otorisasi lolos.
     plan = (body.plan if body else None) or "pro"
     plan = plan if plan in ("free", "pro", "family") else "pro"
+    previous_plan = effective_plan(tree)
     if plan == "free":
         await db.trees.update_one({"id": tid}, {"$set": {"plan": "free"}, "$unset": {"expires_at": "", "expiry_reminder_7": "", "expiry_reminder_1": ""}})
     else:
         await db.trees.update_one({"id": tid}, {"$set": {"plan": plan, "upgraded_at": now_utc(), "expires_at": now_utc() + timedelta(days=365)}, "$unset": {"expiry_reminder_7": "", "expiry_reminder_1": ""}})
+    await log_activity("plan.manual_override", user=user, tree_id=tid,
+                       meta={"plan": plan, "previous_plan": previous_plan})
     return {"ok": True, "plan": plan}
 
 
@@ -2757,6 +3678,19 @@ async def _activate_order(order):
          "$unset": {"expiry_reminder_7": "", "expiry_reminder_1": ""}},
     )
     await db.payment_orders.update_one({"order_id": order["order_id"]}, {"$set": {"status": "paid", "paid_at": now_utc()}})
+    # Webhook tidak punya sesi user: pakai pemilik pohon sebagai aktor.
+    actor = await db.users.find_one(
+        {"user_id": order.get("user_id") or order.get("owner_id") or ""},
+        {"_id": 0, "user_id": 1, "email": 1, "name": 1},
+    )
+    await log_activity(
+        "payment.paid",
+        user=actor,
+        tree_id=order.get("tree_id"),
+        target=order.get("order_id"),
+        meta={"plan": order.get("plan"), "amount": order.get("amount"),
+              "provider": order.get("provider", "midtrans")},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -2858,6 +3792,10 @@ async def play_verify(body: PlayVerifyInput, tree_id: Optional[str] = Query(None
         {"$set": {"plan": plan, "upgraded_at": now_utc(), "expires_at": now_utc() + timedelta(days=365)},
          "$unset": {"expiry_reminder_7": "", "expiry_reminder_1": ""}},
     )
+    await log_activity("payment.paid", user=user, tree_id=tree["id"], target=order_id,
+                       meta={"plan": plan, "amount": PLAN_PRICES.get(plan, 0),
+                             "provider": "play", "product_id": body.product_id,
+                             "play_order": sub.get("orderId")})
 
     # Acknowledge agar Play tidak membatalkan otomatis (best-effort).
     try:
@@ -2881,7 +3819,10 @@ async def create_snap(body: PaymentInput, tree_id: Optional[str] = Query(None), 
     await db.payment_orders.insert_one({
         "order_id": order_id, "user_id": user["user_id"], "tree_id": tree["id"],
         "plan": body.plan, "amount": amount, "status": "pending", "created_at": now_utc(),
+        "provider": "midtrans",
     })
+    await log_activity("payment.created", user=user, tree_id=tree["id"], target=order_id,
+                       meta={"plan": body.plan, "amount": amount, "provider": "midtrans"})
     payload = {
         "transaction_details": {"order_id": order_id, "gross_amount": amount},
         "item_details": [{"id": body.plan, "price": amount, "quantity": 1, "name": f"Titisanku {body.plan.upper()}"}],
@@ -2928,6 +3869,13 @@ async def midtrans_notification(payload: dict = Body(...)):
         await _activate_order(order)
     elif tstatus in ("cancel", "deny", "expire"):
         await db.payment_orders.update_one({"order_id": order_id}, {"$set": {"status": "failed"}})
+        failed_actor = await db.users.find_one(
+            {"user_id": order.get("user_id") or ""}, {"_id": 0, "user_id": 1, "email": 1, "name": 1}
+        )
+        await log_activity("payment.failed", user=failed_actor, tree_id=order.get("tree_id"),
+                           target=order_id,
+                           meta={"plan": order.get("plan"), "amount": order.get("amount"),
+                                 "provider": "midtrans", "reason": tstatus})
     return {"ok": True}
 
 
@@ -2999,6 +3947,8 @@ async def change_member_role(tid: str, body: MemberRoleInput, user=Depends(get_c
         if lim_ed is not None and await editor_count(tid) >= lim_ed:
             raise HTTPException(status_code=402, detail=f"EDITOR_LIMIT:Batas {lim_ed} editor untuk paket ini sudah tercapai.")
     await db.tree_members.update_one({"tree_id": tid, "user_id": body.user_id}, {"$set": {"role": body.role}})
+    await log_activity("member.role_change", user=user, tree_id=tid, target=body.user_id,
+                       meta={"from": (current or {}).get("role"), "to": body.role})
     return {"ok": True}
 
 
@@ -3009,6 +3959,7 @@ async def remove_member(tid: str, member_id: str, user=Depends(get_current_user)
     if member_id == tree.get("owner_id"):
         raise HTTPException(status_code=400, detail="Pemilik pohon tidak bisa dihapus")
     await db.tree_members.delete_one({"tree_id": tid, "user_id": member_id})
+    await log_activity("member.remove", user=user, tree_id=tid, target=member_id)
     return {"ok": True}
 
 
@@ -3030,6 +3981,7 @@ async def create_invite_link(tid: str, user=Depends(get_current_user)):
         "created_at": now_utc(),
         "active": True,
     })
+    await log_activity("invite.create", user=user, tree_id=tid, meta={"role": "editor"})
     return {"token": token}
 
 
@@ -3073,6 +4025,8 @@ async def invite_accept(token: str, user=Depends(get_current_user)):
             "role": inv.get("role", "editor"),
             "joined_at": now_utc(),
         })
+        await log_activity("member.join", user=user, tree_id=inv["tree_id"],
+                           meta={"role": inv.get("role", "editor"), "via": "invite_link"})
     return {"tree_id": inv["tree_id"], "name": tree.get("name")}
 
 
@@ -3143,6 +4097,18 @@ async def startup():
         await db.tree_members.create_index([("tree_id", 1), ("user_id", 1)])
         await db.tree_members.create_index("user_id")
         await db.trees.create_index("id", unique=True)
+        # Dashboard superadmin: query berbasis waktu + filter.
+        await db.activity_log.create_index([("created_at", -1)])
+        await db.activity_log.create_index([("action", 1), ("created_at", -1)])
+        await db.activity_log.create_index([("actor_email", 1)])
+        await db.activity_log.create_index([("tree_id", 1), ("created_at", -1)])
+        await db.error_logs.create_index([("created_at", -1)])
+        await db.error_logs.create_index([("path", 1), ("created_at", -1)])
+        await db.payment_orders.create_index([("status", 1), ("paid_at", -1)])
+        await db.payment_orders.create_index("tree_id")
+        await db.family_chat.create_index([("tree_id", 1), ("created_at", -1)])
+        await db.users.create_index([("created_at", -1)])
+        await db.trees.create_index([("created_at", -1)])
     except Exception as e:
         logger.warning(f"Index setup: {e}")
     try:
@@ -3182,7 +4148,8 @@ async def metrics_middleware(request, call_next):
         try:
             await db.error_logs.insert_one({
                 "id": str(uuid.uuid4()), "path": str(request.url.path), "method": request.method,
-                "status": 500, "detail": str(e)[:400], "created_at": now_utc(),
+                "status": 500, "detail": str(e)[:400], "duration_ms": round(ms, 1),
+                "created_at": now_utc(),
             })
         except Exception:
             pass
@@ -3190,11 +4157,19 @@ async def metrics_middleware(request, call_next):
     ms = (time.perf_counter() - start) * 1000
     path = request.url.path
     RECENT_TIMINGS.append((now_utc(), path, ms, response.status_code))
-    if response.status_code >= 500 and path.startswith("/api"):
+    # 5xx selalu dicatat. 4xx hanya yang menandakan masalah auth/izin/rate-limit,
+    # supaya log error tidak tenggelam oleh 402 kuota & 422 validasi yang normal.
+    should_log = response.status_code >= 500 or (
+        path.startswith("/api") and response.status_code in (401, 403, 429)
+    )
+    if should_log:
         try:
             await db.error_logs.insert_one({
                 "id": str(uuid.uuid4()), "path": str(path), "method": request.method,
-                "status": response.status_code, "detail": "", "created_at": now_utc(),
+                "status": response.status_code, "detail": "",
+                "duration_ms": round(ms, 1),
+                "level": "error" if response.status_code >= 500 else "warn",
+                "created_at": now_utc(),
             })
         except Exception:
             pass

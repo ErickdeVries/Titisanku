@@ -612,3 +612,13 @@ User choices: chat notif = getar + suara "ding"; kerjakan Push sekarang.
   anggota). Empty-state kontak di mode grup kini pesan jelas no_contacts_invite ("Undang anggota keluarga
   ke aplikasi ... agar bisa dipilih ke dalam grup") + ikon user-plus, bukan tombol mati diam.
 - i18n: no_contacts_invite, menu_chat (ID+EN). Lint clean, app boot OK. UI di balik Google OAuth = tes device.
+- LEGEND KANVAS JADI FOOTER (index.tsx, 2026-11): legend Laki-laki/Perempuan/Admin dulu
+  `position: absolute` di dalam `canvasArea` sehingga menutupi node saat pan/zoom. Kini legend jadi
+  strip footer (borderTop + surfaceSecondary) DI LUAR kanvas: blok `{hasTree ? <View
+  testID="tree-legend">...</View> : null}` dirender setelah ternary kanvas, jadi canvasArea tetap
+  flex:1 dan legend tidak pernah menimpa kanvas.
+- HAPUS BADGE NOTIF MERAH (index.tsx): kotak merah kecil berisi angka/"9+" (notifDot di ikon lonceng,
+  styles.notifDot/notifDotText) dihapus karena tidak menambah info (lonceng tetap buka /notifications).
+  Ikut dihapus: query `["notifications"]` + `unreadNotif` + import getNotifications di layar Pohon
+  (polling notif tetap ada di (tabs)/_layout.tsx untuk badge tab Chat).
+- Preview APK build: b5108a26 (status FINISHED, versionCode 1) di EAS project erickdevries.

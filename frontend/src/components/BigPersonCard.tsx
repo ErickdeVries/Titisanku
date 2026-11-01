@@ -2,7 +2,8 @@ import { View, Text, Pressable, StyleSheet } from "react-native";
 import { Image } from "expo-image";
 import { User, Crown, Info } from "lucide-react-native";
 import { fonts, useTheme } from "@/src/theme";
-import { fileUrl, Person } from "@/src/api";
+import { Person } from "@/src/api";
+import { photoProps } from "@/src/utils/image";
 import { nodeColor } from "@/src/components/PersonNode";
 
 function birthYear(p: Person): string | null {
@@ -30,7 +31,7 @@ export function BigPersonCard({
 }) {
   const { colors } = useTheme();
   const color = nodeColor(person, colors);
-  const photo = fileUrl(person.photo_url);
+  const photo = photoProps(person);
   const avatarSize = 78 * scale;
   const cardW = 118 * scale;
   const yr = birthYear(person);
@@ -61,8 +62,8 @@ export function BigPersonCard({
           { width: avatarSize, height: avatarSize, borderRadius: avatarSize / 2, borderColor: color, backgroundColor: colors.surfaceTertiary },
         ]}
       >
-        {photo ? (
-          <Image source={{ uri: photo }} style={{ width: "100%", height: "100%" }} contentFit="cover" />
+        {photo.source ? (
+          <Image {...photo} style={{ width: "100%", height: "100%" }} contentFit="cover" />
         ) : person.is_root ? (
           <Crown size={avatarSize * 0.45} color={color} />
         ) : (

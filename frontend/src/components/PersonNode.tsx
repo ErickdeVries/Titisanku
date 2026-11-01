@@ -3,7 +3,8 @@ import { Pressable, Text, View } from "react-native";
 import { Image } from "expo-image";
 import Feather from "@react-native-vector-icons/feather";
 import { fonts, makeStyles, useTheme } from "@/src/theme";
-import { fileUrl, Person } from "@/src/api";
+import { Person } from "@/src/api";
+import { photoProps } from "@/src/utils/image";
 import { NODE_D } from "@/src/tree-layout";
 
 type Props = {
@@ -76,14 +77,14 @@ export function PersonNode({ person, onPress, selected, size = NODE_D, ringColor
   const { colors } = useTheme();
   const genderColor = nodeColor(person, colors);
   const color = ringColor ?? genderColor;
-  const photo = fileUrl(person.photo_url);
+  const photo = photoProps(person);
 
   return (
     <Pressable testID={`node-${person.id}`} onPress={onPress} style={styles.wrap}>
       <View style={[styles.ring, { borderWidth: 3, borderColor: color }, selected && styles.selectedRing]}>
         <View style={[styles.avatar, { width: size, height: size }]}>
-          {photo ? (
-            <Image source={{ uri: photo }} style={styles.img} contentFit="cover" transition={200} />
+          {photo.source ? (
+            <Image {...photo} style={styles.img} contentFit="cover" transition={200} />
           ) : (
             <Feather name="user" size={size * 0.5} color={color} />
           )}

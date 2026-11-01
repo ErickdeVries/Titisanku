@@ -12,6 +12,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { ErrorBoundary } from "@/src/components/error-boundary";
 import { queryClient } from "@/src/query-client";
+import { hydrateQueryCache, persistQueryCache } from "@/src/offline-cache";
 import { AuthProvider, useAuth } from "@/src/auth";
 import { TreeProvider, useTree } from "@/src/tree-context";
 import { LanguageProvider } from "@/src/i18n";
@@ -190,6 +191,13 @@ export default function RootLayout() {
   useEffect(() => {
     if (fontsLoaded) SplashScreen.hideAsync().catch(() => {});
   }, [fontsLoaded]);
+
+  // Cache offline: muat pohon/orang yang terakhir dibuka, lalu simpan setiap
+  // perubahan supaya aplikasi tetap bisa menampilkan data tanpa internet.
+  useEffect(() => {
+    hydrateQueryCache(queryClient);
+    return persistQueryCache(queryClient);
+  }, []);
 
   if (!fontsLoaded) {
     return (

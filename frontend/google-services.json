@@ -14,6 +14,14 @@
       },
       "oauth_client": [
         {
+          "client_id": "389393525285-d9fglqmfn1n325f6rkf69r9ks93co1qm.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.titisanku.app",
+            "certificate_hash": "4e2cc56cc5c5ac8b08ebbfde4eef60d795e50cb6"
+          }
+        },
+        {
           "client_id": "389393525285-65e7mlkf8ttjqq3eelr3khqrgh0lpkms.apps.googleusercontent.com",
           "client_type": 3
         }

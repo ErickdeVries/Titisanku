@@ -1,6 +1,8 @@
 import React, { createContext, useContext, useEffect, useState } from "react";
 import { Platform } from "react-native";
 import { storage } from "@/src/utils/storage";
+import { queryClient } from "@/src/query-client";
+import { clearOfflineCache } from "@/src/offline-cache";
 import { authSession, getMe, logoutApi, setToken, User, loginWithPassword as apiLogin, registerWithPassword as apiRegister, demoLogin as apiDemoLogin } from "@/src/api";
 import {
   firebaseConfigured,
@@ -163,6 +165,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await clearToken();
     setToken(null);
     setUser(null);
+    // Jangan tinggalkan data keluarga di HP setelah keluar / ganti akun.
+    queryClient.clear();
+    await clearOfflineCache();
   };
 
   const refresh = async () => {
@@ -172,6 +177,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const applySession = async (res: { session_token: string; user: User }) => {
+    // Akun (mungkin) berbeda: buang cache akun sebelumnya agar pohon orang
+    // lain tidak sempat tampil.
+    queryClient.clear();
+    await clearOfflineCache();
     await storeToken(res.session_token);
     setToken(res.session_token);
     try {

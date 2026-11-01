@@ -11,13 +11,13 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Feather from "@react-native-vector-icons/feather";
 import { fonts, makeStyles, useTheme } from "@/src/theme";
-import { getPerson, updatePerson, deletePerson, fileUrl, getTree, listPersonNotes, addPersonNote, addPersonFile, deleteNote, deleteRelation, updateRelation, uploadPhoto, addGalleryPhoto, editGalleryPhoto, removeGalleryPhoto, GalleryPhoto, setPersonPrivacy, PrivacyField, PrivacyEntry, getMembers, limitMessage } from "@/src/api";
+import { getPerson, updatePerson, deletePerson, fileUrl, getTree, listPersonNotes, addPersonNote, addPersonFile, deleteNote, deleteRelation, updateRelation, uploadPhotoMeta, addGalleryPhoto, editGalleryPhoto, removeGalleryPhoto, GalleryPhoto, setPersonPrivacy, PrivacyField, PrivacyEntry, getMembers, limitMessage } from "@/src/api";
+import { compressImage, imageProps, photoProps } from "@/src/utils/image";
 import { useAuth } from "@/src/auth";
 import { useI18n } from "@/src/i18n";
 import { useTree } from "@/src/tree-context";
 import { nodeColor } from "@/src/components/PersonNode";
 import { PersonForm, PersonFormValue } from "@/src/components/PersonForm";
-import { compressImage } from "@/src/utils/image";
 import { DateField, isoToDisplay } from "@/src/components/DateField";
 import { GradientButton } from "@/src/components/GradientButton";
 
@@ -233,6 +233,7 @@ export default function PersonDetail() {
     birth_place: p.birth_place ?? null,
     death_date: p.death_date ?? null,
     photo_url: p.photo_url ?? null,
+    photo_thumb: p.photo_thumb ?? null,
     cover_url: p.cover_url ?? null,
     job: p.job ?? null,
     is_adopted: p.is_adopted ?? false,
@@ -247,8 +248,8 @@ export default function PersonDetail() {
     setGalleryBusy(true);
     try {
       const compressed = await compressImage(res.assets[0].uri);
-      const path = await uploadPhoto(compressed);
-      const r = await addGalleryPhoto(id, path);
+      const up = await uploadPhotoMeta(compressed);
+      const r = await addGalleryPhoto(id, up.path, undefined, undefined, up.thumb_path);
       await qc.invalidateQueries({ queryKey: ["person", id] });
       // open caption editor for the newly added photo
       const added = r.gallery[r.gallery.length - 1];
@@ -288,8 +289,8 @@ export default function PersonDetail() {
     setCoverBusy(true);
     try {
       const compressed = await compressImage(res.assets[0].uri, 1280);
-      const path = await uploadPhoto(compressed);
-      await updatePerson(id, { ...toPersonData(person!), cover_url: path });
+      const up = await uploadPhotoMeta(compressed);
+      await updatePerson(id, { ...toPersonData(person!), cover_url: up.path });
       await qc.invalidateQueries({ queryKey: ["person", id] });
     } catch (e) {
       console.log("cover error", e);
@@ -585,7 +586,7 @@ export default function PersonDetail() {
   }
 
   const color = nodeColor(person, colors);
-  const photo = fileUrl(person.photo_url);
+  const photo = photoProps(person);
 
   const quick = [
     { key: "father", label: t("add_father"), icon: "arrow-up", color: colors.maleNode, dir: "father" },
@@ -643,7 +644,7 @@ export default function PersonDetail() {
         <KeyboardAwareScrollView contentContainerStyle={{ paddingBottom: insets.bottom + 40 }} bottomOffset={20} keyboardShouldPersistTaps="handled">
           <View style={styles.coverWrap}>
             {person.cover_url ? (
-              <Image source={{ uri: fileUrl(person.cover_url) }} style={styles.cover} contentFit="cover" />
+              <Image {...imageProps(person.cover_url)} style={styles.cover} contentFit="cover" />
             ) : (
               <View style={[styles.cover, styles.coverPlaceholder]} />
             )}
@@ -655,7 +656,7 @@ export default function PersonDetail() {
           </View>
           <View style={styles.hero}>
             <View style={[styles.avatar, styles.avatarOnCover, { borderColor: color }]}>
-              {photo ? <Image source={{ uri: photo }} style={styles.avatarImg} contentFit="cover" /> : <Feather name="user" size={48} color={color} />}
+              {photo.source ? <Image {...photo} style={styles.avatarImg} contentFit="cover" /> : <Feather name="user" size={48} color={color} />}
             </View>
             <Text style={styles.name}>{person.name}</Text>
             <View style={styles.roleTag}>
@@ -830,11 +831,12 @@ export default function PersonDetail() {
               {person.gallery && person.gallery.length ? (
                 <View style={styles.galleryList}>
                   {person.gallery.map((g) => {
-                    const uri = fileUrl(g.path);
+                    const full = fileUrl(g.path);
+                    const thumb = imageProps(g.path, g.thumb);
                     return (
                       <View key={g.id} style={styles.igCard}>
-                        <Pressable onPress={() => uri && setViewerUri(uri)} testID={`gallery-item-${g.id}`}>
-                          <Image source={{ uri }} style={styles.igImg} contentFit="cover" />
+                        <Pressable onPress={() => full && setViewerUri(full)} testID={`gallery-item-${g.id}`}>
+                          <Image {...thumb} style={styles.igImg} contentFit="cover" />
                         </Pressable>
                         <View style={styles.igMeta}>
                           <View style={{ flex: 1 }}>
@@ -1011,7 +1013,7 @@ export default function PersonDetail() {
                 fileNotes.map((n: any) => (
                   <View key={n.id} style={styles.fileCard} testID={`file-${n.id}`}>
                     <Pressable onPress={() => setViewerUri(fileUrl(n.attachments[0]) ?? null)} testID={`file-open-${n.id}`}>
-                      <Image source={{ uri: fileUrl(n.attachments[0]) }} style={styles.fileImg} contentFit="cover" />
+                      <Image {...imageProps(n.attachments[0])} style={styles.fileImg} contentFit="cover" />
                     </Pressable>
                     <View style={styles.fileMetaRow}>
                       <Text style={styles.fileMeta} numberOfLines={1}>
