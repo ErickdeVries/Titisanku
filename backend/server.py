@@ -3,6 +3,7 @@ import io
 import re
 import uuid
 import time
+import asyncio
 import logging
 import secrets
 import hashlib
@@ -2818,6 +2819,135 @@ async def delete_account(user=Depends(get_current_user)):
     return {"ok": True}
 
 
+# ---------------------------------------------------------------------------
+# Helper agregasi untuk dashboard superadmin.
+#
+# Endpoint admin dulu memakai puluhan `count_documents` berurutan plus loop
+# per-baris (N+1). Di MongoDB Atlas setiap round-trip ~30-100 ms, jadi satu tab
+# dashboard bisa menunggu 5-15 detik. Helper di bawah menggabungkan hitungan
+# menjadi satu pipeline (`$group`) dan endpoint menjalankannya paralel dengan
+# `asyncio.gather`.
+# ---------------------------------------------------------------------------
+
+
+def _plan_bucket_expr(now: datetime) -> dict:
+    """Ekspresi agregasi yang meniru `effective_plan()` di sisi MongoDB."""
+    return {
+        "$let": {
+            "vars": {"plan": {"$ifNull": ["$plan", "free"]}, "exp": "$expires_at"},
+            "in": {
+                "$cond": [
+                    {"$eq": ["$$plan", "free"]},
+                    "free",
+                    {
+                        "$cond": [
+                            {"$eq": [{"$type": "$$exp"}, "date"]},
+                            {"$cond": [{"$lt": ["$$exp", now]}, "free", "$$plan"]},
+                            "$$plan",
+                        ]
+                    },
+                ]
+            },
+        }
+    }
+
+
+async def _plan_counts(now: Optional[datetime] = None) -> Dict[str, int]:
+    """Jumlah pohon per plan efektif (plan berbayar yang kedaluwarsa = free)."""
+    now = now or now_utc()
+    counts: Dict[str, int] = {"free": 0, "pro": 0, "family": 0, "unlimited": 0}
+    rows = await db.trees.aggregate([
+        {"$group": {"_id": _plan_bucket_expr(now), "n": {"$sum": 1}}},
+    ]).to_list(50)
+    for row in rows:
+        key = row.get("_id") or "free"
+        counts[key] = counts.get(key, 0) + int(row.get("n") or 0)
+    return counts
+
+
+async def _count_by(
+    collection: str, key: str, ids: List[str], match: Optional[dict] = None
+) -> Dict[str, int]:
+    """`count_documents` untuk banyak id sekaligus: satu aggregation, bukan N query."""
+    unique_ids = [i for i in dict.fromkeys(ids or []) if i]
+    if not unique_ids:
+        return {}
+    rows = await db[collection].aggregate([
+        {"$match": {**(match or {}), key: {"$in": unique_ids}}},
+        {"$group": {"_id": f"${key}", "n": {"$sum": 1}}},
+    ]).to_list(len(unique_ids) + 1)
+    return {r["_id"]: int(r.get("n") or 0) for r in rows if r.get("_id")}
+
+
+async def _daily_counts(
+    collection: str, start: datetime, field: str = "created_at", match: Optional[dict] = None
+) -> Dict[str, int]:
+    """Jumlah dokumen per hari (string `YYYY-MM-DD`) dalam satu aggregation."""
+    rows = await db[collection].aggregate([
+        {"$match": {**(match or {}), field: {"$gte": start}}},
+        {
+            "$group": {
+                "_id": {"$dateToString": {"format": "%Y-%m-%d", "date": f"${field}"}},
+                "n": {"$sum": 1},
+            }
+        },
+    ]).to_list(4000)
+    return {r["_id"]: int(r.get("n") or 0) for r in rows if r.get("_id")}
+
+
+async def _daily_actors(
+    collection: str, start: datetime, id_field: str, match: Optional[dict] = None
+) -> Dict[str, set]:
+    """Set pelaku unik per hari (`{tanggal: {user_id, ...}}`) untuk DAU/WAU/MAU."""
+    rows = await db[collection].aggregate([
+        {
+            "$match": {
+                **(match or {}),
+                "created_at": {"$gte": start},
+                id_field: {"$nin": [None, ""]},
+            }
+        },
+        {
+            "$group": {
+                "_id": {"$dateToString": {"format": "%Y-%m-%d", "date": "$created_at"}},
+                "ids": {"$addToSet": f"${id_field}"},
+            }
+        },
+    ]).to_list(4000)
+    return {r["_id"]: set(r.get("ids") or []) for r in rows if r.get("_id")}
+
+
+async def _docs_by_id(collection: str, ids: List[str], projection: dict) -> Dict[str, dict]:
+    """Ambil banyak dokumen `{id: doc}` dengan satu query (`$in`)."""
+    unique_ids = [i for i in dict.fromkeys(ids or []) if i]
+    if not unique_ids:
+        return {}
+    rows = await db[collection].find(
+        {"id": {"$in": unique_ids}}, {"_id": 0, "id": 1, **projection}
+    ).to_list(len(unique_ids) + 1)
+    return {r["id"]: r for r in rows if r.get("id")}
+
+
+async def _docs_by_field(
+    collection: str, field: str, values: List[str], projection: dict
+) -> Dict[str, dict]:
+    """Ambil banyak dokumen di-key berdasarkan field lain (mis. `user_id`)."""
+    unique_values = [v for v in dict.fromkeys(values or []) if v]
+    if not unique_values:
+        return {}
+    rows = await db[collection].find(
+        {field: {"$in": unique_values}}, {"_id": 0, field: 1, **projection}
+    ).to_list(len(unique_values) + 1)
+    return {r[field]: r for r in rows if r.get(field)}
+
+
+async def _safe_count(collection: str) -> Optional[int]:
+    try:
+        return await db[collection].count_documents({})
+    except Exception:  # pragma: no cover - koleksi bisa belum ada
+        return None
+
+
 @api_router.get("/admin/overview")
 async def admin_overview(user=Depends(get_current_user)):
     if not is_superadmin(user):
@@ -2827,31 +2957,64 @@ async def admin_overview(user=Depends(get_current_user)):
     d30 = now - timedelta(days=30)
     d1 = now - timedelta(days=1)
 
-    total_users = await db.users.count_documents({})
-    new_7d = await db.users.count_documents({"created_at": {"$gte": d7}})
-    new_30d = await db.users.count_documents({"created_at": {"$gte": d30}})
-    active_7d = len(await db.user_sessions.distinct("user_id", {"created_at": {"$gte": d7}}))
+    # Semua hitungan dijalankan PARALEL. Sebelumnya ±20 query berurutan, jadi
+    # satu tab overview saja butuh beberapa detik di Atlas.
+    (
+        total_users,
+        new_7d,
+        new_30d,
+        active_user_ids,
+        total_trees,
+        plan_counts,
+        paid,
+        total_people,
+        total_messages,
+        owner_ids,
+        payer_ids,
+        group_rooms,
+        direct_rooms,
+        join_request_count,
+        photo_people,
+        err_24h,
+        errors,
+        total_relations,
+        total_feedback,
+    ) = await asyncio.gather(
+        db.users.count_documents({}),
+        db.users.count_documents({"created_at": {"$gte": d7}}),
+        db.users.count_documents({"created_at": {"$gte": d30}}),
+        db.user_sessions.distinct("user_id", {"created_at": {"$gte": d7}}),
+        db.trees.count_documents({}),
+        # Hitung per plan EFEKTIF: langganan yang sudah lewat expires_at tampil
+        # sebagai free, sama seperti yang dilihat pengguna.
+        _plan_counts(now),
+        db.payment_orders.find({"status": "paid"}, {"_id": 0}).to_list(20000),
+        db.people.count_documents({"deleted_at": None}),
+        db.family_chat.count_documents({"deleted_at": None}),
+        db.trees.distinct("owner_id"),
+        db.payment_orders.distinct("user_id", {"status": "paid"}),
+        db.chat_rooms.count_documents({"type": "group"}),
+        db.chat_rooms.count_documents({"type": "direct"}),
+        db.join_requests.count_documents({}),
+        db.people.count_documents({"photo_url": {"$nin": [None, ""]}, "deleted_at": None}),
+        db.error_logs.count_documents({"created_at": {"$gte": d1}}),
+        db.error_logs.find({}, {"_id": 0}).sort("created_at", -1).to_list(15),
+        db.relations.count_documents({"deleted_at": None}),
+        db.feedback.count_documents({}),
+    )
 
-    total_trees = await db.trees.count_documents({})
-    # Hitung per plan EFEKTIF: langganan yang sudah lewat expires_at tampil
-    # sebagai free, sama seperti yang dilihat pengguna.
-    plan_counts = {"free": 0, "pro": 0, "family": 0, "unlimited": 0}
-    for t in await db.trees.find({}, {"_id": 0, "plan": 1, "expires_at": 1}).to_list(20000):
-        p = effective_plan(t)
-        plan_counts[p] = plan_counts.get(p, 0) + 1
-    free_trees, pro_trees, family_trees = plan_counts["free"], plan_counts["pro"], plan_counts["family"]
+    active_7d = len([u for u in active_user_ids if u])
+    free_trees = plan_counts.get("free", 0)
+    pro_trees = plan_counts.get("pro", 0)
+    family_trees = plan_counts.get("family", 0)
 
-    paid = await db.payment_orders.find({"status": "paid"}, {"_id": 0}).to_list(20000)
     revenue_total = sum(_order_amount(o) for o in paid)
     revenue_30d = sum(_order_amount(o) for o in paid if o.get("paid_at") and _aware(o["paid_at"]) >= d30)
     paid_count = len(paid)
 
-    total_people = await db.people.count_documents({"deleted_at": None})
-    total_messages = await db.family_chat.count_documents({"deleted_at": None})
-
     # Funnel
-    owners = len(await db.trees.distinct("owner_id"))
-    payers = len(await db.payment_orders.distinct("user_id", {"status": "paid"}))
+    owners = len([o for o in owner_ids if o])
+    payers = len([p for p in payer_ids if p])
     funnel = [
         {"step": "Daftar", "count": total_users},
         {"step": "Buat Pohon", "count": owners},
@@ -2862,10 +3025,10 @@ async def admin_overview(user=Depends(get_current_user)):
     features = [
         {"key": "Anggota ditambahkan", "count": total_people},
         {"key": "Pesan chat", "count": total_messages},
-        {"key": "Grup chat", "count": await db.chat_rooms.count_documents({"type": "group"})},
-        {"key": "Chat pribadi", "count": await db.chat_rooms.count_documents({"type": "direct"})},
-        {"key": "Permintaan gabung", "count": await db.join_requests.count_documents({})},
-        {"key": "Foto anggota", "count": await db.people.count_documents({"photo_url": {"$nin": [None, ""]}, "deleted_at": None})},
+        {"key": "Grup chat", "count": group_rooms},
+        {"key": "Chat pribadi", "count": direct_rooms},
+        {"key": "Permintaan gabung", "count": join_request_count},
+        {"key": "Foto anggota", "count": photo_people},
     ]
     features.sort(key=lambda f: f["count"], reverse=True)
 
@@ -2874,12 +3037,11 @@ async def admin_overview(user=Depends(get_current_user)):
     last_hour = [r for r in recent if r[0] >= now - timedelta(hours=1)]
     avg_ms = round(sum(r[2] for r in last_hour) / len(last_hour), 1) if last_hour else 0
     req_1h = len(last_hour)
-    err_24h = await db.error_logs.count_documents({"created_at": {"$gte": d1}})
-    errors = _serialize(await db.error_logs.find({}, {"_id": 0}).sort("created_at", -1).to_list(15))
+    errors = _serialize(errors)
     db_counts = {
         "users": total_users, "trees": total_trees, "people": total_people,
-        "relations": await db.relations.count_documents({"deleted_at": None}),
-        "messages": total_messages, "feedback": await db.feedback.count_documents({}),
+        "relations": total_relations,
+        "messages": total_messages, "feedback": total_feedback,
     }
 
     return {
@@ -2903,9 +3065,12 @@ async def admin_users(user=Depends(get_current_user)):
     if not is_superadmin(user):
         raise HTTPException(status_code=403, detail="Akses ditolak")
     users = await db.users.find({}, {"_id": 0, "password": 0}).sort("created_at", -1).to_list(100)
+    # Dulu: satu count_documents per user (N+1 = 100 round-trip). Sekarang satu
+    # aggregation untuk semua user sekaligus.
+    tree_counts = await _count_by("tree_members", "user_id", [u.get("user_id") for u in users])
     out = []
     for u in _serialize(users):
-        u["tree_count"] = await db.tree_members.count_documents({"user_id": u["user_id"]})
+        u["tree_count"] = tree_counts.get(u.get("user_id"), 0)
         out.append(u)
     return {"users": out}
 
@@ -2970,6 +3135,8 @@ async def admin_growth(days: int = Query(30, ge=7, le=90), user=Depends(get_curr
     _require_superadmin(user)
     start, keys = _day_range(days)
     idx = {k: i for i, k in enumerate(keys)}
+    now = now_utc()
+    d7 = now - timedelta(days=7)
 
     def blank():
         return {
@@ -2981,43 +3148,63 @@ async def admin_growth(days: int = Query(30, ge=7, le=90), user=Depends(get_curr
     for i, k in enumerate(keys):
         series[i]["date"] = k
 
-    async for doc in db.users.find({"created_at": {"$gte": start}}, {"_id": 0, "created_at": 1}):
-        i = idx.get(_day_key(doc.get("created_at")))
-        if i is not None:
-            series[i]["signups"] += 1
+    # Satu aggregation per metrik, semuanya paralel — dulu tiap koleksi dipindai
+    # baris-per-baris lewat cursor sehingga response bisa >5 detik.
+    (
+        signups_by_day,
+        trees_by_day,
+        people_by_day,
+        messages_by_day,
+        chat_actors,
+        log_actors,
+        paid,
+        total_users,
+        total_trees,
+        plan_counts,
+        new_users_1d,
+        new_users_7d,
+        new_users_30d,
+        new_trees_7d,
+        total_people,
+        total_messages,
+        owner_ids,
+        payer_ids,
+        old_user_rows,
+    ) = await asyncio.gather(
+        _daily_counts("users", start),
+        _daily_counts("trees", start),
+        _daily_counts("people", start),
+        _daily_counts("family_chat", start),
+        _daily_actors("family_chat", start, "sender_id"),
+        _daily_actors("activity_log", start, "actor_id"),
+        db.payment_orders.find({"status": "paid"}, {"_id": 0}).to_list(20000),
+        db.users.count_documents({}),
+        db.trees.count_documents({}),
+        _plan_counts(now),
+        db.users.count_documents({"created_at": {"$gte": now - timedelta(days=1)}}),
+        db.users.count_documents({"created_at": {"$gte": d7}}),
+        db.users.count_documents({"created_at": {"$gte": now - timedelta(days=30)}}),
+        db.trees.count_documents({"created_at": {"$gte": d7}}),
+        db.people.count_documents({"deleted_at": None}),
+        db.family_chat.count_documents({"deleted_at": None}),
+        db.trees.distinct("owner_id"),
+        db.payment_orders.distinct("user_id", {"status": "paid"}),
+        db.users.find({"created_at": {"$lt": d7}}, {"_id": 0, "user_id": 1}).to_list(20000),
+    )
 
-    async for doc in db.trees.find({"created_at": {"$gte": start}}, {"_id": 0, "created_at": 1}):
-        i = idx.get(_day_key(doc.get("created_at")))
-        if i is not None:
-            series[i]["trees"] += 1
+    for i, k in enumerate(keys):
+        series[i]["signups"] = signups_by_day.get(k, 0)
+        series[i]["trees"] = trees_by_day.get(k, 0)
+        series[i]["people"] = people_by_day.get(k, 0)
+        series[i]["messages"] = messages_by_day.get(k, 0)
 
-    async for doc in db.people.find({"created_at": {"$gte": start}}, {"_id": 0, "created_at": 1}):
-        i = idx.get(_day_key(doc.get("created_at")))
-        if i is not None:
-            series[i]["people"] += 1
-
-    active = [set() for _ in keys]
-    async for doc in db.family_chat.find(
-        {"created_at": {"$gte": start}}, {"_id": 0, "created_at": 1, "sender_id": 1}
-    ):
-        i = idx.get(_day_key(doc.get("created_at")))
-        if i is None:
-            continue
-        series[i]["messages"] += 1
-        if doc.get("sender_id"):
-            active[i].add(doc["sender_id"])
-
-    async for doc in db.activity_log.find(
-        {"created_at": {"$gte": start}}, {"_id": 0, "created_at": 1, "actor_id": 1}
-    ):
-        i = idx.get(_day_key(doc.get("created_at")))
-        if i is not None and doc.get("actor_id"):
-            active[i].add(doc["actor_id"])
-
+    active = [
+        set(chat_actors.get(k, set())) | set(log_actors.get(k, set()))
+        for k in keys
+    ]
     for i in range(len(keys)):
         series[i]["active_users"] = len(active[i])
 
-    paid = await db.payment_orders.find({"status": "paid"}, {"_id": 0}).to_list(20000)
     for o in paid:
         i = idx.get(_day_key(o.get("paid_at") or o.get("created_at")))
         if i is not None:
@@ -3028,23 +3215,13 @@ async def admin_growth(days: int = Query(30, ge=7, le=90), user=Depends(get_curr
     wau = len(set().union(*active[-7:])) if len(active) >= 1 else 0
     mau = len(set().union(*active)) if active else 0
 
-    now = now_utc()
-    d7 = now - timedelta(days=7)
-    total_users = await db.users.count_documents({})
-    total_trees = await db.trees.count_documents({})
-    paid_trees = 0
-    async for t in db.trees.find({}, {"_id": 0, "plan": 1, "expires_at": 1}):
-        if _plan_is_paid(t):
-            paid_trees += 1
+    paid_trees = sum(plan_counts.get(p, 0) for p in PLAN_PRICES)
 
     # Retensi sederhana: pengguna yang sudah ada >7 hari lalu tapi masih aktif 7 hari terakhir.
     returning = 0
     if wau:
         recent_ids = set().union(*active[-7:])
-        old = await db.users.find(
-            {"created_at": {"$lt": d7}}, {"_id": 0, "user_id": 1}
-        ).to_list(20000)
-        returning = len(recent_ids & {u["user_id"] for u in old})
+        returning = len(recent_ids & {u["user_id"] for u in old_user_rows if u.get("user_id")})
 
     return {
         "days": len(keys),
@@ -3054,12 +3231,12 @@ async def admin_growth(days: int = Query(30, ge=7, le=90), user=Depends(get_curr
             "total_users": total_users,
             "total_trees": total_trees,
             "paid_trees": paid_trees,
-            "new_users_1d": await db.users.count_documents({"created_at": {"$gte": now - timedelta(days=1)}}),
-            "new_users_7d": await db.users.count_documents({"created_at": {"$gte": d7}}),
-            "new_users_30d": await db.users.count_documents({"created_at": {"$gte": now - timedelta(days=30)}}),
-            "new_trees_7d": await db.trees.count_documents({"created_at": {"$gte": d7}}),
-            "total_people": await db.people.count_documents({"deleted_at": None}),
-            "total_messages": await db.family_chat.count_documents({"deleted_at": None}),
+            "new_users_1d": new_users_1d,
+            "new_users_7d": new_users_7d,
+            "new_users_30d": new_users_30d,
+            "new_trees_7d": new_trees_7d,
+            "total_people": total_people,
+            "total_messages": total_messages,
         },
         "engagement": {
             "dau": dau,
@@ -3070,8 +3247,8 @@ async def admin_growth(days: int = Query(30, ge=7, le=90), user=Depends(get_curr
         },
         "funnel": {
             "users": total_users,
-            "owners": len(await db.trees.distinct("owner_id")),
-            "payers": len(await db.payment_orders.distinct("user_id", {"status": "paid"})),
+            "owners": len([o for o in owner_ids if o]),
+            "payers": len([p for p in payer_ids if p]),
             "conversion": round(paid_trees / total_trees, 3) if total_trees else 0.0,
         },
     }
@@ -3130,48 +3307,78 @@ async def admin_finance(days: int = Query(30, ge=7, le=90), user=Depends(get_cur
     paying_users = len({o.get("user_id") for o in paid if o.get("user_id")})
     paid_count = len(paid)
 
-    total_trees = await db.trees.count_documents({})
     active_subs = 0
     expiring = 0
-    async for t in db.trees.find({}, {"_id": 0, "plan": 1, "expires_at": 1}):
-        if not _plan_is_paid(t):
-            continue
-        exp = _aware(t.get("expires_at"))
-        if exp and exp > now:
-            active_subs += 1
-            if exp <= now + timedelta(days=30):
-                expiring += 1
+    # `active_subs` = langganan berbayar yang belum kedaluwarsa; dihitung lewat
+    # aggregation supaya tidak memindai seluruh koleksi pohon ke aplikasi.
+    rows = await db.trees.aggregate([
+        {"$match": {"plan": {"$in": list(PLAN_PRICES)}, "expires_at": {"$gte": now}}},
+        {
+            "$group": {
+                "_id": None,
+                "active": {"$sum": 1},
+                "expiring": {
+                    "$sum": {
+                        "$cond": [
+                            {"$lte": ["$expires_at", now + timedelta(days=30)]}, 1, 0
+                        ]
+                    }
+                },
+            }
+        },
+    ]).to_list(1)
+    if rows:
+        active_subs = int(rows[0].get("active") or 0)
+        expiring = int(rows[0].get("expiring") or 0)
 
     recent_orders = sorted(
         orders, key=lambda o: _aware(o.get("created_at")) or now, reverse=True
     )[:25]
+    top_trees = sorted(revenue_by_tree.items(), key=lambda kv: kv[1], reverse=True)[:10]
+
+    # Nama pohon + email pemilik diambil BULK (2 query), bukan 2 query per baris.
+    recent_tree_ids = [o.get("tree_id") for o in recent_orders]
+    recent_user_ids = [o.get("user_id") for o in recent_orders]
+    top_tree_ids = [tid for tid, rev in top_trees if tid and rev]
+
+    (
+        recent_trees,
+        recent_users,
+        top_tree_docs,
+        total_trees,
+        plan_counts,
+    ) = await asyncio.gather(
+        _docs_by_id("trees", recent_tree_ids, {"name": 1}),
+        _docs_by_field("users", "user_id", recent_user_ids, {"email": 1, "name": 1}),
+        _docs_by_id("trees", top_tree_ids, {"name": 1, "plan": 1, "owner_id": 1}),
+        db.trees.count_documents({}),
+        _plan_counts(now),
+    )
+    top_owner_docs = await _docs_by_field(
+        "users", "user_id", [t.get("owner_id") for t in top_tree_docs.values()], {"email": 1}
+    )
+
     recent = []
     for o in recent_orders:
-        tree = await db.trees.find_one({"id": o.get("tree_id")}, {"_id": 0, "name": 1})
-        owner = await db.users.find_one(
-            {"user_id": o.get("user_id") or ""}, {"_id": 0, "email": 1, "name": 1}
-        )
+        owner = recent_users.get(o.get("user_id") or "", {})
         recent.append({
             **_serialize([dict(o)])[0],
             "amount": _order_amount(o),
-            "tree_name": (tree or {}).get("name"),
-            "user_email": (owner or {}).get("email"),
+            "tree_name": recent_trees.get(o.get("tree_id") or "", {}).get("name"),
+            "user_email": owner.get("email"),
         })
 
-    top_trees = sorted(revenue_by_tree.items(), key=lambda kv: kv[1], reverse=True)[:10]
     top = []
     for tid, rev in top_trees:
         if not tid or not rev:
             continue
-        tree = await db.trees.find_one({"id": tid}, {"_id": 0, "name": 1, "plan": 1})
-        owner = await db.users.find_one(
-            {"user_id": (tree or {}).get("owner_id") or ""}, {"_id": 0, "email": 1}
-        ) if tree else None
+        tree = top_tree_docs.get(tid, {})
+        owner = top_owner_docs.get(tree.get("owner_id") or "", {})
         top.append({
             "tree_id": tid,
-            "tree_name": (tree or {}).get("name"),
-            "plan": (tree or {}).get("plan"),
-            "owner_email": (owner or {}).get("email"),
+            "tree_name": tree.get("name"),
+            "plan": tree.get("plan"),
+            "owner_email": owner.get("email"),
             "revenue": rev,
         })
 
@@ -3226,17 +3433,18 @@ async def admin_activity(
             {"action": rx}, {"meta.name": rx},
         ]
 
-    total = await db.activity_log.count_documents(filt)
-    items = _serialize(
-        await db.activity_log.find(filt, {"_id": 0})
-        .sort("created_at", -1).skip(skip).limit(limit).to_list(limit)
+    total, raw_items, grouped = await asyncio.gather(
+        db.activity_log.count_documents(filt),
+        db.activity_log.find(filt, {"_id": 0})
+        .sort("created_at", -1).skip(skip).limit(limit).to_list(limit),
+        db.activity_log.aggregate([
+            {"$match": base},
+            {"$group": {"_id": "$action", "count": {"$sum": 1}}},
+            {"$sort": {"count": -1}},
+            {"$limit": 40},
+        ]).to_list(40),
     )
-    grouped = await db.activity_log.aggregate([
-        {"$match": base},
-        {"$group": {"_id": "$action", "count": {"$sum": 1}}},
-        {"$sort": {"count": -1}},
-        {"$limit": 40},
-    ]).to_list(40)
+    items = _serialize(raw_items)
     return {
         "items": items,
         "total": total,
@@ -3265,27 +3473,29 @@ async def admin_errors(
     if status:
         filt["status"] = int(status)
 
-    total = await db.error_logs.count_documents(filt)
-    items = _serialize(
-        await db.error_logs.find(filt, {"_id": 0})
-        .sort("created_at", -1).skip(skip).limit(limit).to_list(limit)
+    total, raw_items, by_path, by_status, count_24h = await asyncio.gather(
+        db.error_logs.count_documents(filt),
+        db.error_logs.find(filt, {"_id": 0})
+        .sort("created_at", -1).skip(skip).limit(limit).to_list(limit),
+        db.error_logs.aggregate([
+            {"$match": {"created_at": {"$gte": start}}},
+            {"$group": {"_id": "$path", "count": {"$sum": 1}, "last": {"$max": "$created_at"}}},
+            {"$sort": {"count": -1}},
+            {"$limit": 20},
+        ]).to_list(20),
+        db.error_logs.aggregate([
+            {"$match": {"created_at": {"$gte": start}}},
+            {"$group": {"_id": "$status", "count": {"$sum": 1}}},
+            {"$sort": {"count": -1}},
+        ]).to_list(20),
+        db.error_logs.count_documents({"created_at": {"$gte": now_utc() - timedelta(days=1)}}),
     )
-    by_path = await db.error_logs.aggregate([
-        {"$match": {"created_at": {"$gte": start}}},
-        {"$group": {"_id": "$path", "count": {"$sum": 1}, "last": {"$max": "$created_at"}}},
-        {"$sort": {"count": -1}},
-        {"$limit": 20},
-    ]).to_list(20)
-    by_status = await db.error_logs.aggregate([
-        {"$match": {"created_at": {"$gte": start}}},
-        {"$group": {"_id": "$status", "count": {"$sum": 1}}},
-        {"$sort": {"count": -1}},
-    ]).to_list(20)
+    items = _serialize(raw_items)
 
     return {
         "items": items,
         "total": total,
-        "count_24h": await db.error_logs.count_documents({"created_at": {"$gte": now_utc() - timedelta(days=1)}}),
+        "count_24h": count_24h,
         "by_path": [
             {"path": g["_id"], "count": g["count"], "last_at": _aware(g.get("last")).isoformat() if g.get("last") else None}
             for g in by_path
@@ -3313,16 +3523,30 @@ async def admin_trees(
     total = await db.trees.count_documents(filt)
     docs = await db.trees.find(filt, {"_id": 0}).sort("created_at", -1).skip(skip).limit(limit).to_list(limit)
 
-    out = []
-    plan_counts: Dict[str, int] = {}
-    async for t in db.trees.find({}, {"_id": 0, "plan": 1, "expires_at": 1}):
-        p = effective_plan(t)
-        plan_counts[p] = plan_counts.get(p, 0) + 1
+    ids = [t["id"] for t in docs if t.get("id")]
 
+    # Dulu loop ini menembak 4 query per pohon (50 pohon = 200 round-trip).
+    # Sekarang semuanya diambil bulk dalam satu gelombang paralel.
+    (
+        people_by_tree,
+        members_by_tree,
+        messages_by_tree,
+        usage_rows,
+        owners,
+        plan_counts,
+    ) = await asyncio.gather(
+        _count_by("people", "tree_id", ids, {"deleted_at": None}),
+        _count_by("tree_members", "tree_id", ids),
+        _count_by("family_chat", "tree_id", ids, {"deleted_at": None}),
+        db.tree_usage.find({"tree_id": {"$in": ids}}, {"_id": 0, "tree_id": 1, "bytes": 1}).to_list(len(ids) + 1) if ids else asyncio.sleep(0, result=[]),
+        _docs_by_field("users", "user_id", [t.get("owner_id") for t in docs], {"email": 1, "name": 1}),
+        _plan_counts(now_utc()),
+    )
+    usage_by_tree = {r.get("tree_id"): int(r.get("bytes") or 0) for r in usage_rows if r.get("tree_id")}
+
+    out = []
     for t in docs:
-        owner = await db.users.find_one(
-            {"user_id": t.get("owner_id") or ""}, {"_id": 0, "email": 1, "name": 1}
-        )
+        owner = owners.get(t.get("owner_id") or "")
         out.append({
             "id": t.get("id"),
             "name": t.get("name"),
@@ -3332,10 +3556,10 @@ async def admin_trees(
             "owner_id": t.get("owner_id"),
             "owner_email": (owner or {}).get("email"),
             "owner_name": (owner or {}).get("name"),
-            "people": await tree_person_count(t["id"]),
-            "members": await db.tree_members.count_documents({"tree_id": t["id"]}),
-            "messages": await db.family_chat.count_documents({"tree_id": t["id"], "deleted_at": None}),
-            "storage_used": await storage_used(t["id"]),
+            "people": people_by_tree.get(t.get("id"), 0),
+            "members": members_by_tree.get(t.get("id"), 0),
+            "messages": messages_by_tree.get(t.get("id"), 0),
+            "storage_used": usage_by_tree.get(t.get("id"), 0),
         })
 
     return {
@@ -3380,21 +3604,19 @@ async def admin_system(user=Depends(get_current_user)):
             )[:5],
         }
 
-    collections = {}
-    for name in (
+    collection_names = (
         "users", "trees", "tree_members", "people", "relations", "family_chat",
         "payment_orders", "feedback", "error_logs", "activity_log",
         "app_notifications", "join_requests",
-    ):
-        try:
-            collections[name] = await db[name].count_documents({})
-        except Exception:
-            collections[name] = None
+    )
+    # count_documents per koleksi dijalankan paralel (dulu 12 query berurutan).
+    counts, first_activity = await asyncio.gather(
+        asyncio.gather(*(_safe_count(n) for n in collection_names)),
+        db.activity_log.find_one({}, {"_id": 0, "created_at": 1}, sort=[("created_at", 1)]),
+    )
+    collections = dict(zip(collection_names, counts))
 
     uptime = (now - PROCESS_STARTED_AT).total_seconds()
-    first_activity = await db.activity_log.find_one(
-        {}, {"_id": 0, "created_at": 1}, sort=[("created_at", 1)]
-    )
     return {
         "uptime_seconds": int(uptime),
         "started_at": PROCESS_STARTED_AT.isoformat(),

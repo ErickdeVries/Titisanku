@@ -11,7 +11,7 @@ import {
 import { useRouter } from "expo-router";
 import { useGoBack } from "@/src/hooks/useGoBack";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import Feather from "@react-native-vector-icons/feather";
 import { fonts, makeStyles, useTheme } from "@/src/theme";
 import {
@@ -52,6 +52,15 @@ const TABS: { key: TabKey; label: string; icon: string }[] = [
   { key: "feedback", label: "Masukan", icon: "message-square" },
   { key: "system", label: "Sistem", icon: "server" },
 ];
+
+// Dashboard admin: data disimpan 60 detik dan data lama tetap tampil saat
+// refetch. Tanpa ini setiap pindah tab / interval refetch layar jadi spinner
+// penuh, sehingga terasa lambat walau request-nya sebenarnya cepat.
+const ADMIN_QUERY = {
+  staleTime: 60_000,
+  gcTime: 10 * 60_000,
+  placeholderData: keepPreviousData,
+} as const;
 
 const ACTION_LABEL: Record<string, string> = {
   "auth.login": "Masuk",
@@ -270,7 +279,8 @@ function OverviewTab() {
   const { data, isLoading } = useQuery({
     queryKey: ["adminOverview"],
     queryFn: adminOverview,
-    refetchInterval: 15000,
+    refetchInterval: 30000,
+    ...ADMIN_QUERY,
   });
 
   if (isLoading || !data) return <Loading />;
@@ -354,6 +364,7 @@ function GrowthTab() {
   const { data, isLoading } = useQuery({
     queryKey: ["adminGrowth", days],
     queryFn: () => adminGrowth(days),
+    ...ADMIN_QUERY,
   });
 
   if (isLoading || !data) return <Loading />;
@@ -436,6 +447,7 @@ function FinanceTab() {
   const { data, isLoading } = useQuery({
     queryKey: ["adminFinance", days],
     queryFn: () => adminFinance(days),
+    ...ADMIN_QUERY,
   });
 
   if (isLoading || !data) return <Loading />;
@@ -573,6 +585,7 @@ function ActivityTab() {
   const { data, isLoading } = useQuery({
     queryKey: ["adminActivity", days, action, dq],
     queryFn: () => adminActivity({ days, action, q: dq }),
+    ...ADMIN_QUERY,
     refetchInterval: 20000,
   });
 
@@ -653,6 +666,7 @@ function ErrorsTab() {
   const { data, isLoading } = useQuery({
     queryKey: ["adminErrors", days, status, dp],
     queryFn: () => adminErrors({ days, status, path: dp }),
+    ...ADMIN_QUERY,
     refetchInterval: 20000,
   });
 
@@ -736,6 +750,7 @@ function TreesTab() {
   const { data, isLoading } = useQuery({
     queryKey: ["adminTrees", dq],
     queryFn: () => adminTrees({ q: dq }),
+    ...ADMIN_QUERY,
   });
 
   if (isLoading || !data) return <Loading />;
@@ -794,7 +809,7 @@ function TreesTab() {
 function UsersTab() {
   const styles = useStyles();
   const { colors } = useTheme();
-  const { data } = useQuery({ queryKey: ["adminUsers"], queryFn: adminUsers });
+  const { data } = useQuery({ queryKey: ["adminUsers"], queryFn: adminUsers, ...ADMIN_QUERY });
   if (!data) return <Loading />;
   return (
     <View style={styles.card}>
@@ -833,7 +848,7 @@ function UsersTab() {
 // ------------------------------------------------------------------ Masukan
 function FeedbackTab() {
   const styles = useStyles();
-  const { data } = useQuery({ queryKey: ["adminFeedback"], queryFn: adminFeedback });
+  const { data } = useQuery({ queryKey: ["adminFeedback"], queryFn: adminFeedback, ...ADMIN_QUERY });
   if (!data) return <Loading />;
   return (
     <View style={styles.card}>
@@ -858,7 +873,8 @@ function SystemTab() {
   const { data, isLoading } = useQuery({
     queryKey: ["adminSystem"],
     queryFn: adminSystem,
-    refetchInterval: 20000,
+    refetchInterval: 30000,
+    ...ADMIN_QUERY,
   });
   if (isLoading || !data) return <Loading />;
 
