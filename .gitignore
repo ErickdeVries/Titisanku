@@ -115,4 +115,9 @@ android-sdk/
 *.env
 credentials.json
 *.key
+# Kunci privat Apple (In-App Purchase / APNs) — JANGAN pernah masuk repo.
+# File .p8 hanya bisa diunduh sekali dari App Store Connect.
+*.p8
+*.p12
+AuthKey_*.p8
 .credentials
