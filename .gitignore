@@ -109,6 +109,9 @@ memory/test_credentials.md
 android-sdk/
 .env
 .env.*
+# Template konfigurasi BUKAN rahasia — harus ikut repo agar tidak hilang
+# saat pindah mesin (pernah terjadi setelah migrasi drive).
+!.env.example
 *.env
 credentials.json
 *.key
