@@ -1,13 +1,21 @@
 # SAVEPOINT — catatan jeda kerja
 
-Tanggal: 2026-10-29 (savepoint kedua)
-Branch: `dev-titisanku`
-Commit: `f2f7723` — _savepoint: perbaikan kuota storage, datetime aware, dan otorisasi upgrade_
-Tag git: `savepoint/2026-10-29-kuota-storage-otorisasi-upgrade`
+Tanggal: 2026-11 (savepoint ketiga, setelah migrasi SSD)
+Branch: `main` (sinkron dengan `origin/main`)
+Commit: `ef3d48e` — _feat(play-review): Sign in with Apple, Apple IAP, moderasi UGC, ZIP backup_
+Commit sebelumnya: `b4918e2` — _docs(play-review): tandai UGC report/block/moderasi selesai_
 
-Status: **aman untuk ditinggal.** Semua pekerjaan sudah di-commit, tag dibuat,
-working tree bersih. `tsc --noEmit` bersih (exit 0), `py_compile` semua file
-Python yang berubah exit 0.
+Status: **aman untuk ditinggal.** Working tree bersih, semua pekerjaan sudah
+di-commit dan di-push. `tsc --noEmit` exit 0, `py_compile` exit 0.
+
+> **PENTING setelah migrasi SSD:** `frontend/node_modules` hilang. Jalankan
+> `npm ci` di folder `frontend` sebelum `tsc` / `expo start`. npm tidak ada di
+> PATH — pakai `C:\nvm4w\nodejs\npm.cmd`.
+> MongoDB lokal juga tidak tersedia, jadi tes backend akan **skip**, bukan lulus.
+
+> Savepoint lama (branch `dev-titisanku`) sudah tidak relevan — commit `f2f7723`
+> dan tag `savepoint/2026-10-29-kuota-storage-otorisasi-upgrade` tidak ada di
+> riwayat `main`. Catatan di bawah dipertahankan sebagai arsip.
 
 > Savepoint sebelumnya masih ada: tag `savepoint/2026-10-29-navigasi-privasi`
 > (commit `d75ff66`). Riwayat singkat: `d75ff66` → `f087e72` (docs) →
@@ -22,7 +30,7 @@ Python yang berubah exit 0.
 git status            # harus "nothing to commit" selain file yang di-ignore
 
 # 2. pastikan di titik savepoint
-git log --oneline -1  # harus muncul f2f7723
+git log --oneline -1  # harus muncul ef3d48e
 
 # 3. kalau lupa sudah sampai mana, lihat catatan tag
 git show savepoint/2026-10-29-kuota-storage-otorisasi-upgrade
@@ -31,14 +39,15 @@ git show savepoint/2026-10-29-kuota-storage-otorisasi-upgrade
 Kalau ada pekerjaan baru yang ternyata ingin dibuang dan kembali ke titik ini:
 
 ```powershell
-git reset --hard savepoint/2026-10-29-kuota-storage-otorisasi-upgrade
+git reset --hard ef3d48e
 ```
 
-Jalankan app:
+Jalankan app (setelah `npm ci` karena node_modules hilang saat migrasi SSD):
 
 ```powershell
 cd frontend
-node ./node_modules/typescript/bin/tsc --noEmit   # cek tipe (harus exit 0)
+npm ci                                            # sekali saja
+& C:\nvm4w\nodejs\npx.cmd tsc --noEmit            # cek tipe (harus exit 0)
 npm start                                         # expo start
 ```
 
@@ -99,6 +108,31 @@ pytest -q                    # atau: pytest -q -n auto --dist loadscope
 ---
 
 ## Belum dikerjakan / catatan untuk nanti
+
+### Status Play Store / App Store review (per savepoint ini)
+
+Sudah selesai di kode (belum diuji runtime):
+- **Sign in with Apple** — wajib App Store Guideline 4.8.
+- **Apple IAP + restore pembelian** — wajib review App Store.
+- **Moderasi UGC** (blokir, lapor, antrean admin) — blocker #4 di
+  `docs/play-review/REVIEW_AUDIT.md`, sudah ditandai selesai.
+- Ekspor/impor ZIP (data + foto), guard superadmin, privasi diperluas.
+
+Belum terverifikasi (harus ditutup sebelum submit):
+- `backend/tests/test_moderation.py` — **7 test skip** karena MongoDB lokal
+  tidak ada. Logika moderasi belum pernah dieksekusi.
+- Sign in with Apple & Apple IAP belum diuji di device/simulator iOS.
+- `verify_apple_jws` belum diuji dengan JWS asli dari Apple.
+- Env `APPLE_*` (key ID, issuer ID, bundle ID, root cert) belum dikonfirmasi
+  terpasang di server deploy.
+
+Sisa pekerjaan Play Console:
+- Isi privacy policy URL, Data Safety form, content rating.
+- Siapkan halaman Kebijakan Konten & Moderasi publik untuk reviewer.
+- Tulis prosedur moderasi (SLA tinjauan laporan) di jawaban reviewer.
+- Opsional: auto-filter kata kasar & rate-limit kirim pesan.
+
+### Catatan lama (arsip)
 
 - **Screenshot & snapshot browser jangan di-commit** (sudah masuk `.gitignore`):
   `mobile-*.png`, `preview-mobile-login.png`, `admin-superadmin-verified.png`,
