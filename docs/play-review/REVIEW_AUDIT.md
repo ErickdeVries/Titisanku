@@ -13,7 +13,7 @@
 | 1 | **Pembayaran digital via Midtrans** (bukan Google Play Billing) | 🟢 CRITICAL | **Kode beres** (Play Billing di Android); sisa setup Play Console | **YA** (sampai produk Play dibuat) |
 | 2 | **Login hanya Google Sign-In** — reviewer tak bisa login tanpa akun demo | 🔴 CRITICAL | Perlu solusi | **YA** |
 | 3 | **`EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID` kosong** + Firebase project mismatch | 🔴 CRITICAL | Belum diperbaiki | **YA** (login gagal) |
-| 4 | **UGC chat/grup tanpa report/block/moderasi** | 🟠 HIGH | Belum ada fitur | **YA** (UGC policy) |
+| 4 | **UGC chat/grup tanpa report/block/moderasi** | 🟠 HIGH | **Selesai** (blokir + lapor + antrean admin) | Tidak |
 | 5 | Privacy policy URL belum ada | 🟠 HIGH | Perlu hosting | YA |
 | 6 | Data safety form belum diisi | 🟠 HIGH | Perlu isi | YA |
 | 7 | Content rating belum diisi | 🟠 HIGH | Perlu isi | YA |
@@ -145,27 +145,37 @@ merujuk **project yang SAMA** dengan `EXPO_PUBLIC_FIREBASE_*`. Saat ini tidak si
 
 ---
 
-## 5. 🟠 — UGC: Chat & Grup tanpa Report/Block/Moderasi
+## 5. ✅ — UGC: Report/Block/Moderasi (SELESAI)
 
-**Temuan:** Ada chat 1:1 & grup keluarga (teks), tapi **tidak ada** endpoint/UI untuk
-**melaporkan konten**, **memblokir pengguna**, atau **moderasi**. Semua endpoint `/chat/*`
-tidak punya `report|block|abuse`.
+**Temuan awal:** chat 1:1 & grup keluarga (teks + foto) tanpa mekanisme lapor/blokir.
 
-**Kebijakan Play (UGC):** App yang menampilkan/mentransfer konten buatan pengguna **wajib**:
+**Kebijakan Play (UGC) & App Store 1.2 mewajibkan:**
 1. Mekanisme **melaporkan** konten/pengguna.
 2. Mekanisme **memblokir** pengguna.
 3. Syarat & kebijakan moderasi (termasuk tindakan terhadap pelanggaran).
 4. Untuk app yang boleh diakses anak: mitigasi tambahan.
 
-**Aksi:**
-- [ ] Tambah `POST /chat/report` (laporan pesan/pengguna) + UI "Laporkan".
-- [ ] Tambah `POST /users/{id}/block` + UI "Blokir" & sembunyikan pesan pengguna terblokir.
-- [ ] Tambah halaman **Kebijakan Konten & Moderasi** (bisa di `privacy.tsx` atau EULA).
-- [ ] Pertimbangkan auto-filter kata kasar & rate-limit.
-- [ ] Catat prosedur moderasi di jawaban reviewer.
+**Yang sudah diimplementasikan:**
 
-> ⚠️ **Blocker #4** jika chat tetap ada di build yang direview. (Alternatif sementara: sembunyikan chat
-> pada build closed test, tapi ini mengurangi fitur unggulan — lebih baik implementasi report/block.)
+| Lapisan | Detail |
+|---|---|
+| Backend | `GET/POST /api/moderation/blocks`, `DELETE /api/moderation/blocks/{user_id}`, `POST /api/moderation/reports` |
+| Antrean admin | `GET /api/admin/reports`, `PUT /api/admin/reports/{id}` (status open/resolved/dismissed, superadmin saja) |
+| Efek blokir | Pesan dari pengguna terblokir **disembunyikan dua arah** di `GET /api/chat`; chat langsung ditutup (403), ruang keluarga/grup tetap jalan |
+| Snapshot laporan | Teks pesan disalin ke `content_reports.message_snapshot` saat dilaporkan — tetap utuh walau pengirim menghapus pesannya |
+| Notifikasi | Superadmin (berdasarkan `SUPERADMIN_EMAILS`) menerima notifikasi in-app tiap ada laporan |
+| UI chat 1:1 | Sheet pengaturan: **Blokir pengguna** + **Laporkan pengguna** (5 alasan tetap) |
+| UI pesan | Long-press pesan orang lain → **Laporkan pesan** |
+| UI info grup | Kartu moderasi: **Blokir** / **Buka blokir** / **Laporkan** |
+| Audit trail | Semua aksi tercatat di `activity_log` (`moderation.block`, `moderation.unblock`, `moderation.report`) |
+| Test | `backend/tests/test_moderation.py` — 7 test (blokir idempoten, sembunyi dua arah, chat langsung tertutup, snapshot laporan, otorisasi admin) |
+
+**Aksi tersisa (non-kode):**
+- [ ] Tambah halaman **Kebijakan Konten & Moderasi** publik (bisa digabung dengan privacy policy) — lihat §6.
+- [ ] Sebutkan prosedur moderasi (SLA tinjauan laporan, tindakan terhadap pelanggaran) di jawaban reviewer.
+- [ ] Opsional: auto-filter kata kasar & rate-limit kirim pesan.
+
+> ✅ **Bukan blocker lagi.** Fitur wajib UGC sudah ada di kode dan teruji.
 
 ---
 
