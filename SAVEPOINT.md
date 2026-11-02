@@ -11,7 +11,9 @@ di-commit dan di-push. `tsc --noEmit` exit 0, `py_compile` exit 0.
 > **PENTING setelah migrasi SSD:** `frontend/node_modules` hilang. Jalankan
 > `npm ci` di folder `frontend` sebelum `tsc` / `expo start`. npm tidak ada di
 > PATH — pakai `C:\nvm4w\nodejs\npm.cmd`.
-> MongoDB lokal juga tidak tersedia, jadi tes backend akan **skip**, bukan lulus.
+> Tes backend yang memanggil HTTP butuh uvicorn di port 8001; tanpa itu hasilnya
+> `ConnectionRefused` (bukan bug kode). `test_moderation.py` tidak butuh uvicorn,
+> hanya MongoDB.
 
 > Savepoint lama (branch `dev-titisanku`) sudah tidak relevan — commit `f2f7723`
 > dan tag `savepoint/2026-10-29-kuota-storage-otorisasi-upgrade` tidak ada di
@@ -118,9 +120,16 @@ Sudah selesai di kode (belum diuji runtime):
   `docs/play-review/REVIEW_AUDIT.md`, sudah ditandai selesai.
 - Ekspor/impor ZIP (data + foto), guard superadmin, privasi diperluas.
 
+Sudah terverifikasi runtime:
+- **`backend/tests/test_moderation.py` — 7 passed** (dijalankan dengan MongoDB
+  via Docker). Ini bukti runtime untuk blocker UGC, bukan lagi "skip".
+  Cara ulang:
+  `docker start titisanku-mongo-test` (atau `docker run -d --name
+  titisanku-mongo-test -p 27017:27017 mongo:7`), lalu
+  `python -m pytest tests/test_moderation.py -q`. Setelah selesai:
+  `docker stop titisanku-mongo-test`.
+
 Belum terverifikasi (harus ditutup sebelum submit):
-- `backend/tests/test_moderation.py` — **7 test skip** karena MongoDB lokal
-  tidak ada. Logika moderasi belum pernah dieksekusi.
 - Sign in with Apple & Apple IAP belum diuji di device/simulator iOS.
 - `verify_apple_jws` belum diuji dengan JWS asli dari Apple.
 - Env `APPLE_*` (key ID, issuer ID, bundle ID, root cert) belum dikonfirmasi
