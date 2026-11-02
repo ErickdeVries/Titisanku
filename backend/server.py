@@ -161,6 +161,26 @@ def is_superadmin(user) -> bool:
     return (user.get("email") or "").lower() in SUPERADMIN_EMAILS
 
 
+SUPERADMIN_PLAN = "unlimited"
+
+
+def apply_superadmin_access(user, tree: Optional[dict]) -> Optional[dict]:
+    """Superadmin tidak terikat kuota apa pun.
+
+    Menimpa `plan` pada SALINAN dokumen pohon (bukan di DB) sehingga semua
+    helper yang membaca `effective_plan(tree)` — batas orang, editor, storage,
+    dan auto-downgrade kedaluwarsa — otomatis melihat "unlimited". Pemakaian
+    `_check_plan_expiry` juga dilewati supaya pohon superadmin tidak pernah
+    di-downgrade diam-diam saat dibuka.
+    """
+    if not tree or not is_superadmin(user):
+        return tree
+    out = dict(tree)
+    out["plan"] = SUPERADMIN_PLAN
+    out.pop("expires_at", None)
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Activity log (audit trail untuk dashboard superadmin)
 # ---------------------------------------------------------------------------
@@ -708,17 +728,15 @@ async def resolve_tree(user, tree_id: Optional[str]):
                 tree = await db.trees.find_one({"id": tree_id}, {"_id": 0})
                 if not tree:
                     raise HTTPException(status_code=404, detail="Pohon tidak ditemukan")
-                tree["plan"] = "unlimited"
-                return tree, "admin"
+                return apply_superadmin_access(user, tree), "admin"
             raise HTTPException(status_code=403, detail="Anda bukan anggota pohon ini")
         return None, None
     tree = await db.trees.find_one({"id": member["tree_id"]}, {"_id": 0})
     if not tree:
         raise HTTPException(status_code=404, detail="Pohon tidak ditemukan")
-    if is_superadmin(user):
-        tree["plan"] = "unlimited"
-    else:
-        tree = await _check_plan_expiry(tree)
+    # Superadmin: plan efektif selalu "unlimited" (orang/editor/storage tanpa
+    # batas) dan tidak pernah kena auto-downgrade kedaluwarsa.
+    tree = apply_superadmin_access(user, tree)
     role = "admin" if is_superadmin(user) else member["role"]
     return tree, role
 
@@ -1722,6 +1740,156 @@ async def backup(tree_id: Optional[str] = Query(None), user=Depends(get_current_
 
 
 # ---------------------------------------------------------------------------
+# Ekspor penuh (ZIP) — cadangan yang bisa dipulihkan tanpa server ini
+#
+# `/backup` hanya JSON tanpa foto, sehingga bergantung pada storage aplikasi
+# tetap hidup. Ini bertentangan dengan tujuan silsilah "turun temurun": bila
+# layanan berhenti, foto hilang permanen. ZIP di bawah memuat seluruh data +
+# file foto + manifest berisi checksum, sehingga arsipnya mandiri dan bisa
+# diverifikasi bertahun-tahun kemudian.
+# ---------------------------------------------------------------------------
+BACKUP_FORMAT = "titisanku-backup"
+BACKUP_VERSION = 2
+# Batas ukuran arsip yang boleh dipulihkan (proteksi memori: ZIP di-decompress
+# penuh di RAM). 200 MB cukup untuk ribuan foto terkompresi.
+MAX_BACKUP_ZIP_BYTES = 200 * 1024 * 1024
+
+
+def _collect_photo_paths(people) -> Dict[str, str]:
+    """Petakan `path storage` -> `nama file di dalam ZIP`.
+
+    Satu foto bisa dirujuk banyak orang (hasil claim-branch berbagi path),
+    jadi nama file di ZIP dibuat deterministik dari path agar tidak duplikat.
+    """
+    mapping: Dict[str, str] = {}
+    for p in people:
+        raws = [p.get("photo_url")]
+        raws += [(g or {}).get("path") for g in (p.get("gallery") or [])]
+        for raw in raws:
+            norm = _normalize_photo_path(raw)
+            if not norm or norm in mapping:
+                continue
+            ext = os.path.splitext(norm)[1].lower() or ".jpg"
+            # Nama objek sudah unik (uuid), jadi basename aman & mudah dibaca.
+            mapping[norm] = f"photos/{os.path.basename(norm)}"
+    return mapping
+
+
+def _build_backup_zip(tree, people, relations, photo_files: Dict[str, bytes],
+                      photo_map: Dict[str, str]) -> bytes:
+    """Bangun ZIP di memori.
+
+    Isi arsip:
+      data.json      → pohon, orang, relasi, plus `photo_files` (path -> file ZIP)
+      photos/*       → berkas foto asli
+      README.txt     → cara memulihkan tanpa aplikasi ini
+      manifest.json  → versi format + sha256 tiap entri untuk verifikasi
+    """
+    import json
+    import zipfile
+
+    payload = {
+        "format": BACKUP_FORMAT,
+        "version": BACKUP_VERSION,
+        "exported_at": now_utc().isoformat(),
+        "tree": {k: v for k, v in tree.items() if k != "_id"},
+        "people": _serialize([dict(p) for p in people]),
+        "relations": _serialize([dict(r) for r in relations]),
+        # Restore memakai peta ini untuk mengunggah ulang foto lalu menulis
+        # path baru; tanpa peta, data.json menunjuk file yang tak ada.
+        "photo_files": photo_map,
+    }
+    data_bytes = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
+
+    readme = (
+        f"Cadangan pohon: {tree.get('name')}\r\n"
+        f"Diekspor: {payload['exported_at']}\r\n"
+        f"Format: {BACKUP_FORMAT} v{BACKUP_VERSION}\r\n\r\n"
+        "ISI ARSIP\r\n"
+        "  data.json     : seluruh data silsilah (orang, relasi, catatan)\r\n"
+        "  photos/       : berkas foto asli, tidak dikompresi ulang\r\n"
+        "  manifest.json : checksum SHA-256 untuk memverifikasi keutuhan\r\n"
+        "  README.txt    : berkas ini\r\n\r\n"
+        "MEMULIHKAN\r\n"
+        "  A. Lewat aplikasi: Pengaturan > Cadangan > Pulihkan, pilih ZIP ini.\r\n"
+        "  B. Tanpa aplikasi: data.json adalah JSON biasa dan foto dirujuk lewat\r\n"
+        "     'photo_files' yang memetakan path internal ke nama berkas di folder\r\n"
+        "     photos/. Tidak ada format tertutup — arsip ini terbaca tanpa kami.\r\n\r\n"
+        "Arsip ini milik Anda sepenuhnya. Simpan di dua tempat berbeda.\r\n"
+    ).encode("utf-8")
+
+    entries: Dict[str, bytes] = {"data.json": data_bytes, "README.txt": readme}
+    entries.update(photo_files)
+    manifest = {
+        "format": BACKUP_FORMAT,
+        "version": BACKUP_VERSION,
+        "tree_id": tree.get("id"),
+        "exported_at": payload["exported_at"],
+        "file_count": len(entries),
+        "files": {name: hashlib.sha256(blob).hexdigest() for name, blob in entries.items()},
+    }
+    entries["manifest.json"] = json.dumps(manifest, indent=2).encode("utf-8")
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
+        for name, blob in entries.items():
+            info = zipfile.ZipInfo(name, date_time=datetime.now().timetuple()[:6])
+            info.compress_type = zipfile.ZIP_DEFLATED
+            zf.writestr(info, blob)
+    return buf.getvalue()
+
+
+@api_router.get("/backup/export")
+async def backup_export(tree_id: Optional[str] = Query(None), user=Depends(get_current_user)):
+    """Unduh cadangan LENGKAP (data + foto) sebagai satu berkas ZIP.
+
+    Hanya admin pohon. Foto yang sudah hilang dari storage dicatat sebagai
+    peringatan tetapi tidak menggagalkan ekspor — data teks tetap terselamatkan.
+    """
+    tree, role = await resolve_tree(user, tree_id)
+    require_role_t(role, ["admin"])
+    tid = tree["id"]
+
+    people = await db.people.find({"tree_id": tid}, {"_id": 0}).to_list(5000)
+    relations = await db.relations.find({"tree_id": tid}, {"_id": 0}).to_list(10000)
+
+    mapping = _collect_photo_paths(people)
+    files: Dict[str, bytes] = {}
+    exported_map: Dict[str, str] = {}
+    missing: List[str] = []
+    for path, zip_name in mapping.items():
+        try:
+            content, _ctype = await run_in_threadpool(get_object, path)
+        except Exception:
+            missing.append(path)
+            continue
+        files[zip_name] = content
+        exported_map[path] = zip_name
+
+    blob = await run_in_threadpool(
+        _build_backup_zip, tree, people, relations, files, exported_map
+    )
+    if missing:
+        logger.warning("backup %s: %d foto tidak ditemukan di storage", tid, len(missing))
+
+    safe_name = re.sub(r"[^A-Za-z0-9._-]+", "_", (tree.get("name") or "pohon")).strip("_") or "pohon"
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    filename = f"titisanku-{safe_name}-{stamp}.zip"
+    await log_activity("tree.export", user=user, tree_id=tid,
+                       meta={"people": len(people), "photos": len(files),
+                             "missing_photos": len(missing)})
+    return Response(
+        content=blob,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            # Arsip pribadi: jangan pernah disimpan di cache bersama.
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
 # Collaboration invites
 # ---------------------------------------------------------------------------
 @api_router.get("/invites")
@@ -1847,6 +2015,22 @@ async def resolve_room(tree, user, room_id: Optional[str]):
     if user["user_id"] not in r.get("member_ids", []):
         raise HTTPException(status_code=403, detail="Anda bukan peserta chat ini")
     return {**r, "tree_id": tid, "can_send": True}
+
+
+async def blocked_user_ids(uid: str) -> set:
+    """User ID yang diblokir oleh `uid` (dua arah: saya blokir + memblokir saya).
+
+    Dipakai untuk menyembunyikan pesan di ruang bersama, sehingga fitur blokir
+    terasa nyata walau keduanya masih berada di satu pohon keluarga.
+    """
+    rows = await db.user_blocks.find(
+        {"$or": [{"blocker_id": uid}, {"blocked_id": uid}]},
+        {"_id": 0, "blocker_id": 1, "blocked_id": 1},
+    ).to_list(2000)
+    out = set()
+    for r in rows:
+        out.add(r["blocked_id"] if r["blocker_id"] == uid else r["blocker_id"])
+    return out
 
 
 async def notify_room(room, actor_id: str, ntype: str, title: str, body: str):
@@ -2267,6 +2451,11 @@ async def get_chat(tree_id: Optional[str] = Query(None), room_id: Optional[str] 
         {"$addToSet": {"read_by": user["user_id"]}},
     )
     msgs = await db.family_chat.find({"room_id": rid, "deleted_at": None}, {"_id": 0}).sort("created_at", 1).to_list(3000)
+    # Moderasi (App Store 1.2): pesan dari/ke pengguna yang diblokir disembunyikan
+    # untuk saya. Riwayat tetap utuh di DB agar bisa diaudit saat ada laporan.
+    blocked = await blocked_user_ids(user["user_id"])
+    if blocked:
+        msgs = [m for m in msgs if m.get("sender_id") not in blocked]
     out = []
     for m in _serialize(msgs):
         s = users.get(m["sender_id"], {})
@@ -2322,6 +2511,10 @@ async def send_chat(body: ChatInput, tree_id: Optional[str] = Query(None), room_
     room = await resolve_room(tree, user, room_id)
     if not room.get("can_send"):
         raise HTTPException(status_code=403, detail="Anda tidak dapat mengirim pesan di ruang ini")
+    # Blokir dua arah: chat langsung tertutup, tapi ruang keluarga/grup tetap
+    # bisa dipakai (pesan pihak yang diblokir hanya disembunyikan saat dibaca).
+    if room["type"] == "direct" and await blocked_user_ids(user["user_id"]) & set(room.get("member_ids", [])):
+        raise HTTPException(status_code=403, detail="Percakapan ini diblokir")
     if await is_user_deceased(tree["id"], user):
         raise HTTPException(status_code=403, detail="Anggota yang telah meninggal tidak dapat mengirim pesan")
     rid = room["id"]
@@ -2438,6 +2631,124 @@ async def restore(body: RestoreInput, tree_id: Optional[str] = Query(None), user
         meta={"people": len(body.people), "relations": len(body.relations)},
     )
     return {"ok": True, "people": len(body.people), "relations": len(body.relations)}
+
+
+@api_router.post("/restore/zip")
+async def restore_zip(
+    file: UploadFile = File(...),
+    tree_id: Optional[str] = Query(None),
+    user=Depends(get_current_user),
+):
+    """Pulihkan pohon dari ZIP ekspor `/backup/export`.
+
+    Mengembalikan data teks DAN foto: foto yang ada di dalam ZIP diunggah ulang
+    ke storage, lalu `photo_url`/`gallery` ditulis dengan path yang baru valid.
+    Tanpa langkah ini, restore JSON lama menghasilkan orang tanpa foto (path
+    menunjuk objek yang tidak pernah ikut dicadangkan) — itu bug yang ditutup
+    di sini.
+
+    `mode=replace` (default) mengikuti perilaku `/restore`: data lama yang tidak
+    ada di arsip di-soft-delete. Id orang/relasi DIPERTAHANKAN agar relasi dan
+    pranala luar tetap konsisten.
+    """
+    import json
+    import zipfile
+
+    tree, role = await resolve_tree(user, tree_id)
+    require_role_t(role, ["admin"])
+    tid = tree["id"]
+
+    raw = await file.read()
+    # ZIP bisa "zip bomb": batas ukuran melindungi memori server.
+    if len(raw) > MAX_BACKUP_ZIP_BYTES:
+        raise HTTPException(status_code=413, detail=f"Arsip melebihi {fmt_size(MAX_BACKUP_ZIP_BYTES)}")
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(raw))
+    except Exception:
+        raise HTTPException(status_code=400, detail="Berkas bukan ZIP yang valid")
+    names = set(zf.namelist())
+    if "data.json" not in names:
+        raise HTTPException(status_code=400, detail="Arsip tidak berisi data.json")
+    try:
+        payload = json.loads(zf.read("data.json").decode("utf-8"))
+    except Exception:
+        raise HTTPException(status_code=400, detail="data.json pada arsip rusak")
+    if payload.get("format") not in (None, BACKUP_FORMAT):
+        raise HTTPException(status_code=400, detail="Format arsip tidak dikenali")
+
+    people_in = [p for p in (payload.get("people") or []) if p.get("id")]
+    relations_in = [r for r in (payload.get("relations") or []) if r.get("id")]
+    photo_files = payload.get("photo_files") or {}
+
+    # 1) Unggah foto dari ZIP; bangun peta path-lama -> path-baru.
+    path_map: Dict[str, str] = {}
+    uploaded = 0
+    total_bytes = 0
+    for old_path, zip_name in photo_files.items():
+        if zip_name not in names:
+            continue
+        blob = zf.read(zip_name)
+        ext = os.path.splitext(zip_name)[1].lower().lstrip(".") or "jpg"
+        ctype = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png",
+                 "webp": "image/webp", "heic": "image/heic", "gif": "image/gif"}.get(ext, "application/octet-stream")
+        new_path = f"{APP_NAME}/uploads/{user['user_id']}/{uuid.uuid4().hex}.{ext}"
+        try:
+            await run_in_threadpool(put_object, new_path, blob, ctype)
+        except Exception as e:  # pragma: no cover - storage pihak ketiga
+            logger.warning("restore: gagal unggah %s: %s", zip_name, e)
+            continue
+        path_map[old_path] = new_path
+        uploaded += 1
+        total_bytes += len(blob)
+    if total_bytes:
+        await add_storage_usage(tid, total_bytes)
+
+    # 2) Tulis ulang rujukan foto ke path baru.
+    for p in people_in:
+        norm = _normalize_photo_path(p.get("photo_url"))
+        if norm and norm in path_map:
+            p["photo_url"] = path_map[norm]
+        elif norm:
+            # Foto tidak ada di arsip: kosongkan agar UI tidak menggambar
+            # gambar rusak (URL lama tidak bisa diakses lagi).
+            p["photo_url"] = None
+        gallery = p.get("gallery") or []
+        for g in gallery:
+            if isinstance(g, dict):
+                old = _normalize_photo_path(g.get("path"))
+                if old and old in path_map:
+                    g["path"] = path_map[old]
+        if gallery:
+            p["gallery"] = [g for g in gallery if not (isinstance(g, dict) and g.get("path") and g.get("path") not in path_map.values())]
+
+    # 3) Upsert orang & relasi (id dipertahankan).
+    for p in people_in:
+        p["tree_id"] = tid
+        p["deleted_at"] = None
+        await db.people.update_one({"id": p["id"], "tree_id": tid}, {"$set": p}, upsert=True)
+    for r in relations_in:
+        r["tree_id"] = tid
+        await db.relations.update_one({"id": r["id"], "tree_id": tid}, {"$set": r}, upsert=True)
+
+    # 4) Soft-delete yang tidak ada di arsip (sama seperti /restore).
+    ids_p = [p["id"] for p in people_in]
+    ids_r = [r["id"] for r in relations_in]
+    await db.people.update_many(
+        {"tree_id": tid, "id": {"$nin": ids_p}, "deleted_at": None},
+        {"$set": {"deleted_at": now_utc()}},
+    )
+    await db.relations.delete_many({"tree_id": tid, "id": {"$nin": ids_r}})
+
+    await log_activity("tree.restore_zip", user=user, tree_id=tid,
+                       meta={"people": len(people_in), "relations": len(relations_in),
+                             "photos_restored": uploaded})
+    return {
+        "ok": True,
+        "people": len(people_in),
+        "relations": len(relations_in),
+        "photos_restored": uploaded,
+        "photos_missing": len([k for k in photo_files if k not in path_map]),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -2589,6 +2900,18 @@ async def claim_branch(tid: str, body: ClaimBranchInput, user=Depends(get_curren
 
     new_tree = await create_tree_for_user(user, new_name, make_root=False)
     new_tid = new_tree["id"]
+
+    # Jejak asal-usul (BUKAN foreign key): pohon hasil sambung tetap milik
+    # pengklaim. Penanda ini hanya dipakai untuk memberi tahu pemiliknya bila
+    # pohon sumber dihapus, sehingga tidak ada data yang ikut lenyap diam-diam.
+    # `source_person_name` disimpan sebagai teks karena orang sumber bisa hilang.
+    src_person = next((p for p in people if p["id"] == body.person_id), None)
+    await db.trees.update_one({"id": new_tid}, {"$set": {
+        "source_tree_id": tid,
+        "source_tree_name": tree.get("name"),
+        "source_person_name": (src_person or {}).get("name"),
+        "derived_at": now_utc(),
+    }})
 
     # Copy the selected people with fresh ids.
     id_map: dict = {}
@@ -2747,6 +3070,94 @@ async def _purge_tree(tid: str):
     await db.tree_usage.delete_one({"tree_id": tid})
 
 
+async def _notify_derived_trees_removed(tid: str, reason: str, actor_name: str = "") -> int:
+    """Pohon turunan (hasil sambung cabang) TIDAK dihapus, hanya diberi tahu.
+
+    Desain sengaja: data yang sudah disalin menjadi milik pengklaim. Tapi
+    keterkaitan ke pohon asal (mis. kakek-nenek) putus saat pohon sumber
+    dihapus, jadi pemilik pohon turunan harus tahu agar tidak bingung.
+    """
+    derived = await db.trees.find(
+        {"source_tree_id": tid}, {"_id": 0, "id": 1, "name": 1, "owner_id": 1}
+    ).to_list(1000)
+    if not derived:
+        return 0
+    owner_ids = [d.get("owner_id") for d in derived if d.get("owner_id")]
+    src = await db.trees.find_one({"id": tid}, {"_id": 0, "name": 1}) or {}
+    src_name = src.get("name") or "pohon asal"
+    docs = [{
+        "id": str(uuid.uuid4()),
+        "user_id": d.get("owner_id"),
+        "tree_id": d["id"],  # pohon MILIK penerima, bukan pohon yang dihapus
+        "type": "source_tree_removed",
+        "kind": "source_tree_removed",
+        "title": "Pohon asal telah dihapus",
+        "body": (f"Pohon '{src_name}' yang menjadi sumber pohon '{d.get('name')}' "
+                 f"telah dihapus{f' oleh {actor_name}' if actor_name else ''}. "
+                 "Pohon Anda tetap utuh, tetapi keterkaitan ke pohon asal terputus."),
+        "reason": reason,
+        "created_at": now_utc(),
+        "read": False,
+    } for d in derived if d.get("owner_id")]
+    if not docs:
+        return 0
+    await db.app_notifications.insert_many(docs)
+    try:
+        await send_push(owner_ids, {
+            "title": "Pohon asal telah dihapus",
+            "message": "Pohon Anda tetap utuh, tetapi keterkaitan ke pohon asal terputus.",
+            "type": "source_tree_removed",
+        })
+    except Exception as e:  # pragma: no cover
+        logger.warning("push source_tree_removed gagal: %s", e)
+    return len(docs)
+
+
+async def _notify_tree_removed(tid: str, reason: str, actor_name: str = "") -> int:
+    """Beri tahu anggota lain bahwa pohon mereka hilang (dipanggil sebelum purge).
+
+    Tanpa ini, anggota yang diundang hanya melihat pohonnya lenyap tanpa
+    penjelasan setelah owner/pemiliknya menghapus akun. Notifikasi disimpan
+    dengan `user_id` (bukan `tree_id`) supaya tidak ikut terhapus saat purge.
+    """
+    member_ids = [
+        m["user_id"] for m in
+        await db.tree_members.find(
+            {"tree_id": tid}, {"_id": 0, "user_id": 1}
+        ).to_list(500)
+    ]
+    if not member_ids:
+        return 0
+    docs = [{
+        "id": str(uuid.uuid4()),
+        "user_id": uid,
+        "tree_id": tid,
+        # `type` dipakai endpoint unread/read; `kind` untuk pemetaan ikon di klien.
+        "type": "tree_removed",
+        "kind": "tree_removed",
+        "title": "Pohon keluarga dihapus",
+        "body": (f"Pohon yang Anda ikuti telah dihapus oleh pemiliknya"
+                 f"{f' ({actor_name})' if actor_name else ''}. "
+                 "Anda dapat membuat pohon baru atau bergabung ke pohon lain."),
+        "reason": reason,
+        "read": False,
+        "created_at": now_utc(),
+    } for uid in member_ids]
+    await db.app_notifications.insert_many(docs)
+    # Push bersifat best-effort: gagal kirim tidak boleh menggagalkan penghapusan.
+    # Catatan: send_push() butuh kunci "message" (dipetakan ke field body Expo).
+    try:
+        await send_push(member_ids, {
+            "title": "Pohon keluarga dihapus",
+            "message": "Pohon yang Anda ikuti telah dihapus oleh pemiliknya.",
+            "type": "tree_removed",
+            "tree_id": tid,
+        })
+    except Exception as e:  # pragma: no cover - jaringan pihak ketiga
+        logger.warning("push tree_removed gagal: %s", e)
+    return len(docs)
+
+
 @api_router.delete("/trees/{tid}")
 async def delete_tree(tid: str, user=Depends(get_current_user)):
     """Permanently delete a tree and all its data. Only the tree OWNER may do this."""
@@ -2757,6 +3168,10 @@ async def delete_tree(tid: str, user=Depends(get_current_user)):
         raise HTTPException(status_code=403, detail="Hanya pemilik yang dapat menghapus pohon")
     await log_activity("tree.delete", user=user, tree_id=tid,
                        meta={"name": tree.get("name"), "plan": effective_plan(tree)})
+    # Anggota: pohonnya hilang → diberi tahu. Pemilik pohon turunan: pohonnya
+    # TETAP ada, hanya keterkaitan yang putus → diberi tahu, tidak dihapus.
+    await _notify_tree_removed(tid, "owner_deleted_tree", user.get("name") or "")
+    await _notify_derived_trees_removed(tid, "owner_deleted_tree", user.get("name") or "")
     await _purge_tree(tid)
     return {"ok": True}
 
@@ -2781,10 +3196,122 @@ async def leave_group(room_id: str, tree_id: Optional[str] = Query(None), user=D
     return {"ok": True}
 
 
+# ---------------------------------------------------------------------------
+# Moderasi UGC — wajib untuk App Store Guideline 1.2 (blokir + laporkan).
+# Play Store juga mensyaratkan mekanisme pelaporan konten pengguna.
+# ---------------------------------------------------------------------------
+class BlockInput(BaseModel):
+    user_id: str
+
+
+class ReportInput(BaseModel):
+    user_id: Optional[str] = None
+    message_id: Optional[str] = None
+    reason: str
+    detail: Optional[str] = ""
+
+
+@api_router.get("/moderation/blocks")
+async def list_blocks(user=Depends(get_current_user)):
+    rows = await db.user_blocks.find({"blocker_id": user["user_id"]}, {"_id": 0}).to_list(1000)
+    ids = [r["blocked_id"] for r in rows]
+    people = {u["user_id"]: u for u in await db.users.find({"user_id": {"$in": ids}}, {"_id": 0}).to_list(1000)}
+    return {"blocks": [{"user_id": uid, "name": people.get(uid, {}).get("name", "?"),
+                        "picture": people.get(uid, {}).get("picture")} for uid in ids]}
+
+
+@api_router.post("/moderation/blocks")
+async def add_block(body: BlockInput, user=Depends(get_current_user)):
+    if body.user_id == user["user_id"]:
+        raise HTTPException(status_code=400, detail="Tidak dapat memblokir diri sendiri")
+    target = await db.users.find_one({"user_id": body.user_id}, {"_id": 0, "user_id": 1})
+    if not target:
+        raise HTTPException(status_code=404, detail="Pengguna tidak ditemukan")
+    await db.user_blocks.update_one(
+        {"blocker_id": user["user_id"], "blocked_id": body.user_id},
+        {"$setOnInsert": {"blocker_id": user["user_id"], "blocked_id": body.user_id,
+                          "created_at": now_utc()}},
+        upsert=True,
+    )
+    await log_activity("moderation.block", user=user, target=body.user_id)
+    return {"ok": True}
+
+
+@api_router.delete("/moderation/blocks/{user_id}")
+async def remove_block(user_id: str, user=Depends(get_current_user)):
+    await db.user_blocks.delete_one({"blocker_id": user["user_id"], "blocked_id": user_id})
+    await log_activity("moderation.unblock", user=user, target=user_id)
+    return {"ok": True}
+
+
+@api_router.post("/moderation/reports")
+async def submit_report(body: ReportInput, user=Depends(get_current_user)):
+    """Laporan konten/pengguna masuk ke antrean superadmin."""
+    if not (body.reason or "").strip():
+        raise HTTPException(status_code=400, detail="Alasan laporan wajib diisi")
+    msg = None
+    if body.message_id:
+        msg = await db.family_chat.find_one({"id": body.message_id}, {"_id": 0})
+        if not msg:
+            raise HTTPException(status_code=404, detail="Pesan tidak ditemukan")
+    reported_user = body.user_id or (msg or {}).get("sender_id")
+    doc = {
+        "id": str(uuid.uuid4()), "reporter_id": user["user_id"],
+        "reported_user_id": reported_user, "message_id": body.message_id,
+        "room_id": (msg or {}).get("room_id"), "tree_id": (msg or {}).get("tree_id"),
+        # Snapshot teks: pesan asli bisa dihapus pengirim, laporan harus tetap utuh.
+        "message_snapshot": (msg or {}).get("message"),
+        "reason": body.reason.strip(), "detail": (body.detail or "").strip(),
+        "status": "open", "created_at": now_utc(),
+    }
+    await db.content_reports.insert_one(dict(doc))
+    await log_activity("moderation.report", user=user, target=body.message_id or reported_user or "",
+                       meta={"reason": doc["reason"]})
+    # Superadmin ditentukan oleh daftar email (SUPERADMIN_EMAILS), bukan field
+    # di dokumen user — lihat is_superadmin().
+    admins = []
+    if SUPERADMIN_EMAILS:
+        admins = await db.users.find(
+            {"email": {"$in": SUPERADMIN_EMAILS}}, {"_id": 0, "user_id": 1},
+        ).to_list(100)
+    if admins:
+        await db.app_notifications.insert_many([{
+            "id": str(uuid.uuid4()), "user_id": a["user_id"], "tree_id": doc["tree_id"],
+            "type": "report", "title": "Laporan konten baru",
+            "body": f"{user.get('name') or 'Pengguna'}: {doc['reason']}",
+            "read": False, "created_at": now_utc(),
+        } for a in admins])
+    return {"ok": True, "id": doc["id"]}
+
+
+@api_router.get("/admin/reports")
+async def admin_reports(status: str = Query("open"), user=Depends(get_current_user)):
+    if not is_superadmin(user):
+        raise HTTPException(status_code=403, detail="Khusus superadmin")
+    q = {} if status == "all" else {"status": status}
+    rows = await db.content_reports.find(q, {"_id": 0}).sort("created_at", -1).to_list(500)
+    return {"reports": _serialize(rows)}
+
+
+@api_router.put("/admin/reports/{report_id}")
+async def admin_resolve_report(report_id: str, body: dict, user=Depends(get_current_user)):
+    if not is_superadmin(user):
+        raise HTTPException(status_code=403, detail="Khusus superadmin")
+    status = (body or {}).get("status") or "resolved"
+    if status not in ("open", "resolved", "dismissed"):
+        raise HTTPException(status_code=400, detail="Status tidak valid")
+    res = await db.content_reports.update_one(
+        {"id": report_id},
+        {"$set": {"status": status, "resolved_by": user["user_id"], "resolved_at": now_utc()}},
+    )
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Laporan tidak ditemukan")
+    return {"ok": True}
+
+
 class FeedbackInput(BaseModel):
     message: str
     category: Optional[str] = "general"
-
 
 @api_router.post("/feedback")
 async def submit_feedback(body: FeedbackInput, user=Depends(get_current_user)):
@@ -2801,14 +3328,99 @@ async def submit_feedback(body: FeedbackInput, user=Depends(get_current_user)):
     return {"ok": True}
 
 
+async def _pick_tree_successor(tree_id: str, exclude_uid: str) -> Optional[str]:
+    """Pilih pemilik baru untuk pohon yang ditinggalkan pemiliknya.
+
+    Urutan prioritas (deterministik, tanpa perlu persetujuan manual):
+      1. Anggota berperan `admin` yang paling lama bergabung.
+      2. Anggota `editor` paling lama bergabung.
+      3. Anggota `viewer` paling lama bergabung.
+    Mengembalikan None bila pohon tidak punya anggota lain — baru dalam kasus
+    itu pohon dihapus. Bergabung lebih lama dipilih supaya kepemilikan jatuh ke
+    anggota yang paling mungkin mengenal isi pohon.
+    """
+    rows = await db.tree_members.find(
+        {"tree_id": tree_id, "user_id": {"$ne": exclude_uid}},
+        {"_id": 0, "user_id": 1, "role": 1, "joined_at": 1},
+    ).to_list(1000)
+    order = {"admin": 0, "editor": 1, "viewer": 2}
+    rows = [r for r in rows if r.get("user_id")]
+    if not rows:
+        return None
+    rows.sort(key=lambda r: (order.get(r.get("role"), 3), r.get("joined_at") or now_utc()))
+    return rows[0]["user_id"]
+
+
+async def _transfer_or_purge_tree(tree: dict, leaving: dict) -> dict:
+    """Alihkan kepemilikan pohon ke anggota lain; hapus hanya bila tak ada anggota.
+
+    Ini inti kebijakan "data keluarga harus bertahan lebih lama daripada akun
+    pembuatnya". Penghapusan akun TIDAK boleh menghapus silsilah yang mungkin
+    sudah dirawat puluhan anggota lain.
+    """
+    tid = tree["id"]
+    name = tree.get("name") or "Pohon keluarga"
+    successor = await _pick_tree_successor(tid, leaving["user_id"])
+    if not successor:
+        # Tidak ada anggota lain → tidak ada yang bisa melanjutkan. Hapus total
+        # dan beri tahu pemilik pohon turunan (jika ada).
+        await _notify_derived_trees_removed(tid, "owner_deleted_account", leaving.get("name") or "")
+        await log_activity("tree.delete", user=leaving, tree_id=tid,
+                           meta={"name": name, "reason": "account_deleted_no_successor"})
+        await _purge_tree(tid)
+        return {"tree_id": tid, "name": name, "status": "deleted"}
+
+    await db.trees.update_one({"id": tid}, {"$set": {
+        "owner_id": successor,
+        "ownership_transferred_at": now_utc(),
+        "ownership_transferred_from": leaving["user_id"],
+    }})
+    # Penerima harus benar-benar bisa mengelola pohon (role admin), bukan hanya
+    # tercatat sebagai owner yang tidak punya izin.
+    await db.tree_members.update_one(
+        {"tree_id": tid, "user_id": successor}, {"$set": {"role": "admin"}}
+    )
+    await log_activity("tree.transfer", user=leaving, tree_id=tid,
+                       meta={"name": name, "to_user_id": successor,
+                             "reason": "account_deleted"})
+    title = "Kepemilikan pohon dialihkan kepada Anda"
+    notif = {
+        "id": str(uuid.uuid4()),
+        "type": "ownership_transferred",
+        "kind": "ownership_transferred",
+        "title": title,
+        "body": (f"Karena akun pemilik sebelumnya dihapus, pohon '{name}' kini menjadi milik Anda. "
+                 "Anda dapat mengundang anggota, mengelola peran, dan mengatur paket."),
+        "read": False,
+        "created_at": now_utc(),
+    }
+    await db.app_notifications.insert_one({**notif, "user_id": successor, "tree_id": tid})
+    try:
+        await send_push([successor], {"title": title, "message": notif["body"],
+                                      "type": "ownership_transferred", "tree_id": tid})
+    except Exception as e:  # pragma: no cover
+        logger.warning("push ownership_transferred gagal: %s", e)
+    return {"tree_id": tid, "name": name, "status": "transferred", "to_user_id": successor}
+
+
 @api_router.delete("/account")
 async def delete_account(user=Depends(get_current_user)):
+    """Hapus akun (syarat Google Play) tanpa menghancurkan data keluarga.
+
+    Nasib pohon & anggota lain:
+    - Pohon yang dimiliki penghapus DIALIHKAN ke anggota lain (admin tertua,
+      lalu editor, lalu viewer) agar silsilah tetap hidup. Hanya bila pohon
+      benar-benar tidak punya anggota lain, pohon itu dihapus.
+    - Anggota tidak menjadi "yatim": penerima warisan mendapat notifikasi bahwa
+      kini ia pemilik, sehingga muncul di menu kelola & tidak hilang dari
+      daftar pohon (GET /trees hanya menampilkan pohon tempat ia anggota).
+    - Pohon TURUNAN (hasil sambung cabang) tidak disentuh sama sekali.
+    """
     if is_superadmin(user):
         raise HTTPException(status_code=403, detail="Akun superadmin tidak dapat dihapus")
     uid = user["user_id"]
-    owned = await db.trees.find({"owner_id": uid}, {"_id": 0, "id": 1}).to_list(1000)
-    for tr in owned:
-        await _purge_tree(tr["id"])
+    owned = await db.trees.find({"owner_id": uid}, {"_id": 0, "id": 1, "name": 1}).to_list(1000)
+    outcomes = [await _transfer_or_purge_tree(tr, user) for tr in owned]
     await db.tree_members.delete_many({"user_id": uid})
     await db.chat_rooms.update_many({"member_ids": uid}, {"$pull": {"member_ids": uid}})
     await db.user_sessions.delete_many({"user_id": uid})
@@ -2816,7 +3428,11 @@ async def delete_account(user=Depends(get_current_user)):
     await db.app_notifications.delete_many({"user_id": uid})
     await db.join_requests.delete_many({"user_id": uid})
     await db.users.delete_one({"user_id": uid})
-    return {"ok": True}
+    return {
+        "ok": True,
+        "trees_removed": sum(1 for o in outcomes if o["status"] == "deleted"),
+        "trees_transferred": [o for o in outcomes if o["status"] == "transferred"],
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -3747,6 +4363,20 @@ async def play_verify(body: PlayVerifyInput, tree_id: Optional[str] = Query(None
     tid = body.tree_id or tree_id
     tree, role = await resolve_tree(user, tid)
     require_role_t(role, ["admin"])
+    # Pembayaran hanya boleh dilakukan PEMILIK pohon.
+    #
+    # Alasannya bukan soal izin, tapi soal uang: plan menempel pada pohon
+    # (bukan pada pembayar), dan kepemilikan bisa berpindah — mis. saat pemilik
+    # menghapus akun, warisan jatuh ke admin terlama. Bila admin non-pemilik
+    # boleh membayar, uangnya bisa "ikut" pindah ke orang lain. Selain itu
+    # superadmin (yang otomatis berperan admin di semua pohon) tidak boleh
+    # membelanjakan uang atas nama pohon milik user.
+    if not is_superadmin(user) and tree.get("owner_id") != user["user_id"]:
+        raise HTTPException(
+            status_code=403,
+            detail="Hanya pemilik pohon yang dapat melakukan pembelian paket. "
+                   "Minta pemilik pohon melakukan upgrade.",
+        )
 
     try:
         sub = integrations.verify_play_subscription(body.purchase_token, body.product_id)
@@ -3802,6 +4432,120 @@ async def play_verify(body: PlayVerifyInput, tree_id: Optional[str] = Query(None
         await run_in_threadpool(integrations.acknowledge_play_purchase, body.product_id, body.purchase_token)
     except Exception as e:  # pragma: no cover - hanya peringatan
         logger.warning("acknowledge Play gagal: %s", e)
+
+    return {"ok": True, "plan": plan}
+
+
+# ---------------------------------------------------------------------------
+# Apple In-App Purchase (StoreKit 2)
+#
+# Wajib untuk iOS: Guideline 3.1.1 melarang produk digital dijual lewat jalur
+# lain (Midtrans/web) di dalam aplikasi. Klien mengirim JWS transaksi hasil
+# StoreKit; server memverifikasi tanda tangan Apple, bundle id, dan masa
+# berlaku sebelum mengaktifkan plan. Idempoten per transactionId Apple.
+# ---------------------------------------------------------------------------
+APPLE_PRODUCT_IDS = {
+    "pro": "com.titisanku.pro.yearly",
+    "family": "com.titisanku.family.yearly",
+}
+
+
+def apple_plan_for(product_id: str) -> Optional[str]:
+    """Petakan product id iOS -> plan, dengan override lewat environment."""
+    for plan, default in APPLE_PRODUCT_IDS.items():
+        if product_id == (os.environ.get(f"APPLE_{plan.upper()}_PRODUCT_ID") or default):
+            return plan
+    return None
+
+
+class AppleVerifyInput(BaseModel):
+    product_id: str
+    transaction_jws: str
+    tree_id: Optional[str] = None
+
+
+@api_router.post("/payments/apple/verify")
+async def apple_verify(body: AppleVerifyInput, tree_id: Optional[str] = Query(None), user=Depends(get_current_user)):
+    """Verifikasi JWS StoreKit lalu aktifkan plan pohon. Idempoten per transactionId."""
+    plan = apple_plan_for(body.product_id)
+    if not plan:
+        raise HTTPException(status_code=400, detail="Produk tidak dikenal")
+    tid = body.tree_id or tree_id
+    tree, role = await resolve_tree(user, tid)
+    require_role_t(role, ["admin"])
+    # Alasannya sama dengan Play: plan menempel pada pohon, jadi hanya pemilik
+    # yang boleh membayar agar uang tidak "ikut pindah" saat kepemilikan berubah.
+    if not is_superadmin(user) and tree.get("owner_id") != user["user_id"]:
+        raise HTTPException(
+            status_code=403,
+            detail="Hanya pemilik pohon yang dapat melakukan upgrade. Minta pemilik pohon melakukan upgrade.",
+        )
+
+    try:
+        payload = await run_in_threadpool(integrations.verify_apple_jws, body.transaction_jws)
+    except integrations.IntegrationError as e:
+        logger.warning("apple/verify gagal: %s", e)
+        raise HTTPException(status_code=400, detail="Pembelian tidak dapat diverifikasi")
+
+    # Produk di JWS harus sama dengan yang diklaim klien.
+    if payload.get("productId") != body.product_id:
+        raise HTTPException(status_code=400, detail="Produk pada transaksi tidak cocok")
+
+    expires_ms = int(payload["expiresDate"])
+    expires_at = datetime.fromtimestamp(expires_ms / 1000.0, tz=timezone.utc)
+
+    # Bila kredensial App Store Server API tersedia, pakai status otoritatif
+    # Apple (mendeteksi refund/pembatalan yang belum tercermin di JWS lokal).
+    if integrations.apple_api_configured() and payload.get("originalTransactionId"):
+        for sandbox in (False, True):
+            try:
+                status = await run_in_threadpool(
+                    integrations.apple_subscription_status,
+                    payload["originalTransactionId"],
+                    sandbox,
+                )
+                payload["_status"] = status
+                break
+            except integrations.IntegrationError as e:
+                logger.warning("apple/verify status API (%s): %s", "sandbox" if sandbox else "prod", e)
+        else:
+            raise HTTPException(status_code=502, detail="Tidak dapat memeriksa status ke Apple")
+
+    transaction_id = str(payload.get("transactionId") or "")
+    if not transaction_id:
+        raise HTTPException(status_code=400, detail="Transaksi tanpa transactionId")
+
+    # Idempotensi: transaksi Apple unik, jadi verifikasi ulang tidak boleh
+    # membuka plan berkali-kali atau membuat order ganda.
+    existing = await db.payment_orders.find_one({"apple_transaction_id": transaction_id}, {"_id": 0})
+    if existing and existing.get("status") == "paid":
+        return {"ok": True, "plan": existing.get("plan", plan), "already": True}
+
+    order_id = (existing or {}).get("order_id") or f"APPLE-{transaction_id}"
+
+    await db.payment_orders.update_one(
+        {"order_id": order_id},
+        {"$set": {
+            "order_id": order_id, "user_id": user["user_id"], "tree_id": tree["id"],
+            "plan": plan, "amount": 0, "provider": "apple",
+            "product_id": body.product_id,
+            "apple_transaction_id": transaction_id,
+            "apple_original_transaction_id": payload.get("originalTransactionId"),
+            "apple_environment": payload.get("environment"),
+            "status": "paid", "paid_at": now_utc(),
+            "created_at": existing.get("created_at", now_utc()) if existing else now_utc(),
+        }},
+        upsert=True,
+    )
+    await db.trees.update_one(
+        {"id": tree["id"]},
+        {"$set": {"plan": plan, "upgraded_at": now_utc(), "expires_at": expires_at},
+         "$unset": {"expiry_reminder_7": "", "expiry_reminder_1": ""}},
+    )
+    await log_activity("payment.paid", user=user, tree_id=tree["id"], target=order_id,
+                       meta={"plan": plan, "amount": PLAN_PRICES.get(plan, 0),
+                             "provider": "apple", "product_id": body.product_id,
+                             "apple_transaction": transaction_id})
 
     return {"ok": True, "plan": plan}
 
@@ -4133,8 +4877,33 @@ async def integrations_status():
     return integrations.describe_config()
 
 
+async def _superadmin_guard(request: Request) -> None:
+    """Pagar terpusat untuk SELURUH route /api/admin/*.
 
-app.include_router(api_router)
+    Dashboard admin adalah panel lintas-tenant (semua user, semua pohon,
+    keuangan, log error). Sebelumnya tiap endpoint memanggil
+    `_require_superadmin()` sendiri — satu endpoint baru yang lupa memanggilnya
+    langsung membocorkan data semua tenant. Dependency global ini menutup celah
+    itu di satu tempat; pengecekan per-endpoint tetap dipertahankan sebagai
+    lapis kedua.
+    """
+    path = request.url.path
+    if not (path == "/api/admin" or path.startswith("/api/admin/")):
+        return
+    try:
+        # get_current_user bergantung pada header Authorization, bukan objek
+        # Request, jadi header harus diteruskan eksplisit.
+        user = await get_current_user(authorization=request.headers.get("authorization"))
+    except HTTPException:
+        user = None
+    if not user or not is_superadmin(user):
+        raise HTTPException(
+            status_code=403,
+            detail="Akses ditolak: dashboard admin hanya untuk superadmin",
+        )
+
+
+app.include_router(api_router, dependencies=[Depends(_superadmin_guard)])
 
 
 @app.middleware("http")

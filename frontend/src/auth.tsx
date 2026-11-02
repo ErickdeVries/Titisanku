@@ -5,8 +5,10 @@ import { queryClient } from "@/src/query-client";
 import { clearOfflineCache } from "@/src/offline-cache";
 import { authSession, getMe, logoutApi, setToken, User, loginWithPassword as apiLogin, registerWithPassword as apiRegister, demoLogin as apiDemoLogin } from "@/src/api";
 import {
+  appleSignInAvailable,
   firebaseConfigured,
   onIdToken,
+  signInWithApple,
   signInWithGoogle,
   signOutFirebase,
 } from "@/src/firebase";
@@ -19,6 +21,8 @@ type AuthCtx = {
   signingIn: boolean;
   authError: string | null;
   login: () => Promise<void>;
+  loginWithApple: () => Promise<void>;
+  appleAvailable: boolean;
   loginWithPassword: (username: string, password: string) => Promise<boolean>;
   register: (username: string, password: string, name: string) => Promise<boolean>;
   loginDemo: () => Promise<boolean>;
@@ -32,6 +36,8 @@ const Ctx = createContext<AuthCtx>({
   signingIn: false,
   authError: null,
   login: async () => {},
+  loginWithApple: async () => {},
+  appleAvailable: false,
   loginWithPassword: async () => false,
   register: async () => false,
   loginDemo: async () => false,
@@ -75,7 +81,9 @@ function friendlyError(e: unknown): string {
   if (code.includes("popup-blocked")) return "Popup diblokir browser. Izinkan popup lalu coba lagi.";
   if (code.includes("network-request-failed")) return "Tidak ada koneksi internet.";
   if (code.includes("unauthorized-domain")) return "Domain ini belum diizinkan di Firebase Console.";
-  if (code.includes("operation-not-allowed")) return "Metode login Google belum diaktifkan di Firebase Console.";
+  if (code.includes("operation-not-allowed")) return "Metode login ini belum diaktifkan di Firebase Console.";
+  if (code.includes("missing-or-invalid-nonce")) return "Login Apple gagal diverifikasi (nonce). Coba lagi.";
+  if (code.includes("invalid-credential") || code.includes("invalid-oauth")) return "Login Apple ditolak. Coba lagi atau gunakan Google.";
   return (e as Error)?.message || "Gagal masuk. Silakan coba lagi.";
 }
 
@@ -154,6 +162,31 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setSigningIn(false);
     }
   };
+
+  const loginWithApple = async () => {
+    setAuthError(null);
+    setSigningIn(true);
+    try {
+      const idToken = await signInWithApple();
+      if (!idToken) return; // user menutup sheet Apple
+      await exchange(idToken);
+    } catch (e) {
+      const msg = friendlyError(e);
+      if (msg) setAuthError(msg);
+      console.log("apple login error", e);
+    } finally {
+      setSigningIn(false);
+    }
+  };
+
+  const [appleAvailable, setAppleAvailable] = useState(false);
+  useEffect(() => {
+    // Ditanyakan sekali di awal: di Android selalu false, di iOS bergantung
+    // pada status Apple ID perangkat.
+    appleSignInAvailable()
+      .then(setAppleAvailable)
+      .catch(() => setAppleAvailable(false));
+  }, []);
 
   const logout = async () => {
     try {
@@ -254,6 +287,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         signingIn,
         authError,
         login,
+        loginWithApple,
+        appleAvailable,
         loginWithPassword: doPasswordLogin,
         register: doRegister,
         loginDemo: doDemoLogin,

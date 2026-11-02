@@ -16,6 +16,7 @@ import { initializeApp, getApps, getApp, type FirebaseApp } from "firebase/app";
 import {
   getAuth,
   GoogleAuthProvider,
+  OAuthProvider,
   onAuthStateChanged,
   signInWithPopup,
   signInWithCredential,
@@ -143,4 +144,131 @@ export async function signOutFirebase(): Promise<void> {
   await forgetGoogleSession();
   if (!firebaseConfigured()) return;
   await signOut(getFirebaseAuth());
+}
+
+// ---------------------------------------------------------------------------
+// Sign in with Apple (iOS 13+). Wajib ada karena App Store Review Guideline
+// 4.8: aplikasi yang menyediakan login pihak ketiga (Google) harus juga
+// menyediakan Sign in with Apple. Tanpa ini build iOS akan DITOLAK.
+//
+// Native (iOS): expo-apple-authentication menghasilkan identityToken yang
+// ditukar menjadi sesi Firebase (credential OAuth "apple.com").
+// Web: lewat popup Firebase (butuh Service ID Apple di Firebase Console).
+// Android: Apple tidak menyediakan Sign in with Apple native — tombol tidak
+// ditampilkan, jadi fungsi ini hanya dipanggil bila `appleSignInAvailable()`.
+// ---------------------------------------------------------------------------
+
+/** Apple mengirim email relay `@privaterelay.appleid.com` bila pengguna memilih
+ *  menyembunyikan email. Formatnya valid, tapi tidak boleh dipakai untuk
+ *  deduplikasi lintas identitas — server menyimpan `provider` terpisah. */
+export function isPrivateRelayEmail(email?: string | null): boolean {
+  return !!email && /@privaterelay\.appleid\.com$/i.test(email);
+}
+
+/**
+ * True bila tombol Apple layak ditampilkan. Di iOS dicek ke modul native
+ * (perangkat bisa Apple ID-nya belum login); di web cukup konfigurasi Firebase.
+ */
+export async function appleSignInAvailable(): Promise<boolean> {
+  if (!firebaseConfigured()) return false;
+  if (Platform.OS === "web") return true;
+  if (Platform.OS !== "ios") return false;
+  try {
+    const AppleAuthentication = await import("expo-apple-authentication");
+    return await AppleAuthentication.isAvailableAsync();
+  } catch {
+    // Modul native belum terpasang (mis. build lama) → jangan tampilkan tombol
+    // yang pasti gagal saat ditekan.
+    return false;
+  }
+}
+
+/** Login Apple. Mengembalikan ID token Firebase, atau null bila dibatalkan. */
+export async function signInWithApple(): Promise<string | null> {
+  if (!firebaseConfigured()) {
+    throw new Error("Firebase belum dikonfigurasi: set EXPO_PUBLIC_FIREBASE_* di .env");
+  }
+  const a = getFirebaseAuth();
+  const provider = new OAuthProvider("apple.com");
+  provider.addScope("email");
+  provider.addScope("name");
+
+  if (Platform.OS === "web") {
+    try {
+      const result = await signInWithPopup(a, provider);
+      return await result.user.getIdToken(true);
+    } catch (e) {
+      const code = (e as { code?: string })?.code || "";
+      if (code.includes("popup-closed-by-user") || code.includes("cancelled-popup-request")) return null;
+      throw e;
+    }
+  }
+
+  const AppleAuthentication = await import("expo-apple-authentication");
+  // Nonce mencegah replay token Apple: Firebase memverifikasi klaim `nonce`
+  // di identityToken terhadap hash SHA-256 yang kita kirim sebagai `nonce`.
+  const rawNonce = generateNonce();
+  let credential;
+  try {
+    credential = await AppleAuthentication.signInAsync({
+      requestedScopes: [
+        AppleAuthentication.AppleAuthenticationScope.FULL_NAME,
+        AppleAuthentication.AppleAuthenticationScope.EMAIL,
+      ],
+      nonce: await sha256Hex(rawNonce),
+    });
+  } catch (e) {
+    // ERR_REQUEST_CANCELED = pengguna menutup sheet; bukan kegagalan.
+    if ((e as { code?: string })?.code === "ERR_REQUEST_CANCELED") return null;
+    throw e;
+  }
+  if (!credential.identityToken) {
+    throw new Error("Apple Sign-In tidak mengembalikan identityToken.");
+  }
+
+  const firebaseCredential = provider.credential({
+    idToken: credential.identityToken,
+    rawNonce,
+  });
+  const userCred = await signInWithCredential(a, firebaseCredential);
+
+  // Nama lengkap HANYA dikirim Apple pada login pertama, tidak pernah lagi.
+  // Simpan ke profil Firebase agar tidak hilang selamanya.
+  if (credential.fullName?.givenName && !userCred.user.displayName) {
+    const parts = [credential.fullName.givenName, credential.fullName.middleName, credential.fullName.familyName];
+    try {
+      const { updateProfile } = await import("firebase/auth");
+      await updateProfile(userCred.user, { displayName: parts.filter(Boolean).join(" ") });
+    } catch {
+      // best-effort: login tetap berhasil walau nama tidak tersimpan
+    }
+  }
+  return await userCred.user.getIdToken(true);
+}
+
+/** Nonce acak kriptografis (hex). */
+function generateNonce(length = 32): string {
+  const bytes = new Uint8Array(length);
+  const cryptoObj = (globalThis as { crypto?: Crypto }).crypto;
+  if (cryptoObj?.getRandomValues) {
+    cryptoObj.getRandomValues(bytes);
+  } else {
+    // Fallback non-kriptografis hanya untuk runtime tanpa Web Crypto; nonce
+    // tetap unik. Di iOS/Android native Web Crypto selalu tersedia.
+    for (let i = 0; i < length; i++) bytes[i] = Math.floor(Math.random() * 256);
+  }
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** SHA-256 hex dari string UTF-8, memakai expo-crypto bila tersedia. */
+async function sha256Hex(input: string): Promise<string> {
+  try {
+    const Crypto = await import("expo-crypto");
+    return await Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, input);
+  } catch {
+    const webCrypto = (globalThis as { crypto?: Crypto }).crypto;
+    if (!webCrypto?.subtle) throw new Error("SHA-256 tidak tersedia di runtime ini.");
+    const digest = await webCrypto.subtle.digest("SHA-256", new TextEncoder().encode(input));
+    return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
+  }
 }

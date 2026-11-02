@@ -18,9 +18,75 @@ const PRODUCTS: Record<BillingPlan, string> = {
   family: "titisanku_family_yearly",
 };
 
-export const billingSupported = Platform.OS === "android";
+export const billingSupported = Platform.OS === "android" || Platform.OS === "ios";
 
-export const productIdFor = (plan: BillingPlan) => PRODUCTS[plan];
+const APPLE_PRODUCTS: Record<BillingPlan, string> = {
+  pro: process.env.EXPO_PUBLIC_IOS_PRO_PRODUCT_ID || "com.titisanku.pro.yearly",
+  family: process.env.EXPO_PUBLIC_IOS_FAMILY_PRODUCT_ID || "com.titisanku.family.yearly",
+};
+
+export const productIdFor = (plan: BillingPlan) => Platform.OS === "ios" ? APPLE_PRODUCTS[plan] : PRODUCTS[plan];
+
+/**
+ * Selesaikan transaksi StoreKit agar tidak diputar ulang di antrean. Dipanggil
+ * SETELAH server memverifikasi JWS & mengaktifkan plan.
+ */
+export async function finishApplePurchase(purchase: Purchase): Promise<void> {
+  if (Platform.OS !== "ios") return;
+  try {
+    const iap = await import("expo-iap");
+    await iap.finishTransaction({ purchase, isConsumable: false });
+  } catch {
+    // best-effort: entitlement sudah aktif di server, transaksi akan
+    // diselesaikan pada percobaan berikutnya.
+  }
+}
+
+/**
+ * Pemulihan pembelian (wajib untuk review App Store): kirim ulang JWS semua
+ * transaksi aktif ke server agar plan pulih setelah reinstall/ganti perangkat.
+ */
+export async function restoreApplePurchases(verify: (productId: string, jws: string) => Promise<unknown>): Promise<number> {
+  if (Platform.OS !== "ios") return 0;
+  const iap = await import("expo-iap");
+  await iap.initConnection();
+  const purchases = await iap.getAvailablePurchases();
+  let restored = 0;
+  for (const p of purchases) {
+    if (!p.transactionId) continue;
+    const jws = await iap.getTransactionJwsIOS(p.transactionId);
+    if (!jws) continue;
+    await verify(p.productId, jws);
+    await iap.finishTransaction({ purchase: p, isConsumable: false }).catch(() => {});
+    restored += 1;
+  }
+  return restored;
+}
+
+export async function purchaseApplePlan(plan: BillingPlan): Promise<{ productId: string; transactionJws: string; purchase: Purchase }> {
+  if (Platform.OS !== "ios") throw new Error("unsupported");
+  const iap = await import("expo-iap");
+  const productId = APPLE_PRODUCTS[plan];
+  await iap.initConnection();
+  const products = await iap.fetchProducts({ skus: [productId], type: "subs" });
+  if (!products?.length) throw new Error("Produk Apple belum tersedia.");
+  const purchase = await new Promise<Purchase>((resolve, reject) => {
+    let settled = false;
+    const updated = iap.purchaseUpdatedListener((p) => {
+      if (!settled && p.productId === productId) { settled = true; resolve(p); }
+    });
+    const errors = iap.purchaseErrorListener((e) => {
+      if (!settled) { settled = true; reject(e); }
+    });
+    iap.requestPurchase({ type: "subs", request: { apple: { sku: productId } } }).catch(reject).finally(() => {
+      setTimeout(() => { updated.remove(); errors.remove(); }, 60000);
+    });
+  });
+  if (!purchase.transactionId) throw new Error("Apple transaction ID tidak tersedia.");
+  const jws = await iap.getTransactionJwsIOS(purchase.transactionId);
+  if (!jws) throw new Error("Apple tidak mengembalikan transaksi terverifikasi.");
+  return { productId, transactionJws: jws, purchase };
+}
 
 /**
  * Lakukan pembelian langganan lewat Play Billing dan kembalikan purchase token

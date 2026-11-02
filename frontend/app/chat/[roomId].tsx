@@ -13,7 +13,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Feather from "@react-native-vector-icons/feather";
 import { fonts, makeStyles, useTheme, usePremiumTheme, bgColor } from "@/src/theme";
-import { getChat, sendChat, deleteChat, setTyping, uploadPhoto, markNotificationsRead, muteRoom, leaveGroup, limitMessage } from "@/src/api";
+import { getChat, sendChat, deleteChat, setTyping, uploadPhoto, markNotificationsRead, muteRoom, leaveGroup, limitMessage, reportContent, blockUser } from "@/src/api";
 import { compressImage, imageProps } from "@/src/utils/image";
 import { storage } from "@/src/utils/storage";
 import { CHAT_SOUND_STORAGE_KEY, ChatSound, DEFAULT_CHAT_SOUND, soundByKey } from "@/src/utils/chat-sounds";
@@ -189,6 +189,8 @@ export default function ChatRoomScreen() {
   const typing = (data?.typing ?? []) as string[];
   const canChat = data?.can_send ?? false;
   const roomType = data?.room_type ?? "family";
+  // Target blokir/lapor pada chat 1-on-1 = peserta selain saya.
+  const directOtherId = roomType === "direct" ? members.find((m: any) => m.user_id !== user?.user_id)?.user_id : undefined;
   const roomName = data?.room_name ?? t("family_group");
   const canManage = data?.can_manage ?? false;
   const muted = data?.muted ?? false;
@@ -243,6 +245,34 @@ export default function ChatRoomScreen() {
     } catch (e) {
       console.log("delete chat error", e);
     }
+  };
+
+  // Moderasi UGC: alasan laporan dipilih dari daftar tetap supaya konsisten
+  // dengan antrean moderasi superadmin (App Store 1.2 / Play UGC policy).
+  const reportMessage = (msg: any) => {
+    setActionMsg(null);
+    if (msg.sender_id === user?.user_id) {
+      Alert.alert(t("report_message"), t("report_own_content"));
+      return;
+    }
+    const reasons: [string, string][] = [
+      ["spam", t("report_reason_spam")],
+      ["abuse", t("report_reason_abuse")],
+      ["sexual", t("report_reason_sexual")],
+      ["violence", t("report_reason_violence")],
+      ["other", t("report_reason_other")],
+    ];
+    Alert.alert(t("report_reason_prompt"), "", [
+      ...reasons.map(([key, label]) => ({
+        text: label,
+        onPress: () => {
+          reportContent({ message_id: msg.id, user_id: msg.sender_id, reason: key })
+            .then(() => Alert.alert(t("report_message"), t("report_sent")))
+            .catch((e) => console.log("report error", e));
+        },
+      })),
+      { text: t("cancel"), style: "cancel" as const },
+    ]);
   };
 
   useEffect(() => {
@@ -534,6 +564,13 @@ export default function ChatRoomScreen() {
                 <Text style={[styles.pickText, { color: colors.error }]}>{t("delete")}</Text>
               </Pressable>
             ) : null}
+            {/* Moderasi UGC (App Store 1.2): laporkan pesan orang lain. */}
+            {actionMsg && actionMsg.sender_id !== user?.user_id ? (
+              <Pressable style={styles.pickRow} onPress={() => reportMessage(actionMsg)} testID="action-report">
+                <Feather name="flag" size={18} color={colors.error} />
+                <Text style={[styles.pickText, { color: colors.error }]}>{t("report_message")}</Text>
+              </Pressable>
+            ) : null}
           </Pressable>
         </Pressable>
       </Modal>
@@ -613,6 +650,66 @@ export default function ChatRoomScreen() {
                 <Feather name="log-out" size={18} color={colors.error} />
                 <Text style={[styles.pickText, { color: colors.error }]}>{t("leave_group")}</Text>
               </Pressable>
+            ) : null}
+            {/* Moderasi UGC (App Store 1.2): wajib tersedia di chat 1-on-1. */}
+            {roomType === "direct" && directOtherId ? (
+              <>
+                <Pressable
+                  style={styles.pickRow}
+                  testID="block-user-btn"
+                  onPress={() => {
+                    setSettingsOpen(false);
+                    Alert.alert(t("block_user"), t("block_user_confirm"), [
+                      { text: t("cancel"), style: "cancel" },
+                      {
+                        text: t("block_user"),
+                        style: "destructive",
+                        onPress: async () => {
+                          try {
+                            await blockUser(directOtherId);
+                            await qc.invalidateQueries({ queryKey: ["chat", roomId] });
+                            await qc.invalidateQueries({ queryKey: ["chatRooms"] });
+                            Alert.alert(t("block_user_done"));
+                          } catch (e) {
+                            console.log("block error", e);
+                          }
+                        },
+                      },
+                    ]);
+                  }}
+                >
+                  <Feather name="slash" size={18} color={colors.error} />
+                  <Text style={[styles.pickText, { color: colors.error }]}>{t("block_user")}</Text>
+                </Pressable>
+                <Pressable
+                  style={styles.pickRow}
+                  testID="report-user-btn"
+                  onPress={() => {
+                    setSettingsOpen(false);
+                    const reasons: [string, string][] = [
+                      ["spam", t("report_reason_spam")],
+                      ["abuse", t("report_reason_abuse")],
+                      ["sexual", t("report_reason_sexual")],
+                      ["violence", t("report_reason_violence")],
+                      ["other", t("report_reason_other")],
+                    ];
+                    Alert.alert(t("report_reason_prompt"), "", [
+                      ...reasons.map(([key, label]) => ({
+                        text: label,
+                        onPress: () => {
+                          reportContent({ user_id: directOtherId, reason: key })
+                            .then(() => Alert.alert(t("report_user"), t("report_sent")))
+                            .catch((e) => console.log("report error", e));
+                        },
+                      })),
+                      { text: t("cancel"), style: "cancel" as const },
+                    ]);
+                  }}
+                >
+                  <Feather name="flag" size={18} color={colors.error} />
+                  <Text style={[styles.pickText, { color: colors.error }]}>{t("report_user")}</Text>
+                </Pressable>
+              </>
             ) : null}
           </Pressable>
         </Pressable>

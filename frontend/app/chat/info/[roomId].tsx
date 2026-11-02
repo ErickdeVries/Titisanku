@@ -5,8 +5,9 @@ import { useGoBack } from "@/src/hooks/useGoBack";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Feather from "@react-native-vector-icons/feather";
+import { useAuth } from "@/src/auth";
 import { fonts, makeStyles, useTheme } from "@/src/theme";
-import { getChat, fileUrl, muteRoom, leaveGroup } from "@/src/api";
+import { getChat, fileUrl, muteRoom, leaveGroup, blockUser, unblockUser, listBlocks, reportContent } from "@/src/api";
 import { useI18n } from "@/src/i18n";
 
 const useStyles = makeStyles((c) => ({
@@ -40,9 +41,11 @@ export default function GroupInfoScreen() {
   const goBack = useGoBack("/");
   const insets = useSafeAreaInsets();
   const qc = useQueryClient();
+  const { user } = useAuth();
   const { roomId } = useLocalSearchParams<{ roomId: string }>();
 
   const { data: room } = useQuery({ queryKey: ["chat", roomId], queryFn: () => getChat(roomId) });
+  const { data: blocksData } = useQuery({ queryKey: ["blocks"], queryFn: listBlocks });
 
   if (!room) {
     return <View style={[styles.root, { alignItems: "center", justifyContent: "center" }]}><ActivityIndicator color={colors.brandPrimary} /></View>;
@@ -51,6 +54,70 @@ export default function GroupInfoScreen() {
   const members = room.members ?? [];
   const isGroup = room.room_type === "group";
   const muted = !!room.muted;
+  const blockedIds = new Set((blocksData?.blocks ?? []).map((b) => b.user_id));
+  // Di chat langsung, "pengguna lain" itulah target blokir/lapor.
+  const otherId = room.room_type === "direct" ? members.find((m: any) => m.user_id !== user?.user_id)?.user_id : undefined;
+  const otherUser = members.find((m: any) => m.user_id === otherId);
+  const otherBlocked = !!otherId && blockedIds.has(otherId);
+
+  const doBlockToggle = () => {
+    if (!otherId) return;
+    if (otherBlocked) {
+      Alert.alert(t("unblock_user"), "", [
+        { text: t("cancel"), style: "cancel" },
+        {
+          text: t("unblock_user"),
+          onPress: async () => {
+            try {
+              await unblockUser(otherId);
+              qc.invalidateQueries({ queryKey: ["blocks"] });
+              qc.invalidateQueries({ queryKey: ["chat", roomId] });
+              Alert.alert(t("unblock_user_done"));
+            } catch {}
+          },
+        },
+      ]);
+      return;
+    }
+    Alert.alert(t("block_user"), t("block_user_confirm"), [
+      { text: t("cancel"), style: "cancel" },
+      {
+        text: t("block_user"),
+        style: "destructive",
+        onPress: async () => {
+          try {
+            await blockUser(otherId);
+            qc.invalidateQueries({ queryKey: ["blocks"] });
+            qc.invalidateQueries({ queryKey: ["chat", roomId] });
+            qc.invalidateQueries({ queryKey: ["chatRooms"] });
+            Alert.alert(t("block_user_done"));
+          } catch {}
+        },
+      },
+    ]);
+  };
+
+  const pickReportReason = (userId?: string) => {
+    const reasons: [string, string][] = [
+      ["spam", t("report_reason_spam")],
+      ["abuse", t("report_reason_abuse")],
+      ["sexual", t("report_reason_sexual")],
+      ["violence", t("report_reason_violence")],
+      ["other", t("report_reason_other")],
+    ];
+    Alert.alert(t("report_reason_prompt"), "", [
+      ...reasons.map(([key, label]) => ({
+        text: label,
+        onPress: async () => {
+          try {
+            await reportContent({ user_id: userId, reason: key });
+            Alert.alert(t("report_reason_prompt"), t("report_sent"));
+          } catch {}
+        },
+      })),
+      { text: t("cancel"), style: "cancel" as const },
+    ]);
+  };
 
   const toggleMute = async (val: boolean) => {
     try {
@@ -136,6 +203,24 @@ export default function GroupInfoScreen() {
                 </>
               ) : null}
             </View>
+
+            {/* Moderasi UGC (App Store 1.2): sembunyikan / laporkan pengguna. */}
+            {otherId ? (
+              <View style={[styles.actionsCard, { marginTop: 16 }]}>
+                <Pressable style={styles.actionRow} onPress={doBlockToggle} testID="info-block">
+                  <Feather name="slash" size={20} color={colors.error} />
+                  <Text style={[styles.actionText, { color: colors.error }]}>
+                    {otherBlocked ? t("unblock_user") : t("block_user")}
+                  </Text>
+                </Pressable>
+                <View style={styles.rowDivider} />
+                <Pressable style={styles.actionRow} onPress={() => pickReportReason(otherId)} testID="info-report">
+                  <Feather name="flag" size={20} color={colors.error} />
+                  <Text style={[styles.actionText, { color: colors.error }]}>{t("report_user")}</Text>
+                  <Feather name="chevron-right" size={20} color={colors.muted} />
+                </Pressable>
+              </View>
+            ) : null}
 
             <Text style={styles.sectionLabel}>{t("group_members")} · {members.length}</Text>
           </View>

@@ -5,12 +5,12 @@ import { useGoBack } from "@/src/hooks/useGoBack";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import * as WebBrowser from "expo-web-browser";
-import { ArrowLeft, Crown, Check, Users, Image as ImageIcon, GitBranch, Receipt, ChevronRight } from "lucide-react-native";
+import { ArrowLeft, Crown, Check, Users, Image as ImageIcon, GitBranch, Receipt, ChevronRight, RotateCcw } from "lucide-react-native";
 import { fonts, useTheme } from "@/src/theme";
 import { useI18n } from "@/src/i18n";
 import { useTree } from "@/src/tree-context";
-import { createSnap, paymentStatus, playVerify } from "@/src/api";
-import { purchasePlan, finishPlayPurchase, billingSupported } from "@/src/billing";
+import { createSnap, paymentStatus, playVerify, appleVerify } from "@/src/api";
+import { purchasePlan, finishPlayPurchase, purchaseApplePlan, finishApplePurchase, restoreApplePurchases, billingSupported } from "@/src/billing";
 import { formatBytes } from "@/src/utils/format";
 
 type PlanId = "free" | "pro" | "family";
@@ -80,6 +80,16 @@ export default function SubscriptionScreen() {
     if (target !== "pro" && target !== "family") return;
     setBusy(target);
     try {
+      if (Platform.OS === "ios") {
+        // iOS: wajib StoreKit (Guideline 3.1.1). Transaksi diverifikasi lewat
+        // App Store Server API sebelum plan diaktifkan.
+        const purchase = await purchaseApplePlan(target);
+        const res = await appleVerify(purchase.productId, purchase.transactionJws, activeTreeId);
+        await finishApplePurchase(purchase.purchase);
+        await refreshTrees();
+        Alert.alert(t("payment_success_title"), `${t("payment_success_msg")} (${res.plan})`);
+        return;
+      }
       if (billingSupported) {
         // Android: wajib pakai Google Play Billing untuk produk digital.
         const purchase = await purchasePlan(target);
@@ -108,6 +118,24 @@ export default function SubscriptionScreen() {
         console.log("payment error", e);
         Alert.alert(t("payment_failed_title"), t("payment_failed_msg"));
       }
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const doRestore = async () => {
+    if (!activeTreeId) return;
+    setBusy("pro");
+    try {
+      const count = await restoreApplePurchases((productId, jws) => appleVerify(productId, jws, activeTreeId));
+      await refreshTrees();
+      Alert.alert(
+        t("restore_purchases"),
+        count > 0 ? t("restore_done") : t("restore_none"),
+      );
+    } catch (e) {
+      console.log("restore error", e);
+      Alert.alert(t("payment_failed_title"), t("payment_failed_msg"));
     } finally {
       setBusy(null);
     }
@@ -197,12 +225,30 @@ export default function SubscriptionScreen() {
           })}
 
           {!isAdmin ? (
-            <Text style={[styles.note, { color: colors.muted }]}>Hanya admin pohon yang dapat mengubah paket. Editor tetap menikmati fitur paket ini.</Text>
+            <Text style={[styles.note, { color: colors.muted }]}>{t("upgrade_owner_only")}</Text>
+          ) : Platform.OS === "ios" ? (
+            <Text style={[styles.note, { color: colors.muted }]}>{t("billing_note_apple")}</Text>
           ) : billingSupported ? (
-            <Text style={[styles.note, { color: colors.muted }]}>Langganan diproses oleh Google Play. Paket aktif otomatis setelah pembayaran berhasil, dan dapat dikelola di Play Store &gt; Pembayaran &amp; langganan.</Text>
+            <Text style={[styles.note, { color: colors.muted }]}>{t("billing_note_play")}</Text>
           ) : (
-            <Text style={[styles.note, { color: colors.muted }]}>Pembayaran aman diproses oleh Midtrans. Paket aktif otomatis setelah pembayaran berhasil.</Text>
+            <Text style={[styles.note, { color: colors.muted }]}>{t("billing_note_web")}</Text>
           )}
+
+          {Platform.OS === "ios" && isAdmin ? (
+            <Pressable
+              style={[styles.historyRow, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}
+              onPress={doRestore}
+              disabled={busy !== null}
+              testID="restore-purchases-row"
+            >
+              <RotateCcw size={20} color={colors.brandSecondary} />
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.historyTitle, { color: colors.onSurface }]}>{t("restore_purchases")}</Text>
+                <Text style={[styles.historyDesc, { color: colors.muted }]}>{t("restore_purchases_desc")}</Text>
+              </View>
+              {busy !== null ? <ActivityIndicator color={colors.muted} /> : <ChevronRight size={20} color={colors.muted} />}
+            </Pressable>
+          ) : null}
 
           <Pressable
             style={[styles.historyRow, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}

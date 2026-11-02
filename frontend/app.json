@@ -11,9 +11,12 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.titisanku.app",
+      "buildNumber": "1",
+      "usesAppleSignIn": true,
       "infoPlist": {
         "NSPhotoLibraryUsageDescription": "Add family member photos to their profiles",
-        "NSCameraUsageDescription": "Scan invite QR codes to join family trees"
+        "NSCameraUsageDescription": "Scan invite QR codes to join family trees",
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
@@ -77,6 +80,7 @@
       ],
       "expo-audio",
       "expo-iap",
+      "expo-apple-authentication",
       "@react-native-google-signin/google-signin"
     ],
     "experiments": {

@@ -42,6 +42,202 @@ def env(name: str, default: Optional[str] = None) -> Optional[str]:
     return value or None
 
 
+# ---------------------------------------------------------------------------
+# Apple App Store — verifikasi transaksi StoreKit 2 (JWS)
+#
+# Klien iOS mengirim `transactionJws` hasil `getTransactionJwsIOS()`. JWS itu
+# ditandatangani Apple (ES256) dengan rantai sertifikat x5c = [leaf, intermediate,
+# root]. Server TIDAK mempercayai isi payload sebelum rantai tersebut terbukti
+# berakar pada sertifikat root Apple, sehingga klien tidak bisa memalsukan
+# `productId`/`expiresDate` untuk mengaktifkan plan gratis.
+#
+# Bila kredensial App Store Server API (issuer id, key id, .p8) diisi, status
+# langganan juga dicek ulang ke Apple supaya refund/pembatalan terdeteksi.
+# ---------------------------------------------------------------------------
+_APPLE_ROOT_G3_URL = "https://www.apple.com/certificateauthority/AppleRootCA-G3.cer"
+_APPLE_API_BASE = "https://api.storekit.itunes.apple.com"
+_APPLE_API_BASE_SANDBOX = "https://api.storekit-sandbox.itunes.apple.com"
+_apple_root_cache: Dict[str, Any] = {"cert": None, "expires_at": 0.0}
+
+
+def apple_api_configured() -> bool:
+    """Kredensial opsional App Store Server API tersedia."""
+    return bool(
+        env("APPLE_ISSUER_ID")
+        and env("APPLE_KEY_ID")
+        and (env("APPLE_PRIVATE_KEY_PATH") or env("APPLE_PRIVATE_KEY_P8"))
+    )
+
+
+def apple_jws_configured() -> bool:
+    """Verifikasi JWS hanya butuh bundle id aplikasi iOS."""
+    return bool(env("APPLE_BUNDLE_ID") or env("IOS_BUNDLE_ID"))
+
+
+def _apple_bundle_id() -> str:
+    bundle = env("APPLE_BUNDLE_ID") or env("IOS_BUNDLE_ID")
+    if not bundle:
+        raise IntegrationError("APPLE_BUNDLE_ID belum diset.")
+    return bundle
+
+
+def _apple_root_cert():
+    """Ambil & cache sertifikat root Apple (Apple Root CA - G3)."""
+    now = time.time()
+    if _apple_root_cache["cert"] is not None and now < _apple_root_cache["expires_at"]:
+        return _apple_root_cache["cert"]
+    try:
+        from cryptography import x509
+    except ImportError as exc:  # pragma: no cover
+        raise IntegrationError("Paket 'cryptography' belum terpasang") from exc
+
+    resp = requests.get(_APPLE_ROOT_G3_URL, timeout=30)
+    if resp.status_code != 200:
+        raise IntegrationError(f"Gagal mengunduh sertifikat root Apple: {resp.status_code}")
+    cert = x509.load_der_x509_certificate(resp.content)
+    _apple_root_cache["cert"] = cert
+    _apple_root_cache["expires_at"] = now + 86400
+    return cert
+
+
+def _b64url_decode(part: str) -> bytes:
+    pad = "=" * (-len(part) % 4)
+    return base64.urlsafe_b64decode(part + pad)
+
+
+def verify_apple_jws(transaction_jws: str) -> Dict[str, Any]:
+    """Verifikasi JWS transaksi Apple dan kembalikan payload-nya.
+
+    Melempar ``IntegrationError`` bila tanda tangan tidak valid, bundle id tidak
+    cocok, atau langganan sudah kedaluwarsa/direfund.
+    """
+    try:
+        from cryptography import x509
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.asymmetric import ec, padding, rsa
+        from cryptography.exceptions import InvalidSignature
+    except ImportError as exc:  # pragma: no cover
+        raise IntegrationError("Paket 'cryptography' belum terpasang") from exc
+
+    parts = (transaction_jws or "").split(".")
+    if len(parts) != 3:
+        raise IntegrationError("Format JWS transaksi Apple tidak valid.")
+    header_b64, payload_b64, signature_b64 = parts
+    try:
+        header = json.loads(_b64url_decode(header_b64))
+        payload = json.loads(_b64url_decode(payload_b64))
+        signature = _b64url_decode(signature_b64)
+    except (ValueError, TypeError) as exc:
+        raise IntegrationError("JWS transaksi Apple tidak dapat dibaca.") from exc
+
+    chain = header.get("x5c") or []
+    if len(chain) < 2:
+        raise IntegrationError("JWS tidak menyertakan rantai sertifikat Apple.")
+
+    try:
+        leaf = x509.load_der_x509_certificate(base64.b64decode(chain[0]))
+        intermediate = x509.load_der_x509_certificate(base64.b64decode(chain[1]))
+    except Exception as exc:  # pragma: no cover - sertifikat rusak
+        raise IntegrationError("Sertifikat pada JWS tidak valid.") from exc
+
+    # 1) Rantai sertifikat harus berakar pada Apple Root CA - G3.
+    root = _apple_root_cert()
+    try:
+        intermediate.verify_directly_issued_by(root)
+        leaf.verify_directly_issued_by(intermediate)
+    except Exception as exc:
+        raise IntegrationError("Rantai sertifikat JWS bukan milik Apple.") from exc
+
+    # 2) Tanda tangan JWS harus cocok dengan kunci publik leaf.
+    signing_input = f"{header_b64}.{payload_b64}".encode("ascii")
+    public_key = leaf.public_key()
+    try:
+        if isinstance(public_key, ec.EllipticCurvePublicKey):
+            public_key.verify(signature, signing_input, ec.ECDSA(hashes.SHA256()))
+        elif isinstance(public_key, rsa.RSAPublicKey):
+            public_key.verify(signature, signing_input, padding.PKCS1v15(), hashes.SHA256())
+        else:  # pragma: no cover - algoritma tak terduga
+            raise IntegrationError("Algoritma tanda tangan JWS tidak didukung.")
+    except InvalidSignature as exc:
+        raise IntegrationError("Tanda tangan JWS transaksi Apple tidak valid.") from exc
+
+    # 3) Payload harus milik aplikasi kita.
+    bundle = payload.get("bundleId")
+    if bundle != _apple_bundle_id():
+        raise IntegrationError(f"JWS berasal dari bundle lain: {bundle}")
+
+    # 4) Langganan harus masih berlaku (expiresDate dalam milidetik).
+    expires_ms = payload.get("expiresDate")
+    if not isinstance(expires_ms, (int, float)):
+        raise IntegrationError("Transaksi tidak memuat expiresDate.")
+    if expires_ms / 1000.0 <= time.time():
+        raise IntegrationError("Langganan Apple sudah kedaluwarsa.")
+    if payload.get("revocationDate"):
+        raise IntegrationError("Transaksi Apple sudah direfund/dicabut.")
+
+    return payload
+
+
+def _apple_api_token() -> str:
+    """JWT ES256 untuk App Store Server API (berlaku ~5 menit)."""
+    try:
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.asymmetric import ec
+        from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
+        from cryptography.hazmat.primitives.serialization import load_pem_private_key
+    except ImportError as exc:  # pragma: no cover
+        raise IntegrationError("Paket 'cryptography' belum terpasang") from exc
+
+    issuer = env("APPLE_ISSUER_ID")
+    key_id = env("APPLE_KEY_ID")
+    key_path = env("APPLE_PRIVATE_KEY_PATH")
+    inline_key = env("APPLE_PRIVATE_KEY_P8")
+    if not (issuer and key_id and (key_path or inline_key)):
+        raise IntegrationError("Kredensial App Store Server API belum lengkap.")
+
+    pem = inline_key or Path(key_path or "").read_text(encoding="utf-8")
+
+    def b64(data: bytes) -> str:
+        return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
+
+    now = int(time.time())
+    header = {"alg": "ES256", "kid": key_id, "typ": "JWT"}
+    claims = {
+        "iss": issuer,
+        "iat": now,
+        "exp": now + 300,
+        "aud": "appstoreconnect-v1",
+        "bid": _apple_bundle_id(),
+    }
+    signing_input = (
+        f"{b64(json.dumps(header, separators=(',', ':')).encode())}."
+        f"{b64(json.dumps(claims, separators=(',', ':')).encode())}"
+    )
+    key = load_pem_private_key(pem.encode("utf-8"), password=None)
+    der_sig = key.sign(signing_input.encode("ascii"), ec.ECDSA(hashes.SHA256()))
+    r, s = decode_dss_signature(der_sig)
+    # JWS ES256 memakai R||S mentah (masing-masing 32 byte), bukan DER.
+    raw = r.to_bytes(32, "big") + s.to_bytes(32, "big")
+    return f"{signing_input}.{b64(raw)}"
+
+
+def apple_subscription_status(original_transaction_id: str, sandbox: bool = False) -> Dict[str, Any]:
+    """Status langganan otoritatif dari App Store Server API."""
+    token = _apple_api_token()
+    base = _APPLE_API_BASE_SANDBOX if sandbox else _APPLE_API_BASE
+    resp = requests.get(
+        f"{base}/inApps/v1/subscriptions/{original_transaction_id}",
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=30,
+    )
+    if resp.status_code == 404 and not sandbox:
+        # Transaksi sandbox (mis. saat App Review) tidak ada di host produksi.
+        return apple_subscription_status(original_transaction_id, sandbox=True)
+    if resp.status_code != 200:
+        raise IntegrationError(f"App Store Server API gagal: {resp.status_code} {resp.text[:200]}")
+    return resp.json()
+
+
 def describe_config() -> Dict[str, bool]:
     """Ringkasan status konfigurasi, dipakai endpoint /health dan /api/integrations."""
     return {
@@ -51,6 +247,8 @@ def describe_config() -> Dict[str, bool]:
         "expo_push": True,  # Expo Push API gratis, tanpa key
         "midtrans": bool(env("MIDTRANS_SERVER_KEY")),
         "play_billing": play_api_configured(),
+        "apple_iap": apple_jws_configured(),
+        "apple_server_api": apple_api_configured(),
     }
 
 
@@ -167,7 +365,6 @@ _PLAY_API_BASE = "https://androidpublisher.googleapis.com/androidpublisher/v3/ap
 def play_api_configured() -> bool:
     """Konfigurasi minimal untuk memverifikasi pembelian Play sudah ada."""
     return bool(env("PLAY_PACKAGE_NAME") and firebase_credentials_available())
-
 
 def verify_play_subscription(purchase_token: str, subscription_id: str) -> Dict[str, Any]:
     """Verifikasi & ambil status langganan dari Google Play Developer API.

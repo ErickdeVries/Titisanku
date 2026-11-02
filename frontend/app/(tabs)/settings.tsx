@@ -9,7 +9,7 @@ import * as DocumentPicker from "expo-document-picker";
 import * as ImagePicker from "expo-image-picker";
 import Feather from "@react-native-vector-icons/feather";
 import { fonts, makeStyles, useTheme } from "@/src/theme";
-import { getTree, getBackup, restoreBackup, createInvite, acceptInvite, listInvites, linkCoparents, deleteAccount, fileUrl, uploadPhoto, updateProfile } from "@/src/api";
+import { getTree, restoreBackup, restoreBackupZip, backupExportUrl, getToken, createInvite, acceptInvite, listInvites, linkCoparents, deleteAccount, fileUrl, uploadPhoto, updateProfile } from "@/src/api";
 import { compressImage, imageProps } from "@/src/utils/image";
 import { useAuth } from "@/src/auth";
 import { useTree } from "@/src/tree-context";
@@ -53,6 +53,7 @@ const useStyles = makeStyles((c) => ({
   confirmTitle: { fontFamily: fonts.display, fontSize: 20, color: c.onSurface },
   confirmMsg: { fontFamily: fonts.regular, fontSize: 14, textAlign: "center", lineHeight: 20, color: c.muted },
   confirmRow: { flexDirection: "row", gap: 12, marginTop: 12, alignSelf: "stretch" },
+  confirmInput: { alignSelf: "stretch", height: 44, borderRadius: 12, borderWidth: 1, paddingHorizontal: 12, marginTop: 4, textAlign: "center", fontFamily: fonts.semibold, letterSpacing: 2 },
   confirmBtn: { flex: 1, height: 48, borderRadius: 14, alignItems: "center", justifyContent: "center" },
   confirmBtnText: { fontFamily: fonts.semibold, fontSize: 15 },
   inputRow: { padding: 16, gap: 10 },
@@ -82,6 +83,8 @@ export default function SettingsScreen() {
   const isPro = activeTree?.plan === "pro" || activeTree?.plan === "family" || activeTree?.plan === "unlimited" || !!user?.is_superadmin;
   const [deleteAccOpen, setDeleteAccOpen] = useState(false);
   const [deletingAcc, setDeletingAcc] = useState(false);
+  const [deleteAccWord, setDeleteAccWord] = useState("");
+  const [deleteAccErr, setDeleteAccErr] = useState("");
   const [photoBusy, setPhotoBusy] = useState(false);
 
   const changePhoto = async () => {
@@ -103,14 +106,26 @@ export default function SettingsScreen() {
       setPhotoBusy(false);
     }
   };
+  // Google Play mewajibkan penghapusan akun tersedia di dalam aplikasi.
+  // Konfirmasi dua langkah: buka sheet → ketik kata kunci → tombol aktif.
+  const deleteKeyword = t("delete_account_word");
+  const canDeleteAcc = !user?.is_superadmin && deleteAccWord.trim().toUpperCase() === deleteKeyword;
+  const openDeleteAccount = () => {
+    setDeleteAccWord("");
+    setDeleteAccErr("");
+    setDeleteAccOpen(true);
+  };
   const doDeleteAccount = async () => {
+    if (!canDeleteAcc) return;
     setDeletingAcc(true);
+    setDeleteAccErr("");
     try {
       await deleteAccount();
       setDeleteAccOpen(false);
       await logout();
     } catch (e) {
       console.log("delete account error", e);
+      setDeleteAccErr(t("delete_account_failed"));
       setDeletingAcc(false);
     }
   };
@@ -147,46 +162,65 @@ export default function SettingsScreen() {
 
   const doBackup = async () => {
     setBackupMsg("");
-    const dump = await getBackup();
-    const json = JSON.stringify(dump, null, 2);
-    const filename = `titisanku_backup_${new Date().toISOString().slice(0, 10)}.json`;
-    if (Platform.OS === "web") {
-      const blob = new Blob([json], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = filename;
-      a.click();
-      URL.revokeObjectURL(url);
+    const filename = `titisanku_backup_${new Date().toISOString().slice(0, 10)}.zip`;
+    try {
+      if (Platform.OS === "web") {
+        // Browser: biarkan server mengirim header Content-Disposition.
+        // Memuat 10+ MB foto ke RAM lalu membuat Blob akan membekukan tab.
+        window.open(backupExportUrl(), "_blank");
+        setBackupMsg(t("saved"));
+        return;
+      }
+      // Native: unduh ZIP (data + foto) lalu bagikan ke Files/Drive.
+      const target = FileSystem.documentDirectory + filename;
+      const { status } = await FileSystem.downloadAsync(backupExportUrl(), target, {
+        headers: getToken() ? { Authorization: `Bearer ${getToken()}` } : {},
+      });
+      if (status !== 200) throw new Error(`HTTP ${status}`);
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(target, { mimeType: "application/zip", dialogTitle: t("backup_share_title") });
+      }
       setBackupMsg(t("saved"));
-      return;
+    } catch {
+      setBackupMsg(t("backup_failed"));
     }
-    const uri = FileSystem.documentDirectory + filename;
-    await FileSystem.writeAsStringAsync(uri, json);
-    if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(uri, { mimeType: "application/json" });
-    setBackupMsg(t("saved"));
   };
 
   const doRestore = async () => {
     setRestoreMsg("");
-    const res = await DocumentPicker.getDocumentAsync({ type: ["application/json", "text/plain", "*/*"], copyToCacheDirectory: true });
+    const res = await DocumentPicker.getDocumentAsync({
+      type: ["application/zip", "application/x-zip-compressed", "application/octet-stream", "*/*"],
+      copyToCacheDirectory: true,
+    });
     if (res.canceled || !res.assets?.length) return;
     const uri = res.assets[0].uri;
     setRestoreBusy(true);
     try {
-      let text: string;
-      if (Platform.OS === "web") text = await (await fetch(uri)).text();
-      else text = await FileSystem.readAsStringAsync(uri);
-      const parsed = JSON.parse(text);
-      if (!parsed || !Array.isArray(parsed.people)) {
-        setRestoreMsg(t("restore_invalid"));
-        return;
+      // Arsip ZIP memulihkan data SEKALIGUS foto. Berkas JSON lama tetap
+      // didukung agar cadangan lama pengguna tidak sia-sia.
+      const isZip = /\.zip$/i.test(uri) || /\.zip$/i.test(res.assets[0].name || "");
+      if (isZip) {
+        const out = await restoreBackupZip(uri);
+        setRestoreMsg(
+          t("restore_zip_success")
+            .replace("{p}", String(out.people))
+            .replace("{f}", String(out.photos_restored)),
+        );
+      } else {
+        let text: string;
+        if (Platform.OS === "web") text = await (await fetch(uri)).text();
+        else text = await FileSystem.readAsStringAsync(uri);
+        const parsed = JSON.parse(text);
+        if (!parsed || !Array.isArray(parsed.people)) {
+          setRestoreMsg(t("restore_invalid"));
+          return;
+        }
+        await restoreBackup({ people: parsed.people, relations: parsed.relations ?? [] });
+        setRestoreMsg(t("restore_success"));
       }
-      await restoreBackup({ people: parsed.people, relations: parsed.relations ?? [] });
       await qc.invalidateQueries({ queryKey: ["tree"] });
-      setRestoreMsg(t("restore_success"));
-    } catch {
-      setRestoreMsg(t("restore_invalid"));
+    } catch (e) {
+      setRestoreMsg(e instanceof Error && e.message ? e.message : t("restore_invalid"));
     } finally {
       setRestoreBusy(false);
     }
@@ -552,11 +586,31 @@ export default function SettingsScreen() {
             </View>
             <Text style={styles.confirmTitle}>{t("delete_account")}</Text>
             <Text style={styles.confirmMsg}>{t("delete_account_confirm")}</Text>
+            <Text style={[styles.confirmMsg, { color: colors.brandSecondary }]}>{t("delete_account_note")}</Text>
+            {/* Syarat Google Play: penghapusan akun harus benar-benar disengaja.
+                Mengetik kata konfirmasi mencegah ketukan tak sengaja menghapus
+                seluruh pohon keluarga. */}
+            <TextInput
+              testID="delete-account-confirm-input"
+              style={[styles.confirmInput, { borderColor: colors.border, color: colors.onSurface }]}
+              placeholder={t("delete_account_type")}
+              placeholderTextColor={colors.muted}
+              value={deleteAccWord}
+              onChangeText={setDeleteAccWord}
+              autoCapitalize="characters"
+              autoCorrect={false}
+            />
+            {deleteAccErr ? <Text style={[styles.confirmMsg, { color: colors.error }]}>{deleteAccErr}</Text> : null}
             <View style={styles.confirmRow}>
               <Pressable style={[styles.confirmBtn, { backgroundColor: colors.surfaceTertiary }]} onPress={() => setDeleteAccOpen(false)} testID="cancel-delete-account">
                 <Text style={[styles.confirmBtnText, { color: colors.onSurface }]}>{t("cancel")}</Text>
               </Pressable>
-              <Pressable style={[styles.confirmBtn, { backgroundColor: colors.error, opacity: deletingAcc ? 0.6 : 1 }]} disabled={deletingAcc} onPress={doDeleteAccount} testID="confirm-delete-account">
+              <Pressable
+                style={[styles.confirmBtn, { backgroundColor: colors.error, opacity: deletingAcc || !canDeleteAcc ? 0.5 : 1 }]}
+                disabled={deletingAcc || !canDeleteAcc}
+                onPress={doDeleteAccount}
+                testID="confirm-delete-account"
+              >
                 {deletingAcc ? <ActivityIndicator color={colors.onError} /> : <Text style={[styles.confirmBtnText, { color: colors.onError }]}>{t("delete_account")}</Text>}
               </Pressable>
             </View>

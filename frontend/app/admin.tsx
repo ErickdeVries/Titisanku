@@ -14,6 +14,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import Feather from "@react-native-vector-icons/feather";
 import { fonts, makeStyles, useTheme } from "@/src/theme";
+import { useAuth } from "@/src/auth";
 import {
   adminOverview,
   adminUsers,
@@ -954,6 +955,8 @@ export default function AdminScreen() {
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<TabKey>("overview");
   const [refreshing, setRefreshing] = useState(false);
+  const { user } = useAuth();
+  const isSuperadmin = !!user?.is_superadmin;
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -986,6 +989,22 @@ export default function AdminScreen() {
         return <OverviewTab />;
     }
   }, [tab]);
+
+  // Jangan pernah merender isi dashboard untuk non-superadmin — setiap tab
+  // memicu query /api/admin/* yang memang akan ditolak 403 oleh backend.
+  if (!isSuperadmin) {
+    return (
+      <View style={[styles.root, { paddingTop: insets.top + 8, paddingHorizontal: 24, justifyContent: "center", alignItems: "center" }]}>
+        <Feather name="shield-off" size={36} color={colors.muted} />
+        <Text style={{ fontFamily: fonts.semibold, fontSize: 16, color: colors.onSurface, marginTop: 14, textAlign: "center" }}>
+          Akses ditolak
+        </Text>
+        <Text style={{ fontFamily: fonts.regular, fontSize: 13, color: colors.muted, marginTop: 6, textAlign: "center" }}>
+          Dashboard ini hanya untuk akun superadmin.
+        </Text>
+      </View>
+    );
+  }
 
   return (
     <View style={[styles.root, { paddingTop: insets.top + 8 }]}>

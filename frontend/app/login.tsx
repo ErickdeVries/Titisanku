@@ -1,6 +1,7 @@
 import { useState } from "react";
-import { View, Text, TextInput, Pressable, ScrollView } from "react-native";
+import { Platform, View, Text, TextInput, Pressable, ScrollView } from "react-native";
 import { Image } from "expo-image";
+import * as AppleAuthentication from "expo-apple-authentication";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { fonts, makeStyles } from "@/src/theme";
 import { useAuth } from "@/src/auth";
@@ -105,13 +106,16 @@ const useStyles = makeStyles((c) => ({
     marginTop: 2,
     textAlign: "center",
   },
+  appleWrap: { marginTop: 10, alignItems: "center" },
+  // Ukuran minimum 44pt sesuai HIG; lebar mengikuti tombol Google.
+  appleButton: { width: "100%", height: 44 },
 }));
 
 export default function Login() {
   const insets = useSafeAreaInsets();
   const styles = useStyles();
   const { t } = useI18n();
-  const { login, loginWithPassword, register, loginDemo, signingIn, authError } = useAuth();
+  const { login, loginWithApple, appleAvailable, loginWithPassword, register, loginDemo, signingIn, authError } = useAuth();
 
   const [mode, setMode] = useState<"login" | "register">("login");
   const [username, setUsername] = useState("");
@@ -208,6 +212,21 @@ export default function Login() {
             onPress={login}
             testID="google-login"
           />
+
+          {/* Guideline 4.8 App Store: Sign in with Apple wajib ditawarkan
+              setara dengan login pihak ketiga lain (Google). Tombol memakai
+              komponen resmi Apple agar lolos review desain. */}
+          {appleAvailable && (
+            <View style={styles.appleWrap}>
+              <AppleAuthentication.AppleAuthenticationButton
+                buttonType={AppleAuthentication.AppleAuthenticationButtonType.SIGN_IN}
+                buttonStyle={AppleAuthentication.AppleAuthenticationButtonStyle.BLACK}
+                cornerRadius={12}
+                style={styles.appleButton}
+                onPress={loginWithApple}
+              />
+            </View>
+          )}
 
           <Pressable
             onPress={() => setShowCredentials((v) => !v)}

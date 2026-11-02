@@ -380,6 +380,11 @@ export const playVerify = (productId: string, purchaseToken: string, treeId?: st
     method: "POST",
     body: JSON.stringify({ product_id: productId, purchase_token: purchaseToken, tree_id: treeId }),
   });
+export const appleVerify = (productId: string, transactionJws: string, treeId?: string): Promise<{ ok: boolean; plan: string; already?: boolean }> =>
+  apiFetch("/payments/apple/verify", {
+    method: "POST",
+    body: JSON.stringify({ product_id: productId, transaction_jws: transactionJws, tree_id: treeId }),
+  });
 export type PaymentOrder = { order_id: string; plan: string; amount: number; status: string; created_at: string; paid_at?: string; tree_name?: string };
 export const paymentHistory = (): Promise<{ orders: PaymentOrder[] }> =>
   apiFetch("/payments/history");
@@ -422,6 +427,50 @@ export const deletePerson = (id: string) => apiFetch(`/people/${id}`, { method: 
 export const getBackup = () => apiFetch("/backup");
 export const restoreBackup = (payload: { people: any[]; relations: any[] }) =>
   apiFetch("/restore", { method: "POST", body: JSON.stringify(payload) });
+
+/**
+ * URL unduhan arsip ZIP (data + foto) untuk langsung dipakai browser/WebView.
+ * Token ditaruh di query karena <a download> tidak bisa mengirim header.
+ */
+export function backupExportUrl(): string {
+  const qs = new URLSearchParams();
+  if (activeTreeId) qs.set("tree_id", activeTreeId);
+  if (authToken) qs.set("token", authToken);
+  return `${API}/backup/export?${qs.toString()}`;
+}
+
+export type ZipRestoreResult = {
+  ok: boolean;
+  people: number;
+  relations: number;
+  photos_restored: number;
+  photos_missing: number;
+};
+
+/** Pulihkan pohon dari ZIP hasil ekspor (data + foto sekaligus). */
+export async function restoreBackupZip(uri: string): Promise<ZipRestoreResult> {
+  const name = uri.split("/").pop() || "backup.zip";
+  const form = new FormData();
+  if (Platform.OS === "web") {
+    form.append("file", await (await fetch(uri)).blob(), name);
+  } else {
+    form.append("file", { uri, name, type: "application/zip" } as any);
+  }
+  const qs = activeTreeId ? `?tree_id=${activeTreeId}` : "";
+  const res = await fetch(`${API}/restore/zip${qs}`, {
+    method: "POST",
+    headers: { ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}) },
+    body: form,
+  });
+  if (!res.ok) {
+    let detail = `HTTP ${res.status}`;
+    try {
+      detail = (await res.json()).detail || detail;
+    } catch {}
+    throw new Error(detail);
+  }
+  return res.json();
+}
 export const createInvite = (email: string) =>
   apiFetch("/invite", { method: "POST", body: JSON.stringify({ email }) });
 export const acceptInvite = (code: string) =>
@@ -511,6 +560,16 @@ export const sendChat = (
 export const deleteChat = (msgId: string) => apiFetch(`/chat/${msgId}`, { method: "DELETE" });
 export const setTyping = (roomId?: string) =>
   apiFetch(`/chat/typing${roomId ? `?room_id=${encodeURIComponent(roomId)}` : ""}`, { method: "POST" });
+
+// ---- Moderasi (App Store 1.2 / Play UGC policy) ----
+export const blockUser = (userId: string) =>
+  apiFetch("/moderation/blocks", { method: "POST", body: JSON.stringify({ user_id: userId }) });
+export const unblockUser = (userId: string) =>
+  apiFetch(`/moderation/blocks/${userId}`, { method: "DELETE" });
+export const listBlocks = (): Promise<{ blocks: { user_id: string; name: string; picture?: string | null }[] }> =>
+  apiFetch("/moderation/blocks");
+export const reportContent = (payload: { user_id?: string; message_id?: string; reason: string; detail?: string }) =>
+  apiFetch("/moderation/reports", { method: "POST", body: JSON.stringify(payload) });
 
 // ---- Notifications ----
 export type AppNotification = {

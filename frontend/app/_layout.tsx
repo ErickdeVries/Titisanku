@@ -73,6 +73,11 @@ function RootNav() {
     if (user && !treesLoading && trees.length === 0 && !inWelcome && !inJoin && !inInvite) {
       router.replace("/welcome");
     }
+    // Dashboard admin khusus superadmin. Ini lapis kedua (kenyamanan navigasi);
+    // otorisasi sebenarnya tetap di backend (semua /api/admin/* → 403).
+    if (user && segments[0] === "admin" && !user.is_superadmin) {
+      router.replace("/(tabs)/settings");
+    }
   }, [user, loading, treesLoading, trees.length, segments, router]);
 
   // Resume a pending invite once the user is authenticated (works on web + native).
